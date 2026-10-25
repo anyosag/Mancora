@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+
+# SwiftPM
+.build/
+.swiftpm/
+/Packages/
+
+# Xcode (projects are generated from project.yml from Phase 1 on)
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+
+# Fixture generation scratch
+/Tools/fixtures/.cache/

@@ -1,0 +1,18 @@
+* text=auto
+*.swift text eol=lf
+*.yml text eol=lf
+*.sh text eol=lf
+
+# LUTs and test data must stay byte-identical on every platform. Some text
+# LUTs use CRLF line ends, and phase.lut ends with a DOS end-of-file byte.
+*.lut -text -diff
+Resources/LUTs/*.txt -text
+Tests/Fixtures/** -text
+*.tif binary
+*.tiff binary
+*.icns binary
+*.ico binary
+*.png binary
+
+# The Fiji sources kept for reference are not Mancora's code; keep their bytes as they are.
+legacy/** -text linguist-vendored
