@@ -9,6 +9,11 @@ struct MancoraApp: App {
         // Run from `swift run` there is no app bundle; make it a regular app
         // so it gets a Dock icon, a menu bar and keyboard focus.
         NSApplication.shared.setActivationPolicy(.regular)
+        if let url = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
+            let icon = NSImage(contentsOf: url)
+        {
+            NSApplication.shared.applicationIconImage = icon
+        }
     }
 
     var body: some Scene {

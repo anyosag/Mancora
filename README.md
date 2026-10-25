@@ -1,3 +1,5 @@
+<p align="center"><img src="Resources/Branding/mancora-lockup.svg" alt="Mancora" width="420"></p>
+
 # Mancora
 
 Mancora is a native Swift port of [Fiji](https://fiji.sc) (ImageJ) for
@@ -16,7 +18,7 @@ command-line tool runs on Linux.
 | `Package.swift`, `Sources/` | The platform-neutral Swift packages: `MancoraCore` (image model, LUTs, display mapping), `MancoraIO` (LUT and TIFF readers) and the `mancora` CLI. They build on macOS, Windows and Linux. |
 | `Apps/macOS/` | The macOS app shell (SwiftUI). |
 | `Apps/Windows/` | The Windows app shell (WinUI 3), from Phase 5. |
-| `Resources/` | LUTs, macros and sample scripts carried over from Fiji. |
+| `Resources/` | LUTs, macros and sample scripts carried over from Fiji, and the Mancora brand assets in `Resources/Branding/`. |
 | `Tests/` | Swift Testing suites and their fixtures. |
 | `Tools/fixtures/` | Scripts that regenerate test fixtures with ImageJ, tifffile and ImageMagick. |
 | `legacy/fiji/` | The original Fiji top-level project, kept as a reference and for the future Java plugin bridge. |

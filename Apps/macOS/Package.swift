@@ -23,6 +23,9 @@ let package = Package(
                 .product(name: "MancoraCore", package: "Mancora"),
                 .product(name: "MancoraIO", package: "Mancora"),
             ],
+            // A copy of Resources/Branding/AppIcon.appiconset/icon_512x512.png
+            // for the Dock; the Phase 1 app bundle uses the asset catalog.
+            resources: [.copy("Resources/AppIcon.png")],
             swiftSettings: [
                 .defaultIsolation(MainActor.self),
                 .enableUpcomingFeature("ExistentialAny"),
