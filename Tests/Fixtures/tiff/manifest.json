@@ -1,0 +1,303 @@
+[
+ {
+  "file": "tf-gray8-none-le.tif",
+  "pattern": "p8",
+  "type": "gray8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-gray8-lzw-pred-le.tif",
+  "pattern": "p8",
+  "type": "gray8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-gray16-lzw-pred-le.tif",
+  "pattern": "p16",
+  "type": "gray16",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-gray16-tiles-lzw-pred-le.tif",
+  "pattern": "p16",
+  "type": "gray16",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-float32-none-le.tif",
+  "pattern": "f32",
+  "type": "gray32Float",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-rgb-lzw-pred-le.tif",
+  "pattern": "rgb",
+  "type": "rgb8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-gray8-none-be.tif",
+  "pattern": "p8",
+  "type": "gray8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-gray8-lzw-pred-be.tif",
+  "pattern": "p8",
+  "type": "gray8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-gray16-lzw-pred-be.tif",
+  "pattern": "p16",
+  "type": "gray16",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-gray16-tiles-lzw-pred-be.tif",
+  "pattern": "p16",
+  "type": "gray16",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-float32-none-be.tif",
+  "pattern": "f32",
+  "type": "gray32Float",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-rgb-lzw-pred-be.tif",
+  "pattern": "rgb",
+  "type": "rgb8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-gray8-lzw.tif",
+  "pattern": "p8",
+  "type": "gray8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-gray8-packbits-be.tif",
+  "pattern": "p8",
+  "type": "gray8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-gray8-tiles-none.tif",
+  "pattern": "p8",
+  "type": "gray8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-gray8-tiles-lzw-pred-be.tif",
+  "pattern": "p8",
+  "type": "gray8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-gray16-none-be.tif",
+  "pattern": "p16",
+  "type": "gray16",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-gray16-packbits.tif",
+  "pattern": "p16",
+  "type": "gray16",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-int16-lzw.tif",
+  "pattern": "p16",
+  "type": "gray16",
+  "planes": 1,
+  "width": 37,
+  "height": 23,
+  "signed": true
+ },
+ {
+  "file": "tf-float32-lzw-be.tif",
+  "pattern": "f32",
+  "type": "gray32Float",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-float32-tiles.tif",
+  "pattern": "f32",
+  "type": "gray32Float",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-uint32-none.tif",
+  "pattern": "u32",
+  "type": "gray32Float",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-rgb-none.tif",
+  "pattern": "rgb",
+  "type": "rgb8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-rgb-planar-none-be.tif",
+  "pattern": "rgb",
+  "type": "rgb8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-rgb-planar-lzw-pred.tif",
+  "pattern": "rgb",
+  "type": "rgb8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-rgb-tiles-lzw.tif",
+  "pattern": "rgb",
+  "type": "rgb8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-rgba-none.tif",
+  "pattern": "rgb",
+  "type": "rgb8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-gray8-miniswhite.tif",
+  "pattern": "p8",
+  "type": "gray8",
+  "planes": 1,
+  "width": 37,
+  "height": 23,
+  "lutInverted": true
+ },
+ {
+  "file": "tf-palette-lzw.tif",
+  "pattern": "p8",
+  "type": "gray8",
+  "planes": 1,
+  "width": 37,
+  "height": 23,
+  "lut": "palette"
+ },
+ {
+  "file": "tf-pages-gray8-lzw.tif",
+  "pattern": "p8",
+  "type": "gray8",
+  "planes": 3,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-pages-rgb-be.tif",
+  "pattern": "rgb",
+  "type": "rgb8",
+  "planes": 2,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "im-gray8-lzw-tiles.tif",
+  "pattern": "p8",
+  "type": "gray8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "im-gray8-packbits.tif",
+  "pattern": "p8",
+  "type": "gray8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "im-gray16-lzw-pred-be.tif",
+  "pattern": "p16",
+  "type": "gray16",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "im-rgb-lzw.tif",
+  "pattern": "rgb",
+  "type": "rgb8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "im-bilevel-minisblack.tif",
+  "pattern": "bits",
+  "type": "gray8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "im-bilevel-miniswhite-packbits.tif",
+  "pattern": "bits",
+  "type": "gray8",
+  "planes": 1,
+  "width": 37,
+  "height": 23,
+  "lutInverted": true,
+  "invertPattern": true
+ }
+]

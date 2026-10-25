@@ -1,0 +1,81 @@
+# Editors #
+*.swp
+*~
+
+# Maven #
+/target/
+/bin/apache-maven-*/
+
+# Fiji Build #
+/bin/maven-helper.sh
+/.tmp.*/
+
+# Eclipse #
+/.checksums
+/.classpath
+/.factorypath
+/.metadata
+/.project
+/.settings/
+
+# IntelliJ #
+/.idea/
+
+# Updater #
+/db.xml.gz
+
+# Vagrant #
+/.vagrant/
+
+# Cached sample images #
+/samples/
+
+# Melting Pot #
+/melting-pot/
+
+# ImageJ Launcher #
+/jvm.cfg
+
+# MacOSX #
+.DS_Store
+/Contents/Resources/ImageJ.icns
+
+# Wiki monitor #
+/.recent-changes.*
+/jssecacerts
+
+# Micro-Manager #
+*-stamp
+/CoreLog.txt
+hs_err*.log
+/MMConfig_demo.cfg
+/MMStartup.bsh
+
+# Jython #
+*$py.class
+
+# Package Maker #
+/fiji-*.7z
+/fiji-*.dmg
+/fiji-*.tar.bz2
+/fiji-*.zip
+/fiji-macosx.dmg
+
+# Launchers #
+/Contents/MacOS/ImageJ-macosx
+/Contents/MacOS/ImageJ-tiger
+/Contents/MacOS/fiji-macosx
+/Contents/MacOS/fiji-tiger
+/ImageJ
+/ImageJ-linux32
+/ImageJ-linux64
+/ImageJ-win32.exe
+/ImageJ-win64.exe
+/ImageJ.cfg
+/ImageJ.exe
+/fiji
+/fiji-linux
+/fiji-linux64
+/fiji-win32.exe
+/fiji-win64.exe
+/fiji.exe

@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux · Swift 6.2
+    runs-on: ubuntu-24.04
+    container: swift:6.2-noble
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: swift build --build-tests -Xswiftc -warnings-as-errors
+      - name: Test
+        run: swift test --skip-build
+      - name: CLI smoke test
+        run: |
+          swift run mancora luts
+          swift run mancora info Tests/Fixtures/tiff/ij-hyperstack-16bit.tif
+          swift run mancora lut Resources/LUTs/mpl-viridis.lut
+
+  windows:
+    name: Windows · Swift 6.2
+    runs-on: windows-2025
+    steps:
+      # LUT and fixture bytes must not be rewritten with CRLF line ends.
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: compnerd/gha-setup-swift@main
+        with:
+          branch: swift-6.2.4-release
+          tag: 6.2.4-RELEASE
+      - name: Build
+        run: swift build --build-tests
+      - name: Test
+        run: swift test --skip-build
+
+  macos:
+    name: macOS · Xcode 26
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 26
+        run: |
+          xcode="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$xcode" ]; then sudo xcode-select -s "$xcode"; fi
+          xcodebuild -version
+          swift --version
+      - name: Build
+        run: swift build --build-tests -Xswiftc -warnings-as-errors
+      - name: Test
+        run: swift test --skip-build
+      - name: Build the macOS app
+        run: swift build --package-path Apps/macOS -Xswiftc -warnings-as-errors
