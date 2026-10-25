@@ -5,8 +5,8 @@
 //
 //   swift run --package-path Apps/macOS
 //
-// Phase 1 replaces this executable with an XcodeGen project that builds a
-// signed .app bundle with the Mancora icon.
+// Tools/package/macos/package.sh wraps the release build in Mancora.app
+// (icon, Info.plist, bundled LUTs) and a DMG.
 
 import PackageDescription
 
@@ -23,9 +23,6 @@ let package = Package(
                 .product(name: "MancoraCore", package: "Mancora"),
                 .product(name: "MancoraIO", package: "Mancora"),
             ],
-            // A copy of Resources/Branding/AppIcon.appiconset/icon_512x512.png
-            // for the Dock; the Phase 1 app bundle uses the asset catalog.
-            resources: [.copy("Resources/AppIcon.png")],
             swiftSettings: [
                 .defaultIsolation(MainActor.self),
                 .enableUpcomingFeature("ExistentialAny"),

@@ -3,6 +3,7 @@
 //   mancora info <image.tif>   describe an image
 //   mancora lut <file.lut>     describe a LUT file
 //   mancora luts               list the built-in LUTs
+//   mancora --version
 
 import Foundation
 import MancoraCore
@@ -12,6 +13,7 @@ let usage = """
     usage: mancora info <image.tif>
            mancora lut <file.lut>
            mancora luts
+           mancora --version
     """
 
 func fail(_ message: String) -> Never {
@@ -59,6 +61,8 @@ case ("lut", 2):
     }
 case ("luts", 1):
     for lut in LUT.builtIn { print(lut.name) }
+case ("--version", 1), ("version", 1):
+    print("mancora \(MancoraVersion.number)")
 default:
     fail(usage)
 }

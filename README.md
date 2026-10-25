@@ -7,9 +7,27 @@ scientific image analysis. It's built for macOS first (SwiftUI, Metal,
 Accelerate) and also ships natively on Windows (WinUI 3). A headless
 command-line tool runs on Linux.
 
-> **Status: Phase 0, the skeleton.** The core reads ImageJ LUTs and TIFF
-> stacks and hyperstacks, and a minimal macOS viewer shows them. See the
-> [roadmap](docs/ROADMAP.md) for what comes next.
+> **Status: 0.1.0, the first preview.** Mancora opens TIFF images, stacks
+> and hyperstacks and shows them through ImageJ's LUTs, on macOS and
+> Windows. See the [roadmap](docs/ROADMAP.md) for what comes next.
+
+## Installing
+
+Download the installer for your system from the
+[releases page](https://github.com/anyosag/Mancora/releases):
+
+- **macOS 14 or later** (Apple silicon and Intel): `Mancora-<version>-macOS.dmg`.
+  Open it and drag Mancora to Applications. The preview isn't notarized
+  yet, so the first time, open it once, then click **Open Anyway** in
+  **System Settings ▸ Privacy & Security**.
+- **Windows 10 (1809) or later, x64**: `Mancora-<version>-Windows-x64-Setup.exe`.
+  It installs for the current user, with no administrator rights needed.
+  The installer isn't signed yet; if SmartScreen warns, choose
+  **More info ▸ Run anyway**. A portable `.zip` is also available.
+- **Linux** (command line only): `mancora-<version>-linux-x86_64.tar.gz`.
+
+The installers are built by `.github/workflows/release.yml` with the
+scripts in `Tools/package/`.
 
 ## Layout
 
@@ -17,7 +35,7 @@ command-line tool runs on Linux.
 | --- | --- |
 | `Package.swift`, `Sources/` | The platform-neutral Swift packages: `MancoraCore` (image model, LUTs, display mapping), `MancoraIO` (LUT and TIFF readers) and the `mancora` CLI. They build on macOS, Windows and Linux. |
 | `Apps/macOS/` | The macOS app shell (SwiftUI). |
-| `Apps/Windows/` | The Windows app shell (WinUI 3), from Phase 5. |
+| `Apps/Windows/` | The Windows app: a small native Win32 viewer until the WinUI 3 shell arrives in Phase 5. |
 | `Resources/` | LUTs, macros and sample scripts carried over from Fiji, and the Mancora brand assets in `Resources/Branding/`. |
 | `Tests/` | Swift Testing suites and their fixtures. |
 | `Tools/fixtures/` | Scripts that regenerate test fixtures with ImageJ, tifffile and ImageMagick. |
@@ -35,11 +53,16 @@ swift run mancora info path/to/image.tif
 swift run mancora lut Resources/LUTs/mpl-viridis.lut
 ```
 
-On macOS, run the viewer with:
+Run the viewer with:
 
 ```sh
-swift run --package-path Apps/macOS
+swift run --package-path Apps/macOS     # macOS
+swift run --package-path Apps/Windows   # Windows
 ```
+
+To build installers locally, run `Tools/package/macos/package.sh`,
+`Tools/package/windows/package.ps1` or `Tools/package/linux/package.sh`.
+The output goes to `dist/`.
 
 ## Tests and fixtures
 

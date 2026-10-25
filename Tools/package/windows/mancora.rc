@@ -1,0 +1,3 @@
+// Linked into MancoraViewer.exe and mancora.exe: the application icon.
+// package.ps1 compiles this with rc.exe from the repository root.
+1 ICON "Resources\\Branding\\Windows\\mancora.ico"

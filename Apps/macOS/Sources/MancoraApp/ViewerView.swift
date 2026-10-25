@@ -36,6 +36,12 @@ struct ViewerView: View {
                     ForEach(LUT.builtIn, id: \.name) { lut in
                         Button(lut.name) { model.apply(lut) }
                     }
+                    if !ViewerModel.bundledLUTs.isEmpty {
+                        Divider()
+                        ForEach(ViewerModel.bundledLUTs, id: \.url) { item in
+                            Button(item.name) { model.applyLUT(at: item.url) }
+                        }
+                    }
                     Divider()
                     Button("Open LUT File…") { model.presentLUTPanel() }
                 }
