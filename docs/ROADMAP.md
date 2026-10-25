@@ -111,8 +111,9 @@ a LUT.
 - a per-user Windows installer with an interim Win32 viewer and the CLI
 - a static Linux CLI tarball
 
-Developer ID signing and notarization, and Windows code signing, follow in
-P7.
+Merging a `VERSION` bump into `main` publishes the next release
+automatically. Developer ID signing and notarization, and Windows code
+signing, follow in P7.
 
 ### P1: macOS viewer
 

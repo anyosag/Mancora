@@ -1,12 +1,23 @@
 name: Release
 
-# Builds the installers on every pull request that touches packaging, and on
-# demand. A version tag (v*) or a manual run with "draft_release" also
-# creates a draft GitHub release with the installers attached.
+# Releasing is automatic: merge a change to VERSION into main and this
+# workflow builds, smoke-tests and publishes Mancora <VERSION> with its
+# installers. It publishes only when v<VERSION> hasn't been released yet, so
+# re-runs and other merges never duplicate a release.
+#
+# Pull requests that touch the apps or packaging build the installers too,
+# as run artifacts, without releasing anything. A pushed v* tag (matching
+# VERSION) or a manual run on main also releases.
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
+    paths:  # ignored for tag pushes
+      - "VERSION"
+      - "docs/releases/**"
+      - "Tools/package/**"
+      - ".github/workflows/release.yml"
   pull_request:
     paths:
       - "Apps/**"
@@ -14,17 +25,14 @@ on:
       - "Tools/package/**"
       - "Resources/**"
       - "VERSION"
+      - "docs/releases/**"
       - ".github/workflows/release.yml"
   workflow_dispatch:
-    inputs:
-      draft_release:
-        description: "Create a draft GitHub release with the installers"
-        type: boolean
-        default: false
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a run on main or a tag midway through publishing.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -87,32 +95,54 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Draft GitHub release
+    name: Publish GitHub release
     needs: [macos, windows, linux]
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.draft_release)
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Decide whether this version needs a release
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match VERSION ($version)."
+            exit 1
+          fi
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::notice::Mancora $version is already released; bump VERSION to publish a new release."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/download-artifact@v4
+        if: steps.version.outputs.publish == 'true'
         with:
           path: dist
           merge-multiple: true
-      - name: Checksums
+      - name: Checksums and release notes
+        if: steps.version.outputs.publish == 'true'
         run: |
-          cd dist
-          sha256sum * > SHA256SUMS.txt
-          cat SHA256SUMS.txt
-      - name: Read the version
-        id: version
-        run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+          version="${{ steps.version.outputs.version }}"
+          (cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          {
+            if [ -f "docs/releases/$version.md" ]; then cat "docs/releases/$version.md"; echo; fi
+            sed "s/@VERSION@/$version/g" Tools/package/RELEASE_NOTES.md
+          } > release-notes.md
       - uses: softprops/action-gh-release@v2
+        if: steps.version.outputs.publish == 'true'
         with:
           tag_name: v${{ steps.version.outputs.version }}
           target_commitish: ${{ github.sha }}
           name: Mancora ${{ steps.version.outputs.version }}
-          body_path: Tools/package/RELEASE_NOTES.md
-          draft: true
-          prerelease: true
+          body_path: release-notes.md
+          generate_release_notes: true
+          # 0.x versions are previews.
+          prerelease: ${{ startsWith(steps.version.outputs.version, '0.') }}
           files: dist/*
+          fail_on_unmatched_files: true
