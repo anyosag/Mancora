@@ -91,7 +91,7 @@ func runViewer(arguments: [String]) {
     _ = UpdateWindow(window)
 
     var message = MSG()
-    while GetMessageW(&message, nil, 0, 0).boolValue {
+    while GetMessageW(&message, nil, 0, 0) {
         _ = TranslateMessage(&message)
         _ = DispatchMessageW(&message)
     }

@@ -7,9 +7,9 @@ let cwUseDefault = Int32(bitPattern: 0x8000_0000)
 let overlappedWindowStyle: DWORD = 0x00CF_0000  // WS_OVERLAPPEDWINDOW
 let acceptFilesExStyle: DWORD = 0x0000_0010  // WS_EX_ACCEPTFILES
 let sourceCopy: DWORD = 0x00CC_0020  // SRCCOPY
-let arrowCursor = UnsafePointer<WCHAR>(bitPattern: 32512)  // IDC_ARROW
+var arrowCursor: UnsafePointer<WCHAR>? { UnsafePointer(bitPattern: 32512) }  // IDC_ARROW
 /// The application icon linked into the executable from mancora.rc.
-let appIconResource = UnsafePointer<WCHAR>(bitPattern: 1)
+var appIconResource: UnsafePointer<WCHAR>? { UnsafePointer(bitPattern: 1) }
 let messageBoxOK: UINT = 0x0000_0000
 let messageBoxIconError: UINT = 0x0000_0010
 let messageBoxIconInformation: UINT = 0x0000_0040
@@ -57,7 +57,7 @@ func chooseFile(owner: HWND?, title: String, filter: String, initialDirectory: S
                     dialog.lpstrInitialDir = initialDirectory == nil ? nil : directoryPointer.baseAddress
                     dialog.lpstrFile = pathPointer.baseAddress
                     dialog.nMaxFile = DWORD(pathPointer.count)
-                    return GetOpenFileNameW(&dialog).boolValue
+                    return GetOpenFileNameW(&dialog)
                 }
             }
         }
