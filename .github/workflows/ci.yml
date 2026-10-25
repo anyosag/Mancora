@@ -46,6 +46,8 @@ jobs:
         run: swift build --build-tests
       - name: Test
         run: swift test --skip-build
+      - name: Build the Windows viewer
+        run: swift build --package-path Apps/Windows
 
   macos:
     name: macOS · Xcode 26

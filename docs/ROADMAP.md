@@ -105,6 +105,15 @@ Each phase ends with a pass/fail test.
 ImageJ, the TIFF fixture matrix passes, and the macOS stub shows a TIFF with
 a LUT.
 
+**Release 0.1.0** ships this milestone as installers built by
+`.github/workflows/release.yml`:
+- a universal, ad-hoc-signed `Mancora.app` in a DMG
+- a per-user Windows installer with an interim Win32 viewer and the CLI
+- a static Linux CLI tarball
+
+Developer ID signing and notarization, and Windows code signing, follow in
+P7.
+
 ### P1: macOS viewer
 
 - Adds:

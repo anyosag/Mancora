@@ -2,6 +2,10 @@
 *.swift text eol=lf
 *.yml text eol=lf
 *.sh text eol=lf
+# Windows build inputs
+*.ps1 text eol=crlf
+*.iss text eol=crlf
+*.rc text eol=crlf
 
 # LUTs and test data must stay byte-identical on every platform. Some text
 # LUTs use CRLF line ends, and phase.lut ends with a DOS end-of-file byte.

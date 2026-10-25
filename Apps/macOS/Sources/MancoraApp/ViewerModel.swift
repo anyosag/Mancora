@@ -40,12 +40,38 @@ final class ViewerModel {
     func presentLUTPanel() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "lut") ?? .data, .plainText]
+        panel.directoryURL = Self.bundledLUTDirectory
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        applyLUT(at: url)
+    }
+
+    func applyLUT(at url: URL) {
         do {
             apply(try LUTReader.read(path: url.path))
         } catch {
             errorMessage = "\(error)"
         }
+    }
+
+    /// The LUTs shipped inside Mancora.app (`Contents/Resources/LUTs`);
+    /// empty when running unbundled with `swift run`.
+    static let bundledLUTDirectory = Bundle.main.url(forResource: "LUTs", withExtension: nil)
+
+    static let bundledLUTs: [(name: String, url: URL)] = {
+        guard let dir = bundledLUTDirectory,
+            let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+        else { return [] }
+        return files
+            .filter { ["lut", "txt"].contains($0.pathExtension.lowercased()) && $0.lastPathComponent != "README.txt" }
+            .map { (name: $0.deletingPathExtension().lastPathComponent, url: $0) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }()
+
+    /// Decodes and renders an image without showing any UI.
+    static func smokeTest(path: String) -> Bool {
+        guard let image = try? TIFFImporter.read(path: path) else { return false }
+        let pixels = DisplayMapper.render(image)
+        return makeCGImage(pixels, width: image.width, height: image.height) != nil
     }
 
     func apply(_ lut: LUT) {

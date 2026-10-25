@@ -1,0 +1,118 @@
+name: Release
+
+# Builds the installers on every pull request that touches packaging, and on
+# demand. A version tag (v*) or a manual run with "draft_release" also
+# creates a draft GitHub release with the installers attached.
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "Apps/**"
+      - "Sources/**"
+      - "Tools/package/**"
+      - "Resources/**"
+      - "VERSION"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+    inputs:
+      draft_release:
+        description: "Create a draft GitHub release with the installers"
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS DMG
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the build number is the commit count
+      - name: Select Xcode 26
+        run: |
+          xcode="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$xcode" ]; then sudo xcode-select -s "$xcode"; fi
+          swift --version
+      - name: Build, sign ad hoc and package
+        run: Tools/package/macos/package.sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  windows:
+    name: Windows installer
+    runs-on: windows-2025
+    steps:
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: compnerd/gha-setup-swift@main
+        with:
+          branch: swift-6.2.4-release
+          tag: 6.2.4-RELEASE
+      - name: Build, stage, test and package
+        shell: pwsh
+        run: Tools/package/windows/package.ps1 -Output dist -TestInstall
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/*.exe
+            dist/*.zip
+          if-no-files-found: error
+
+  linux:
+    name: Linux CLI
+    runs-on: ubuntu-24.04
+    container: swift:6.2-noble
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and package
+        run: Tools/package/linux/package.sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Draft GitHub release
+    needs: [macos, windows, linux]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.draft_release)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Read the version
+        id: version
+        run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: Mancora ${{ steps.version.outputs.version }}
+          body_path: Tools/package/RELEASE_NOTES.md
+          draft: true
+          prerelease: true
+          files: dist/*

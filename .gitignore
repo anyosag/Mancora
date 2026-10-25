@@ -12,5 +12,8 @@
 xcuserdata/
 DerivedData/
 
+# Installers built by Tools/package
+/dist/
+
 # Fixture generation scratch
 /Tools/fixtures/.cache/
