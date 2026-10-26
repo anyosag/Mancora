@@ -46,6 +46,29 @@ struct SelectionCommandTests {
         #expect(after[center] == 255 - before[center])
     }
 
+    /// ImageJ's Salt and Pepper is never seeded: only what it may change is fixed.
+    @Test func saltAndPepperChangesOnlyTheSelectionToBlackOrWhite() throws {
+        let width = 40, height = 30
+        let before = (0..<(width * height)).map { UInt8(1 + ($0 * 37) % 250) }
+        var context = CommandContext()
+        context.add(try Hyperstack(title: "g.tif", stack: try ImageStack(width: width, height: height, planes: [.gray8(before)])))
+        try context.withCurrent("test") { (open: inout OpenImage) throws(CommandError) in
+            open.roi = Roi(.rectangle(.integer(x: 5, y: 4, width: 20, height: 20)))
+        }
+        try CommandRegistry.standard.run("Salt and Pepper", in: &context)
+        let after = try pixels(context)
+        var changed = 0
+        for y in 0..<height {
+            for x in 0..<width where after[y * width + x] != before[y * width + x] {
+                #expect((5..<25).contains(x) && (4..<24).contains(y), "pixel (\(x), \(y))")
+                #expect(after[y * width + x] == 0 || after[y * width + x] == 255)
+                changed += 1
+            }
+        }
+        // (int)(0.05 * 400) / 2 = 10 salt and 10 pepper pixels, some of them the same.
+        #expect(changed > 0 && changed <= 20)
+    }
+
     @Test func linesAndPointsCountAsNoSelection() throws {
         let before = try pixels(try context(with: nil))
         for roi in [Roi(.line(.init(x1: 1, y1: 1, x2: 6, y2: 4))), Roi(.points(.init(.integer([.init(x: 3, y: 3)]))))] {

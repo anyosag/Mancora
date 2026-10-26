@@ -136,4 +136,35 @@ struct ExtraFilterParityTests {
                 """#, on: .stack32),
         ])
     }
+
+    /// Noise is reproducible once a macro seeds ImageJ's generator, which
+    /// every noise filter then shares.
+    @Test func noise() async throws {
+        func seeded(_ name: String, _ code: String, on input: ParityInput) -> MacroParityCase {
+            MacroParityCase(name, "random(\"seed\", 7);\n" + code + "\ngetMinAndMax(min, max);\nprint(min, max);\n", on: input)
+        }
+        try await MacroParity.check([
+            seeded("Add Noise, 8-bit", #"run("Add Noise");"#, on: .gray8),
+            seeded("Add Noise, 16-bit", #"run("Add Noise");"#, on: .gray16),
+            seeded("Add Noise, 32-bit", #"run("Add Noise");"#, on: .gray32),
+            seeded("Add Noise, RGB", #"run("Add Noise");"#, on: .rgb),
+            seeded("Add Specified Noise", #"run("Add Specified Noise...", "standard=60");"#, on: .gray8),
+            seeded("Add Specified Noise, stack", #"run("Add Specified Noise...", "standard=10 stack");"#, on: .stack16),
+            seeded("Add Noise, one slice", #"run("Add Noise", "slice");"#, on: .stack32),
+            seeded("Add Noise in an oval", #"run("Add Noise");"#, on: .ovalROI),
+            seeded("Add Noise in a rectangle", #"run("Add Noise");"#, on: .gray16Polygon),
+            seeded("Add Noise on a line", #"run("Add Noise");"#, on: .gray8Line),
+            // The stream continues from one filter to the next; the deviation is kept.
+            seeded("Noise twice", #"""
+                run("Add Specified Noise...", "standard=5");
+                run("Add Specified Noise...", " ");
+                run("Add Noise");
+                """#, on: .gray32),
+            // The seed is cast to int.
+            MacroParityCase("Seed beyond int", #"""
+                random("seed", 3000000000);
+                run("Add Noise");
+                """#, on: .gray8),
+        ])
+    }
 }

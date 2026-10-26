@@ -24,7 +24,10 @@ public final class MacroSession {
     public var batchMode = true
     public var lineWidth = 1
     /// `random("seed", n)`'s seed, which ImageJ also uses for its noise filters.
-    public var randomSeed = Double.nan
+    public var randomSeed: Double {
+        get { context.randomSeed }
+        set { context.randomSeed = newValue }
+    }
     /// The foreground and background colors (`0xRRGGBB`), kept in the command settings.
     public var foreground: UInt32 {
         get { context.settings.foreground }

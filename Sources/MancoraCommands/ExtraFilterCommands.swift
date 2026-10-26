@@ -5,7 +5,8 @@ import MancoraProcess
 /// Hat, the 3D filters, binary Median, NaN Background and the shadows.
 enum ExtraFilterCommands {
     static var all: [CommandDefinition] {
-        [unsharpMask, topHat, gaussianBlur3D, binaryMedian, nanBackground] + shadows + filters3D
+        [unsharpMask, topHat, gaussianBlur3D, binaryMedian, nanBackground, addNoise, addSpecifiedNoise, saltAndPepper]
+            + shadows + filters3D
     }
 
     /// ImageJ's `isHyperStack()` for an image opened as one: more than three dimensions.
@@ -135,6 +136,62 @@ enum ExtraFilterCommands {
                     open.threshold = nil
                 }
             }
+        }
+    }
+
+    // MARK: Process ▸ Noise
+
+    /// `Filters("add")`: Gaussian noise of standard deviation 25.
+    static let addNoise = CommandDefinition("Add Noise", menu: "Process>Noise") { context, options in
+        try noise("Add Noise", standardDeviation: 25, &context, options)
+    }
+
+    /// `Filters("noise")`: `standard=` deviation, which ImageJ keeps between runs.
+    static let addSpecifiedNoise = CommandDefinition("Add Specified Noise...", menu: "Process>Noise") { context, options in
+        let sd = options.number(forLabel: "Standard Deviation:", default: context.settings.noiseStandardDeviation)
+        context.settings.noiseStandardDeviation = sd
+        try noise("Add Specified Noise...", standardDeviation: sd, &context, options)
+    }
+
+    /// `ImageProcessor.noise` on each target plane, within the selection,
+    /// from the generator all noise filters share: seeded first by a pending
+    /// `random("seed", n)` (cast to `int`). Run on the image's own plane,
+    /// 16- and 32-bit noise resets its display range.
+    static func noise(_ name: String, standardDeviation sd: Double, _ context: inout CommandContext, _ options: MacroOptions) throws {
+        guard let open = context.current else { throw CommandError.noImage(name) }
+        var random = context.noiseRandom ?? JavaRandom()
+        if !context.randomSeed.isNaN {
+            random.setSeed(Int64(JavaNumerics.int32(context.randomSeed)))
+            context.randomSeed = .nan
+        }
+        let single = FilterCommands.targetPlanes(open, options).count == 1
+        var changed: Plane?
+        try FilterCommands.applyInSelection(name, &context, options) { plane, width, _, region in
+            let noisy = plane.addingNoise(standardDeviation: sd, width: width, rect: region?.rect, random: &random)
+            changed = noisy
+            return noisy
+        }
+        context.noiseRandom = random
+        let type = open.image.pixelType
+        guard single, type == .gray16 || type == .gray32Float, let changed else { return }
+        try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in
+            var channel = open.image.channels[open.channel]
+            channel.displayRange = ImageMath.resetRange(changed)
+            open.image.setDisplay(channel, forChannel: open.channel)
+        }
+    }
+
+    /// `SaltAndPepper`: 2.5% of an 8-bit image's (or selection's) pixels
+    /// become 255 and 2.5% 0, at random (ImageJ's generator is never seeded).
+    static let saltAndPepper = CommandDefinition("Salt and Pepper", menu: "Process>Noise") { context, options in
+        let name = "Salt and Pepper"
+        guard let open = context.current else { throw CommandError.noImage(name) }
+        guard open.image.pixelType == .gray8 else {
+            throw CommandError.failed(command: name, detail: "\"\(name)\" requires an image of type:\n \n8-bit grayscale\n8-bit color")
+        }
+        var random = JavaRandom()
+        try FilterCommands.applyInSelection(name, &context, options) { plane, width, _, region in
+            plane.addingSaltAndPepper(width: width, rect: region?.rect, random: &random)
         }
     }
 
