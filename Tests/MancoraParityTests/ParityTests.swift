@@ -331,6 +331,21 @@ struct ThresholdParityTests {
             ])
     }
 
+    /// A stack's processors have its LUT: an inverted one swaps the side each
+    /// slice's own threshold takes.
+    @Test func invertedLUTStacks() async throws {
+        let invert = ParityCase.Step(command: "Invert LUT", options: "")
+        func mask(_ options: String, on input: ParityInput) -> ParityCase {
+            ParityCase(steps: [invert, .init(command: "Convert to Mask", options: options)], inputs: [input])
+        }
+        try await Parity.check([
+            mask("method=Otsu background=Light calculate", on: .stack8),
+            mask("method=Otsu background=Light calculate", on: .stack16),
+            mask("method=Default background=Default calculate black", on: .stack8),
+            mask("method=Huang background=Dark calculate black", on: .stack32),
+        ])
+    }
+
     @Test(arguments: [ParityInput.stack8, .stack16, .stack32])
     func everyMethod(on input: ParityInput) async throws {
         try await Parity.check(

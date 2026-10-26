@@ -136,19 +136,24 @@ enum ThresholdCommands {
         _ open: inout OpenImage, method: AutoThresholder.Method, background: String, blackBackground: Bool
     ) throws(CommandError) {
         let name = "Convert to Mask"
+        // The stack's processors (and their 8-bit conversions) have its LUT,
+        // whose inversion swaps the side thresholded.
+        let image = open.image
+        let invertedLUT = image.channels.count == 1 && image.pixelType.usesLUT && image.channels[0].lut.isInverted
         var planes: [Plane] = []
-        for plane in open.image.stack.planes {
+        for plane in image.stack.planes {
             // Other types go to 8-bit through each plane's own range.
             let byte = plane.pixelType == .gray8
                 ? plane : TypeConverter.toGray8(plane, displayRange: plane.valueRange() ?? 0...0)
             let levels: ThresholdLevels
             do {
                 if method == .default && background == "Default" {
-                    levels = try Threshold.legacyIsoData(byte).levels
+                    levels = try Threshold.legacyIsoData(byte, invertedLUT: invertedLUT).levels
                 } else {
                     // A stack's processors never had setAutoThreshold("…"), so addOne is off.
                     levels = try Threshold.auto(
-                        byte, method: method, options: AutoThresholdOptions(darkBackground: background != "Light"),
+                        byte, method: method,
+                        options: AutoThresholdOptions(darkBackground: background != "Light", invertedLUT: invertedLUT),
                         addOne: false
                     ).levels
                 }
