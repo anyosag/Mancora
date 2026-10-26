@@ -52,6 +52,8 @@ final class ViewerModel {
     /// The size and position of the selection being drawn, for the status bar.
     var selectionText: String?
     @ObservationIgnored var gesture: SelectionGesture?
+    /// The scale the canvas shows the image at (for Zoom to Fit, the fitted one).
+    @ObservationIgnored var displayedScale = 1.0
 
     /// The image's threshold (raw values), shown in red; commands use it.
     var threshold: ThresholdLevels?
@@ -304,14 +306,26 @@ final class ViewerModel {
         name.trimmingCharacters(in: .whitespaces).hasSuffix("...")
     }
 
+    /// In [+] (`factor` above 1) and Out [-]: the next of ImageJ's zoom levels.
     func zoom(by factor: Double) {
         let current: Double
         switch zoom {
         case .scale(let s): current = s
-        case .fit: current = 1
+        case .fit: current = displayedScale
         }
-        zoom = .scale(min(max(current * factor, 1.0 / 32), 64))
+        let levels = Self.zoomLevels
+        if factor > 1 {
+            zoom = .scale(levels.first { $0 > current * (1 + 1e-9) } ?? levels[levels.count - 1])
+        } else {
+            zoom = .scale(levels.last { $0 < current * (1 - 1e-9) } ?? levels[0])
+        }
     }
+
+    /// `ImageCanvas.zoomLevels`.
+    static let zoomLevels: [Double] = [
+        1 / 72.0, 1 / 48.0, 1 / 32.0, 1 / 24.0, 1 / 16.0, 1 / 12.0, 1 / 8.0, 1 / 6.0, 1 / 4.0, 1 / 3.0, 1 / 2.0, 0.75, 1, 1.5,
+        2, 3, 4, 6, 8, 12, 16, 24, 32,
+    ]
 
     /// File ▸ Revert: the file as saved.
     func revert() {
