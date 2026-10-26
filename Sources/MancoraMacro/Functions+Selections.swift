@@ -501,8 +501,10 @@ extension Functions {
                 roi.position = open.isHyperstackPosition ? .hyperstack(channel: d.channels > 1 ? open.channel + 1 : 0,
                     slice: d.slices > 1 ? open.slice + 1 : 0, frame: d.frames > 1 ? open.frame + 1 : 0) : .stack(open.currentSliceNumber)
             }
+            // The manager names the ROI with its label.
             let name = roi.name ?? Self.roiManagerLabel(open, roi)
-            rm.entries.append(.init(name: Self.uniqueRoiName(name, rm), roi: roi))
+            roi.name = name
+            rm.entries.append(.init(name: name, roi: roi))
         case "select":
             try checkIndex(index, 0, rm.count - 1)
             rm.selected = [index]
@@ -615,15 +617,6 @@ extension Functions {
         var label = padded(yc) + "-" + padded(xc)
         if open.image.stack.count > 1 { label = padded(open.currentSliceNumber) + "-" + label }
         return label
-    }
-
-    /// `RoiManager.getUniqueName`: "name-1", "name-2"... for a name already in the list.
-    static func uniqueRoiName(_ name: String, _ rm: RoiManagerList) -> String {
-        let names = Set(rm.entries.map(\.name))
-        guard names.contains(name) else { return name }
-        var n = 1
-        while names.contains(name + "-" + String(n)) { n += 1 }
-        return name + "-" + String(n)
     }
 
     // MARK: - Variable functions
@@ -803,9 +796,7 @@ extension Functions {
     /// `Roi.contains(x, y)` for area selections: whether the pixel is in the mask.
     static func roiContains(_ roi: Roi, _ x: Double, _ y: Double) -> Bool {
         guard roi.isArea, let mask = try? roi.mask() else { return false }
-        let ix = jIntI(x) - mask.bounds.x, iy = jIntI(y) - mask.bounds.y
-        guard ix >= 0, iy >= 0, ix < mask.bounds.width, iy < mask.bounds.height else { return false }
-        return mask[x: ix, y: iy]
+        return mask[x: jIntI(x), y: jIntI(y)]
     }
 
     func doRoiManager() throws(MacroSignal) -> Variable? {

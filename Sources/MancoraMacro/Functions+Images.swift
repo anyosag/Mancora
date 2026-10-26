@@ -18,21 +18,42 @@ extension OpenImage {
 extension Functions {
     // MARK: - The current image
 
-    /// `getImage()`: the current image, or "There are no images open".
+    /// `getImage()`: the current image, or "There are no images open". As in
+    /// ImageJ, it drops the cached processor, so the next `getProcessor()`
+    /// applies the macro's drawing color again.
     func image() throws(MacroSignal) -> OpenImage {
+        let open = try currentImage()
+        cachedProcessor = nil
+        return open
+    }
+
+    func currentImage() throws(MacroSignal) -> OpenImage {
         guard let open = session.context.current else { try interp.fail("There are no images open") }
         return open
     }
 
+    /// `resetImage()`.
+    func resetImage() { cachedProcessor = nil }
+
     /// Changes the current image.
     func modifyImage(_ body: (inout OpenImage) -> Void) throws(MacroSignal) {
-        _ = try image()
+        _ = try currentImage()
         try? session.context.withCurrent("") { (open: inout OpenImage) in body(&open) }
     }
 
     /// Replaces the plane shown.
     func setCurrentPlane(_ plane: Plane) throws(MacroSignal) {
         try modifyImage { open in try? open.image.setPlane(plane, at: open.stackIndex) }
+    }
+
+    /// Changes the plane shown in place (with its width and height): a
+    /// macro setting pixels one by one doesn't copy the image each time.
+    func modifyCurrentPlane(_ body: (inout Plane, Int, Int) -> Void) throws(MacroSignal) {
+        _ = try currentImage()
+        try? session.context.withCurrent("") { (open: inout OpenImage) in
+            let index = open.stackIndex, width = open.image.width, height = open.image.height
+            open.image.modifyPlane(at: index) { body(&$0, width, height) }
+        }
     }
 
     func commandError(_ error: CommandError) throws(MacroSignal) -> Never {
@@ -45,6 +66,7 @@ extension Functions {
     }
 
     func runCommand(_ name: String, options: String?) throws(MacroSignal) {
+        resetImage()
         do { try session.runCommand(name, options: options) } catch { try commandError(error) }
     }
 
@@ -63,6 +85,7 @@ extension Functions {
 
     func selectWindow() throws(MacroSignal) {
         let title = try getStringArg()
+        resetImage()
         if let match = session.context.images.first(where: { $0.title == title }) {
             session.activate(match.id)
             return
@@ -73,6 +96,7 @@ extension Functions {
     }
 
     func selectImage() throws(MacroSignal) {
+        resetImage()
         try interp.getLeftParen()
         if isStringArg() {
             let title = try getString()
@@ -537,7 +561,7 @@ extension Functions {
     func getPixel() throws(MacroSignal) -> Double {
         try interp.getLeftParen()
         let a1 = try interp.getExpression()
-        let open = try image()
+        let open = try processor()
         let plane = open.currentPlane
         let width = open.image.width, height = open.image.height
         interp.getToken()
@@ -551,7 +575,7 @@ extension Functions {
                 }
                 return Self.rawPixel(plane, iy * width + ix)
             }
-            if plane.pixelType == .rgb8 { try unsupported("getPixel with fractional coordinates on RGB images") }
+            if case .rgb8(let p) = plane { return Double(Self.interpolatedRGB(p, width: width, height: height, a1, a2)) }
             return Self.interpolatedValue(plane, width: width, height: height, a1, a2)
         }
         if interp.token != ch(")") { try interp.error("')' expected") }
@@ -560,13 +584,14 @@ extension Functions {
         return Self.rawPixel(plane, index)
     }
 
-    /// `ip.getPixel` (or `getPixelValue` for floats): the stored value; RGB as `0xRRGGBB`.
+    /// `ip.getPixel` (or `getPixelValue` for floats): the stored value; RGB
+    /// as the Java int ImageJ keeps, alpha included (so usually negative).
     static func rawPixel(_ plane: Plane, _ i: Int) -> Double {
         switch plane {
         case .gray8(let p): Double(p[i])
         case .gray16(let p): Double(p[i])
         case .gray32Float(let p): Double(p[i])
-        case .rgb8(let p): Double(p[i] & 0xFF_FFFF)
+        case .rgb8(let p): Double(Int32(bitPattern: p[i]))
         }
     }
 
@@ -594,50 +619,74 @@ extension Functions {
         return lower + yf * (upper - lower)
     }
 
+    /// `ColorProcessor.getPixelInterpolated`: each channel bilinear, rounded, as a Java int (alpha included).
+    static func interpolatedRGB(_ p: [UInt32], width: Int, height: Int, _ x: Double, _ y: Double) -> Int32 {
+        if x < 0 || y < 0 || x >= Double(width - 1) || y >= Double(height - 1) { return 0 }
+        let xbase = jIntI(x), ybase = jIntI(y)
+        let xf = x - Double(xbase), yf = y - Double(ybase)
+        let offset = ybase * width + xbase
+        let ll = p[offset], lr = p[offset + 1], ur = p[offset + width + 1], ul = p[offset + width]
+        func channel(_ shift: UInt32) -> Int32 {
+            func c(_ v: UInt32) -> Double { Double((v >> shift) & 0xFF) }
+            let upper = c(ul) + xf * (c(ur) - c(ul)), lower = c(ll) + xf * (c(lr) - c(ll))
+            return jInt(lower + yf * (upper - lower) + 0.5)
+        }
+        let r = channel(16), g = channel(8), b = channel(0)
+        return Int32(bitPattern: 0xFF00_0000) | ((r & 0xff) << 16) | ((g & 0xff) << 8) | (b & 0xff)
+    }
+
     func setPixel() throws(MacroSignal) {
         try interp.getLeftParen()
         let a1 = jIntI(try interp.getExpression())
         try interp.getComma()
         let a2 = try interp.getExpression()
         interp.getToken()
-        let open = try image()
-        var plane = open.currentPlane
-        let width = open.image.width, height = open.image.height
+        let count: Int
+        do {
+            let open = try processor()
+            count = open.image.width * open.image.height
+        }
         if interp.token == ch(",") {
             let a3 = try interp.getExpression()
             try interp.getRightParen()
             let x = a1, y = jIntI(a2)
-            guard x >= 0, x < width, y >= 0, y < height else { return }
-            Self.putPixel(&plane, y * width + x, a3)
+            try modifyCurrentPlane { plane, width, height in
+                guard x >= 0, x < width, y >= 0, y < height else { return }
+                Self.putPixel(&plane, y * width + x, a3)
+            }
         } else {
             if interp.token != ch(")") { try interp.error("')' expected") }
             let index = a1
-            guard index >= 0, index < plane.count else { try interp.fail("Index (\(index)) out of range") }
-            switch plane {
-            case .rgb8(var p):
-                p[index] = 0xFF00_0000 | UInt32(bitPattern: jInt(a2))
-                plane = .rgb8(p)
-            default:
-                Self.setFloat(&plane, index, Float(a2))
+            guard index >= 0, index < count else { try interp.fail("Index (\(index)) out of range") }
+            try modifyCurrentPlane { plane, _, _ in
+                if case .rgb8 = plane {
+                    Self.putPixel(&plane, index, a2)  // ip.set(i, (int)v): the int as given
+                } else {
+                    Self.setFloat(&plane, index, Float(a2))
+                }
             }
         }
-        try setCurrentPlane(plane)
     }
 
     /// `putPixel(x, y, (int)v)` (clamped for 8 and 16 bits) or `putPixelValue` for floats.
+    /// Each case lets go of `plane` before writing, so the pixels change in place.
     static func putPixel(_ plane: inout Plane, _ i: Int, _ v: Double) {
         switch plane {
         case .gray8(var p):
+            plane = .gray8([])
             p[i] = UInt8(max(0, min(255, Int(jInt(v)))))
             plane = .gray8(p)
         case .gray16(var p):
+            plane = .gray8([])
             p[i] = UInt16(max(0, min(65535, Int(jInt(v)))))
             plane = .gray16(p)
         case .gray32Float(var p):
+            plane = .gray8([])
             p[i] = Float(v)
             plane = .gray32Float(p)
         case .rgb8(var p):
-            p[i] = 0xFF00_0000 | UInt32(bitPattern: jInt(v))
+            plane = .gray8([])
+            p[i] = UInt32(bitPattern: jInt(v))  // ColorProcessor stores the int as given
             plane = .rgb8(p)
         }
     }
@@ -646,12 +695,15 @@ extension Functions {
     static func setFloat(_ plane: inout Plane, _ i: Int, _ v: Float) {
         switch plane {
         case .gray8(var p):
+            plane = .gray8([])
             p[i] = UInt8(truncatingIfNeeded: jInt(Double(v)))
             plane = .gray8(p)
         case .gray16(var p):
+            plane = .gray8([])
             p[i] = UInt16(truncatingIfNeeded: jInt(Double(v)))
             plane = .gray16(p)
         case .gray32Float(var p):
+            plane = .gray8([])
             p[i] = v
             plane = .gray32Float(p)
         case .rgb8: break
@@ -677,7 +729,8 @@ extension Functions {
         for y in max(region.y, 0)..<min(region.y + region.height, height) {
             for x in max(region.x, 0)..<min(region.x + region.width, width) where region.contains(x, y) {
                 let i = y * width + x
-                let v = Self.rawPixel(plane, i)
+                var v = Self.rawPixel(plane, i)
+                if case .rgb8(let p) = plane { v = Double(p[i] & 0xFF_FFFF) }
                 var replace = v >= v1 && v <= v2
                 if v1.isNaN && v2.isNaN && v.isNaN { replace = true }
                 if replace { Self.putPixel(&plane, i, isFloat ? v3 : Double(jInt(v3))) }
@@ -696,46 +749,34 @@ extension Functions {
         }
     }
 
-    /// The value that drawing and filling use: `setColor(value)`, or the
-    /// foreground color as each processor type maps a color.
-    func drawingValue(for open: OpenImage) -> Double {
-        if let value = session.drawingValue { return value }
-        let color = session.drawingColor ?? session.foreground
-        switch open.image.pixelType {
-        case .rgb8: return Double(color)
-        case .gray8:
-            return Double(Self.bestIndex(color, open.image.channels[open.channel].lut))
-        case .gray16, .gray32Float:
-            let best = Double(Self.bestIndex(color, open.image.channels[open.channel].lut))
-            let range = open.image.channels[open.channel].displayRange
-            if open.image.pixelType == .gray16 {
-                return Double(jInt(range.lowerBound + (range.upperBound - range.lowerBound) * (best / 255.0)))
-            }
-            return range.lowerBound + (range.upperBound - range.lowerBound) * (best / 255.0)
+    /// `getProcessor()`: the current image. The first call since
+    /// `getImage()` or `resetImage()` gives its processor the macro's
+    /// `setColor` color or value, else the foreground color; later calls
+    /// keep the processor as it is.
+    @discardableResult
+    func processor() throws(MacroSignal) -> OpenImage {
+        let open = try currentImage()
+        if cachedProcessor == open.id { return open }
+        cachedProcessor = open.id
+        if let color = session.drawingColor {
+            session.processorFill[open.id] = EditCommands.fillValue(color: color, for: open)
+        } else if let value = session.drawingValue {
+            session.processorFill[open.id] = value
+        } else {
+            session.processorFill[open.id] = EditCommands.fillValue(color: session.foreground, for: open)
         }
+        return open
     }
 
-    /// `ImageProcessor.getBestIndex(Color)`: the LUT entry closest to the color.
-    static func bestIndex(_ color: UInt32, _ lut: LUT) -> Int {
-        let r = Int((color >> 16) & 0xFF), g = Int((color >> 8) & 0xFF), b = Int(color & 0xFF)
-        var minDistance = Double.greatestFiniteMagnitude
-        var minIndex = 0
-        for i in 0..<256 {
-            let rd = Double(r - Int(lut.reds[i])), gd = Double(g - Int(lut.greens[i])), bd = Double(b - Int(lut.blues[i]))
-            let distance = rd * rd + gd * gd + bd * bd
-            if distance < minDistance {
-                minDistance = distance
-                minIndex = i
-            }
-            if distance == 0 { break }
-        }
-        return minIndex
+    /// The value drawing and filling use on `open`.
+    func drawingValue(for open: OpenImage) -> Double {
+        session.processorFill[open.id] ?? EditCommands.fillValue(color: session.foreground, for: open)
     }
 
     func fill() throws(MacroSignal) {
         try interp.getParens()
+        try processor()
         let open = try image()
-        var plane = open.currentPlane
         let width = open.image.width, height = open.image.height
         var region = MeasurementRegion(x: 0, y: 0, width: width, height: height)
         if let roi = open.roi {
@@ -743,53 +784,105 @@ extension Functions {
             do { region = try roi.measurementRegion(width: width, height: height) } catch { try interp.fail("\(error)") }
         }
         let value = drawingValue(for: open)
-        for y in max(region.y, 0)..<min(region.y + region.height, height) {
-            for x in max(region.x, 0)..<min(region.x + region.width, width) where region.contains(x, y) {
-                Self.putFillValue(&plane, y * width + x, value)
+        try modifyCurrentPlane { plane, _, _ in
+            for y in max(region.y, 0)..<max(max(region.y, 0), min(region.y + region.height, height)) {
+                for x in max(region.x, 0)..<max(max(region.x, 0), min(region.x + region.width, width)) where region.contains(x, y) {
+                    EditCommands.putFill(&plane, y * width + x, value)
+                }
             }
-        }
-        try setCurrentPlane(plane)
-    }
-
-    /// How `ip.fill()` stores the fill value.
-    static func putFillValue(_ plane: inout Plane, _ i: Int, _ v: Double) {
-        switch plane {
-        case .gray32Float(var p):
-            p[i] = Float(v)
-            plane = .gray32Float(p)
-        case .rgb8(var p):
-            p[i] = 0xFF00_0000 | (UInt32(bitPattern: jInt(v)) & 0xFF_FFFF)
-            plane = .rgb8(p)
-        default:
-            putPixel(&plane, i, v)
         }
     }
 
     func drawOrFill(_ type: Int) throws(MacroSignal) {
-        let x = jIntI(jFloor(try getFirstArg() + 0.5))
-        let y = jIntI(jFloor(try getNextArg() + 0.5))
-        let w = jIntI(jFloor(try getNextArg() + 0.5))
-        let h = jIntI(jFloor(try getLastArg() + 0.5))
-        guard type == FILL_RECT else { try unsupported(Self.names[type] ?? "drawing") }
-        let open = try image()
-        var plane = open.currentPlane
-        let width = open.image.width, height = open.image.height
-        let value = drawingValue(for: open)
-        for yy in max(y, 0)..<max(max(y, 0), min(y + h, height)) {
-            for xx in max(x, 0)..<max(max(x, 0), min(x + w, width)) { Self.putFillValue(&plane, yy * width + xx, value) }
+        let x = jIntI(try getFirstArg())
+        let y = jIntI(try getNextArg())
+        let w = jIntI(try getNextArg())
+        let h = jIntI(try getLastArg())
+        let value = drawingValue(for: try processor())
+        try draw(value) { canvas, pen in
+            switch type {
+            case FILL_RECT: canvas.fillRect(x, y, w, h)
+            case DRAW_RECT: canvas.drawRect(x, y, w, h, pen: &pen)
+            case FILL_OVAL: canvas.fillOval(x, y, w, h)
+            default: canvas.drawOval(x, y, w, h, pen: &pen)
+            }
         }
-        try setCurrentPlane(plane)
+    }
+
+    /// Draws on the plane shown with `value`, in place.
+    private func draw(_ value: Double, _ body: (inout Canvas, inout (x: Int, y: Int)) -> Void) throws(MacroSignal) {
+        var pen = self.pen
+        let lineWidth = session.lineWidth
+        try modifyCurrentPlane { plane, width, height in
+            var canvas = Canvas(plane: Self.take(&plane), width: width, height: height, value: value, lineWidth: lineWidth)
+            body(&canvas, &pen)
+            plane = canvas.plane
+        }
+        self.pen = pen
+    }
+
+    /// Takes the pixels out of `plane`, leaving it empty, so the taker owns them.
+    static func take(_ plane: inout Plane) -> Plane {
+        let taken = plane
+        plane = .gray8([])
+        return taken
+    }
+
+    /// `(int)Math.round(expression)`.
+    private func roundedArgument() throws(MacroSignal) -> Int {
+        Int(Int32(truncatingIfNeeded: javaMathRound(try interp.getExpression())))
+    }
+
+    func drawLine() throws(MacroSignal) {
+        try interp.getLeftParen()
+        let x1 = try roundedArgument()
+        try interp.getComma()
+        let y1 = try roundedArgument()
+        try interp.getComma()
+        let x2 = try roundedArgument()
+        try interp.getComma()
+        let y2 = try roundedArgument()
+        try interp.getRightParen()
+        let value = drawingValue(for: try processor())
+        pen = (x1, y1)
+        try draw(value) { canvas, pen in canvas.lineTo(x2, y2, pen: &pen) }
+    }
+
+    func moveTo() throws(MacroSignal) {
+        try interp.getLeftParen()
+        let x = try roundedArgument()
+        try interp.getComma()
+        let y = try roundedArgument()
+        try interp.getRightParen()
+        try processor()
+        pen = (x, y)
+    }
+
+    func lineTo() throws(MacroSignal) {
+        try interp.getLeftParen()
+        let x = try roundedArgument()
+        try interp.getComma()
+        let y = try roundedArgument()
+        try interp.getRightParen()
+        let value = drawingValue(for: try processor())
+        try draw(value) { canvas, pen in canvas.lineTo(x, y, pen: &pen) }
     }
 
     func setForegroundColor() throws(MacroSignal) {
+        let isImage = session.context.current != nil
+        if isImage { try processor() }
         let color = try colorArguments()
         session.foreground = color
+        resetImage()
+        // setLineWidth's getProcessor() still applies the macro's color, then it is cleared.
+        if isImage { try processor() }
         session.drawingColor = nil
         session.drawingValue = nil
     }
 
     func setBackgroundColor() throws(MacroSignal) {
         session.background = try colorArguments()
+        resetImage()
     }
 
     /// `(r, g, b)` or `(0xRRGGBB)`.
@@ -822,12 +915,17 @@ extension Functions {
             }
             session.drawingColor = color
             session.drawingValue = nil
+            if session.context.current != nil {
+                let open = try processor()
+                session.processorFill[open.id] = EditCommands.fillValue(color: color, for: open)
+            }
             try interp.getRightParen()
             return
         }
         let arg1 = try interp.getExpression()
         if interp.nextToken() == ch(")") {
             try interp.getRightParen()
+            try processor()
             let open = try image()
             var value = arg1
             switch open.image.pixelType {
@@ -840,13 +938,19 @@ extension Functions {
             }
             session.drawingValue = value
             session.drawingColor = nil
+            session.processorFill[open.id] = value
             return
         }
         let red = max(0, min(255, Int(jInt(arg1))))
         let green = max(0, min(255, Int(jInt(try getNextArg()))))
         let blue = max(0, min(255, Int(jInt(try getLastArg()))))
-        session.drawingColor = UInt32(red << 16 | green << 8 | blue)
+        let color = UInt32(red << 16 | green << 8 | blue)
+        session.drawingColor = color
         session.drawingValue = nil
+        if session.context.current != nil {
+            let open = try processor()
+            session.processorFill[open.id] = EditCommands.fillValue(color: color, for: open)
+        }
     }
 
     /// `getColor()`'s names and `#rrggbb`.
@@ -1256,16 +1360,12 @@ extension Functions {
 
     func saveSettings() throws(MacroSignal) {
         try interp.getParens()
-        session.savedSettings = (session.context.settings, session.foreground, session.background)
+        session.savedSettings = session.context.settings
     }
 
     func restoreSettings() throws(MacroSignal) {
         try interp.getParens()
-        if let saved = session.savedSettings {
-            session.context.settings = saved.0
-            session.foreground = saved.1
-            session.background = saved.2
-        }
+        if let saved = session.savedSettings { session.context.settings = saved }
     }
 
     func setOption() throws(MacroSignal) {
@@ -1394,28 +1494,52 @@ extension Functions {
         maximum?.setValue(stats.max)
         std?.setValue(stats.standardDeviation)
         if let hist {
-            guard let histogram = Self.histogram(open.currentPlane, width: open.image.width, region: region) else {
-                try unsupported("getStatistics' histogram of 16- and 32-bit images")
-            }
+            let histogram = Self.histogram(open.currentPlane, width: open.image.width, region: region) ?? []
             hist.setArray(VariableArray(histogram.map { Variable(Double($0)) }))
         }
     }
 
-    /// The 256-bin histogram of an 8-bit or RGB plane within `region`.
+    /// The 256-bin histogram `ImageStatistics` gives for `region`: by value
+    /// for 8-bit and RGB (the mean of R, G and B); from the minimum to the
+    /// maximum in the region for 16-bit (`ShortStatistics`) and 32-bit
+    /// (`FloatStatistics`) planes.
     static func histogram(_ plane: Plane, width: Int, region: MeasurementRegion?) -> [Int]? {
         let height = plane.count / max(width, 1)
         let r = region ?? MeasurementRegion(x: 0, y: 0, width: width, height: height)
         var histogram = [Int](repeating: 0, count: 256)
-        for y in max(r.y, 0)..<min(r.y + r.height, height) {
-            for x in max(r.x, 0)..<min(r.x + r.width, width) where r.contains(x, y) {
-                switch plane {
-                case .gray8(let p): histogram[Int(p[y * width + x])] += 1
-                case .rgb8(let p):
-                    let c = p[y * width + x]
-                    let v = (Int((c >> 16) & 0xFF) + Int((c >> 8) & 0xFF) + Int(c & 0xFF)) / 3
-                    histogram[v] += 1
-                default: return nil
-                }
+        func forEach(_ body: (Int) -> Void) {
+            for y in max(r.y, 0)..<max(max(r.y, 0), min(r.y + r.height, height)) {
+                for x in max(r.x, 0)..<max(max(r.x, 0), min(r.x + r.width, width)) where r.contains(x, y) { body(y * width + x) }
+            }
+        }
+        switch plane {
+        case .gray8(let p): forEach { histogram[Int(p[$0])] += 1 }
+        case .rgb8(let p):
+            forEach {
+                let c = p[$0]
+                histogram[(Int((c >> 16) & 0xFF) + Int((c >> 8) & 0xFF) + Int(c & 0xFF)) / 3] += 1
+            }
+        case .gray16(let p):
+            var counts = [Int](repeating: 0, count: 65536)
+            forEach { counts[Int(p[$0])] += 1 }
+            guard let lo = counts.firstIndex(where: { $0 > 0 }), let hi = counts.lastIndex(where: { $0 > 0 }) else { return histogram }
+            let binSize = Double(hi - lo + 1) / 256
+            let scale = 1 / binSize
+            for i in lo...hi where counts[i] > 0 {
+                histogram[min(255, jIntI(scale * Double(i - lo)))] += counts[i]
+            }
+        case .gray32Float(let p):
+            var lo = Double.greatestFiniteMagnitude, hi = -Double.greatestFiniteMagnitude
+            forEach {
+                let v = Double(p[$0])
+                if v < lo { lo = v }
+                if v > hi { hi = v }
+            }
+            let scale = 256 / (hi - lo)
+            forEach {
+                let v = Double(p[$0])
+                guard v >= lo && v <= hi else { return }
+                histogram[min(255, jIntI(scale * (v - lo)))] += 1
             }
         }
         return histogram
@@ -1603,5 +1727,146 @@ extension Functions {
 
     func getProfile() throws(MacroSignal) -> VariableArray? {
         try unsupported("getProfile")
+    }
+}
+
+/// An `ImageProcessor`'s drawing on a plane: the fill value, line width and
+/// clipping (the whole image) it draws with.
+struct Canvas {
+    var plane: Plane
+    let width: Int
+    let height: Int
+    let value: Double
+    let lineWidth: Int
+
+    init(plane: Plane, width: Int, height: Int, value: Double, lineWidth: Int) {
+        self.plane = plane
+        self.width = width
+        self.height = height
+        self.value = value
+        self.lineWidth = max(lineWidth, 1)
+    }
+
+    mutating func drawPixel(_ x: Int, _ y: Int) {
+        if x >= 0 && x < width && y >= 0 && y < height { EditCommands.putFill(&plane, y * width + x, value) }
+    }
+
+    /// `ImageProcessor.lineTo`: from the pen to (x2, y2), skipping the part outside the image.
+    mutating func lineTo(_ x2: Int, _ y2: Int, pen: inout (x: Int, y: Int)) {
+        let xMin = 0 - lineWidth / 2 - 1, xMax = width - 1 + lineWidth / 2 + 1
+        let yMin = 0 - lineWidth / 2 - 1, yMax = height - 1 + lineWidth / 2 + 1
+        let dx = x2 - pen.x, dy = y2 - pen.y
+        let n = max(abs(dx), abs(dy))
+        let xinc = dx != 0 ? Double(dx) / Double(n) : 0
+        let yinc = dy != 0 ? Double(dy) / Double(n) : 0
+        var x = Double(pen.x), y = Double(pen.y)
+        pen = (x2, y2)
+        var i1 = 0
+        if dx > 0 {
+            i1 = max(i1, jIntI((Double(xMin) - x) / xinc))
+        } else if dx < 0 {
+            i1 = max(i1, jIntI((Double(xMax) - x) / xinc))
+        } else if x < Double(xMin) || x > Double(xMax) {
+            return
+        }
+        if dy > 0 {
+            i1 = max(i1, jIntI((Double(yMin) - y) / yinc))
+        } else if dy < 0 {
+            i1 = max(i1, jIntI((Double(yMax) - y) / yinc))
+        } else if y < Double(yMin) || y > Double(yMax) {
+            return
+        }
+        var i2 = n
+        if dx > 0 {
+            i2 = min(i2, jIntI((Double(xMax) - x) / xinc))
+        } else if dx < 0 {
+            i2 = min(i2, jIntI((Double(xMin) - x) / xinc))
+        }
+        if dy > 0 {
+            i2 = min(i2, jIntI((Double(yMax) - y) / yinc))
+        } else if dy < 0 {
+            i2 = min(i2, jIntI((Double(yMin) - y) / yinc))
+        }
+        x += Double(i1) * xinc
+        y += Double(i1) * yinc
+        guard i1 <= i2 else { return }
+        for _ in i1...i2 {
+            let px = Int(Int32(truncatingIfNeeded: javaMathRound(x))), py = Int(Int32(truncatingIfNeeded: javaMathRound(y)))
+            switch lineWidth {
+            case 1: drawPixel(px, py)
+            case 2:
+                drawPixel(px, py)
+                drawPixel(px - 1, py)
+                drawPixel(px, py - 1)
+                drawPixel(px - 1, py - 1)
+            default: drawDot(px, py)
+            }
+            x += xinc
+            y += yinc
+        }
+    }
+
+    /// `ImageProcessor.drawDot`: a disk `lineWidth` across.
+    mutating func drawDot(_ xcenter: Int, _ ycenter: Int) {
+        var r = Double(lineWidth) / 2.0
+        let xmin = jIntI(Double(xcenter) - r + 0.5), ymin = jIntI(Double(ycenter) - r + 0.5)
+        let xmax = xmin + lineWidth, ymax = ymin + lineWidth
+        if xmin < 0 || ymin < 0 || xmax > width - 1 || ymax > height - 1 {
+            let r2 = r * r
+            r -= 0.5
+            let xoffset = Double(xmin) + r, yoffset = Double(ymin) + r
+            for y in ymin..<ymax {
+                for x in xmin..<xmax {
+                    let xx = Double(x) - xoffset, yy = Double(y) - yoffset
+                    if xx * xx + yy * yy <= r2 { drawPixel(x, y) }
+                }
+            }
+        } else if let mask = try? Roi(.oval(.integer(x: 0, y: 0, width: Int32(lineWidth), height: Int32(lineWidth)))).mask() {
+            for y in 0..<lineWidth {
+                for x in 0..<lineWidth where mask[x: x, y: y] { drawPixel(xmin + x, ymin + y) }
+            }
+        }
+    }
+
+    mutating func fillRect(_ x: Int, _ y: Int, _ w: Int, _ h: Int) {
+        guard w > 0 && h > 0 else { return }
+        for yy in max(y, 0)..<max(max(y, 0), min(y + h, height)) {
+            for xx in max(x, 0)..<max(max(x, 0), min(x + w, width)) { drawPixel(xx, yy) }
+        }
+    }
+
+    mutating func drawRect(_ x: Int, _ y: Int, _ w: Int, _ h: Int, pen: inout (x: Int, y: Int)) {
+        guard w >= 1 && h >= 1 else { return }
+        let e = lineWidth == 1 ? 1 : 0
+        pen = (x, y)
+        lineTo(x + w - e, y, pen: &pen)
+        lineTo(x + w - e, y + h - e, pen: &pen)
+        lineTo(x, y + h - e, pen: &pen)
+        lineTo(x, y, pen: &pen)
+    }
+
+    /// `fillOval`: the pixels of the `OvalRoi`'s mask.
+    mutating func fillOval(_ x: Int, _ y: Int, _ w: Int, _ h: Int) {
+        guard w > 0 && h > 0, w * h <= 4 * width * height,
+            let mask = try? Roi(.oval(.integer(x: Int32(x), y: Int32(y), width: Int32(w), height: Int32(h)))).mask()
+        else { return }
+        let b = mask.bounds
+        for yy in b.y..<(b.y + b.height) {
+            for xx in b.x..<(b.x + b.width) where mask[x: xx, y: yy] { drawPixel(xx, yy) }
+        }
+    }
+
+    /// `drawOval`: the outline the wand traces around the oval's mask.
+    mutating func drawOval(_ x: Int, _ y: Int, _ w: Int, _ h: Int, pen: inout (x: Int, y: Int)) {
+        guard w > 0 && h > 0, w * h <= 4 * width * height,
+            let mask = try? Roi(.oval(.integer(x: 0, y: 0, width: Int32(w), height: Int32(h)))).mask()
+        else { return }
+        let values = mask.pixels.map { $0 ? Float(255) : 0 }
+        let outline = Wand.outline(
+            values: values, width: mask.bounds.width, x: w / 2, y: h / 2, lower: 255, upper: 255, mode: .legacy)
+        guard let first = outline.xs.first else { return }
+        pen = (Int(first) + x, Int(outline.ys[0]) + y)
+        for (px, py) in zip(outline.xs, outline.ys) { lineTo(Int(px) + x, Int(py) + y, pen: &pen) }
+        lineTo(Int(first) + x, Int(outline.ys[0]) + y, pen: &pen)
     }
 }

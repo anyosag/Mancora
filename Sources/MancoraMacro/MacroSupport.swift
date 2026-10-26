@@ -46,10 +46,10 @@ public enum MacroSupport {
     /// Top-level built-ins that only ImageJ has (user interface, plots,
     /// fitting, overlays, drawing text...).
     static let unsupportedFunctions: Set<String> = [
-        "Dialog", "doCommand", "doWand", "drawLine", "drawOval", "drawRect", "drawString", "exec", "Ext",
-        "fillOval", "Fit", "floodFill", "getCursorLoc", "getDisplayedArea", "getFontList", "getImageInfo",
-        "getLine", "getLocationAndSize", "getProfile", "getStringWidth", "lineTo", "makeArrow", "makeEllipse",
-        "makeRotatedRectangle", "makeText", "moveTo", "newMenu", "Overlay", "Plot", "selectionContains", "setLut",
+        "Dialog", "doCommand", "doWand", "drawString", "exec", "Ext",
+        "Fit", "floodFill", "getCursorLoc", "getDisplayedArea", "getFontList", "getImageInfo",
+        "getLine", "getLocationAndSize", "getProfile", "getStringWidth", "makeArrow", "makeEllipse",
+        "makeRotatedRectangle", "makeText", "newMenu", "Overlay", "Plot", "selectionContains", "setLut",
         "showText", "waitForUser",
     ]
 

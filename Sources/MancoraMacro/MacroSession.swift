@@ -20,16 +20,32 @@ public final class MacroSession {
     /// a handler, messages go to the log and are never cancelled.
     public var onMessage: ((_ title: String, _ message: String, _ withCancel: Bool) -> Bool)?
 
-    public var batchMode = false
+    /// Batch mode: on from the start, as for a macro ImageJ runs without its window (`IJ.runMacro` headless).
+    public var batchMode = true
     public var lineWidth = 1
     /// `random("seed", n)`'s seed, which ImageJ also uses for its noise filters.
     public var randomSeed = Double.nan
-    /// The foreground and background colors (`0xRRGGBB`): ImageJ starts with white on black.
-    public var foreground: UInt32 = 0xFFFFFF
-    public var background: UInt32 = 0x000000
-    /// `setColor(value)`: a pixel value drawing and filling use instead of the foreground color.
-    var drawingValue: Double?
-    var drawingColor: UInt32?
+    /// The foreground and background colors (`0xRRGGBB`), kept in the command settings.
+    public var foreground: UInt32 {
+        get { context.settings.foreground }
+        set { context.settings.foreground = newValue }
+    }
+    public var background: UInt32 {
+        get { context.settings.background }
+        set { context.settings.background = newValue }
+    }
+    /// `setColor(value)` and `setColor(r, g, b)`: what drawing and filling use instead of the foreground color.
+    var drawingValue: Double? {
+        get { context.settings.fillValue }
+        set { context.settings.fillValue = newValue }
+    }
+    var drawingColor: UInt32? {
+        get { context.settings.fillColor }
+        set { context.settings.fillColor = newValue }
+    }
+    /// The value each image's processor fills with once a macro used it
+    /// (ImageJ's `fillValueSet`), by image ID: Edit ▸ Fill run from a macro uses it.
+    var processorFill: [Int: Double] = [:]
 
     /// `ij.Prefs` keys `call("ij.Prefs.get", ...)` reads.
     public var preferences: [String: String] = [:]
@@ -50,7 +66,7 @@ public final class MacroSession {
     /// Image IDs, most recently activated last (ImageJ's `imageActivations`).
     var activations: [Int] = []
     /// Settings `saveSettings()` keeps.
-    var savedSettings: (CommandSettings, UInt32, UInt32)?
+    var savedSettings: CommandSettings?
     /// Interpreters running nested macros (`runMacro`, `eval`).
     var depth = 0
 
@@ -161,7 +177,14 @@ public final class MacroSession {
     /// `run(command, options)`.
     func runCommand(_ name: String, options: String?) throws(CommandError) {
         let previous = context.currentID
-        defer { syncCurrent(previous: previous) }
+        // Filler in a macro fills with the value the macro left on the processor.
+        let (savedValue, savedColor) = (context.settings.fillValue, context.settings.fillColor)
+        context.settings.fillValue = previous.flatMap { processorFill[$0] }
+        context.settings.fillColor = nil
+        defer {
+            (context.settings.fillValue, context.settings.fillColor) = (savedValue, savedColor)
+            syncCurrent(previous: previous)
+        }
         try registry.run(name, options: MacroOptions(options ?? ""), in: &context)
     }
 

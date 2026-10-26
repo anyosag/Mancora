@@ -275,4 +275,272 @@ enum MacroCorpus {
             eval("print('printed inside')");
             """#),
     ]
+
+    /// Images: the current image, pixels, selections, statistics,
+    /// thresholds, display ranges, calibration and commands.
+    static let images: [MacroParityCase] = [
+        .init("image basics", #"""
+            print(getTitle(), getWidth(), getHeight(), nSlices, nImages, bitDepth(), getImageID() < 0);
+            getDimensions(w, h, c, z, t);
+            print(w, h, c, z, t, is("binary"), is("Inverting LUT"), is("hyperstack"), is("batch mode"));
+            getPixelSize(unit, pw, ph);
+            print(unit, pw, ph);
+            getVoxelSize(vw, vh, vd, vunit);
+            print(vw, vh, vd, vunit);
+            print(getPixel(3, 4), getPixel(60, 46), getPixel(-1, 0), getPixel(2.5, 3.5), getValue(3, 4));
+            rename("renamed");
+            print(getTitle(), getInfo("image.title"));
+            """#, on: .gray8),
+        .init("pixels on every type", #"""
+            ids = newArray(4);
+            types = newArray("8-bit", "16-bit", "32-bit", "RGB");
+            for (i = 0; i < 4; i++) {
+                newImage("img" + i, types[i] + " ramp", 20, 10, 1);
+                setPixel(3, 4, 300);
+                print(getTitle(), bitDepth(), getPixel(3, 4), getPixel(10, 2), getPixel(1.5, 2.5));
+                getMinAndMax(min, max);
+                print(min, max);
+            }
+            """#),
+        .init("newImage fills", #"""
+            newImage("a", "8-bit white", 5, 4, 1);
+            newImage("b", "8-bit black", 5, 4, 2);
+            newImage("c", "16-bit ramp", 5, 4, 1);
+            newImage("d", "32-bit white", 5, 4, 1);
+            newImage("e", "RGB white", 5, 4, 1);
+            newImage("f", "16-bit black", 5, 4, 1);
+            print(nImages, getTitle());
+            selectImage("b");
+            print(getTitle(), nSlices);
+            selectImage(1);
+            print(getTitle());
+            """#),
+        .init("selections and statistics", #"""
+            makeRectangle(5, 6, 20, 15);
+            print(selectionType());
+            getSelectionBounds(x, y, w, h);
+            print(x, y, w, h);
+            getStatistics(area, mean, min, max, std);
+            print(area, mean, min, max, std);
+            getRawStatistics(n, rmean, rmin, rmax);
+            print(n, rmean, rmin, rmax);
+            print(getValue("Mean"), getValue("Area"), getValue("Median"), getValue("IntDen"), getValue("Skew"));
+            makeOval(10, 10, 25, 18);
+            print(selectionType(), getValue("Area"), getValue("Mean"), getValue("Perim."), getValue("Circ."));
+            makePolygon(5, 5, 40, 8, 30, 40, 8, 30);
+            print(selectionType(), getValue("Area"), getValue("Feret"), getValue("Mean"));
+            getSelectionCoordinates(xs, ys);
+            Array.print(xs);
+            Array.print(ys);
+            run("Select None");
+            print(selectionType());
+            getStatistics(area, mean);
+            print(area, mean);
+            """#, on: .gray8),
+        .init("statistics on 16-bit, 32-bit, RGB and calibrated images", #"""
+            for (i = 1; i <= nImages; i++) {
+                selectImage(i);
+                makeRectangle(3, 2, 30, 20);
+                getStatistics(area, mean, min, max, std, hist);
+                print(getTitle(), area, mean, min, max, std, hist.length);
+                print(getValue("Mean"), getValue("StdDev"), getValue("Mode"), getValue("Min"), getValue("Kurt"));
+            }
+            """#, on: .gray16, .gray32, .rgb, .calibrated, tolerance: 1e-6),
+        .init("histogram", #"""
+            getHistogram(values, counts, 256);
+            print(values.length, counts.length, values[10], counts[0], counts[100], counts[255]);
+            makeRectangle(10, 10, 10, 10);
+            getHistogram(0, counts2, 256);
+            sum = 0;
+            for (i = 0; i < 256; i++) sum += counts2[i];
+            print(sum);
+            """#, on: .gray8),
+        .init("thresholds", #"""
+            setThreshold(50, 150);
+            getThreshold(lower, upper);
+            print(lower, upper);
+            run("Convert to Mask");
+            print(getTitle(), is("binary"), getPixel(5, 5));
+            """#, on: .gray8),
+        .init("auto thresholds", #"""
+            methods = newArray("Default", "Otsu dark", "Huang", "Li dark", "Triangle", "Yen");
+            for (i = 0; i < methods.length; i++) {
+                setAutoThreshold(methods[i]);
+                getThreshold(lower, upper);
+                print(methods[i], lower, upper);
+            }
+            setAutoThreshold();
+            getThreshold(lower, upper);
+            print("legacy", lower, upper);
+            resetThreshold();
+            getThreshold(lower, upper);
+            print(lower, upper);
+            """#, on: .gray8),
+        .init("16-bit thresholds and display range", #"""
+            setThreshold(1000.4, 2500.6);
+            getThreshold(lower, upper);
+            print(lower, upper);
+            setAutoThreshold("Otsu dark");
+            getThreshold(lower, upper);
+            print(lower, upper);
+            getMinAndMax(min, max);
+            print(min, max);
+            setMinAndMax(500.4, 3000.6);
+            getMinAndMax(min, max);
+            print(min, max);
+            resetMinAndMax();
+            getMinAndMax(min, max);
+            print(min, max);
+            """#, on: .gray16),
+        .init("measure and results", #"""
+            run("Set Measurements...", "area mean min centroid display redirect=None decimal=3");
+            makeRectangle(5, 5, 10, 10);
+            run("Measure");
+            makeOval(20, 10, 15, 12);
+            run("Measure");
+            print(nResults, getResult("Mean", 0), getResult("Area"), getResultLabel(1), getResultString("Mean", 1));
+            print(getResult("X", 1), getResult("Nonexistent", 0));
+            setResult("Extra", 0, 42);
+            setResult("Text", 1, "hello");
+            setResult("Mean", nResults, 7);
+            print(nResults, getResult("Extra", 0), getResultString("Text", 1), getResult("Extra", 1));
+            updateResults();
+            """#, on: .gray8),
+        .init("particles and summary", #"""
+            setThreshold(128, 255);
+            run("Analyze Particles...", "size=5-Infinity display clear summarize");
+            print(nResults);
+            if (nResults > 0) print(getResult("Area", 0), getResult("Mean", nResults - 1));
+            """#, on: .gray8),
+        .init("ROI Manager", #"""
+            roiManager("reset");
+            makeRectangle(5, 5, 10, 10);
+            roiManager("add");
+            makeOval(20, 10, 15, 12);
+            roiManager("add");
+            makeRectangle(5, 5, 10, 10);
+            roiManager("add");
+            print(roiManager("count"), RoiManager.size, RoiManager.getName(0), RoiManager.getName(1), RoiManager.getName(2));
+            roiManager("select", 1);
+            print(selectionType(), roiManager("index"));
+            run("Set Measurements...", "area mean display redirect=None decimal=3");
+            roiManager("deselect");
+            roiManager("measure");
+            print(nResults, getResult("Area", 0), getResult("Area", 1), getResultLabel(0));
+            roiManager("select", 0);
+            roiManager("rename", "first");
+            print(RoiManager.getName(0));
+            roiManager("delete");
+            print(roiManager("count"));
+            """#, on: .gray8),
+        .init("stacks", #"""
+            print(nSlices, getSliceNumber());
+            setSlice(3);
+            print(getSliceNumber(), getPixel(5, 5));
+            Stack.getDimensions(w, h, c, z, t);
+            print(w, h, c, z, t, Stack.isHyperstack);
+            for (i = 1; i <= nSlices; i++) {
+                setSlice(i);
+                getStatistics(area, mean);
+                print(i, mean);
+            }
+            run("Z Project...", "projection=[Max Intensity]");
+            print(getTitle(), nSlices);
+            """#, on: .stack16),
+        .init("hyperstack position", #"""
+            Stack.getDimensions(w, h, c, z, t);
+            print(c, z, t, nSlices, Stack.isHyperstack);
+            Stack.setPosition(2, 2, 1);
+            Stack.getPosition(ch, sl, fr);
+            print(ch, sl, fr, getSliceNumber());
+            Stack.setChannel(1);
+            Stack.getPosition(ch, sl, fr);
+            print(ch, sl, fr, getPixel(1, 1));
+            """#, on: .hyperstack),
+        .init("commands on images", #"""
+            run("Duplicate...", "title=copy");
+            run("Gaussian Blur...", "sigma=2");
+            print(getTitle(), getPixel(10, 10));
+            selectImage("gray8.tif");
+            run("Invert");
+            print(getPixel(10, 10));
+            run("8-bit");
+            imageCalculator("Subtract create", "gray8.tif", "copy");
+            print(getTitle(), nImages);
+            close("copy");
+            print(nImages);
+            close();
+            print(nImages, getTitle());
+            """#, on: .gray8, tolerance: 1e-6),
+        .init("changeValues and fill", #"""
+            changeValues(0, 100, 7);
+            print(getPixel(0, 0), getPixel(5, 5));
+            makeRectangle(10, 10, 5, 5);
+            setColor(200);
+            fill();
+            print(getPixel(12, 12));
+            setForegroundColor(255, 255, 255);
+            makeOval(30, 20, 10, 10);
+            run("Fill", "slice");
+            print(getPixel(35, 25));
+            run("Select None");
+            setPixel(1, 1, 99);
+            print(getPixel(1, 1));
+            """#, on: .gray8),
+        .init("drawing", #"""
+            setColor(200);
+            drawLine(2, 3, 50, 40);
+            drawLine(60, 0, 0, 46);
+            drawLine(-10, 20, 70, 25);
+            setLineWidth(2);
+            drawLine(5, 40, 40, 5);
+            setLineWidth(5);
+            drawLine(10, 10, 30, 12);
+            drawLine(0, 0, 3, 40);
+            setLineWidth(1);
+            drawRect(4, 4, 20, 15);
+            fillRect(30, 20, 10, 8);
+            drawOval(35, 5, 20, 14);
+            fillOval(8, 25, 17, 13);
+            moveTo(1, 1);
+            lineTo(20, 2);
+            lineTo(20, 30);
+            setColor(17);
+            fillOval(-5, -5, 12, 12);
+            """#, on: .gray8),
+        .init("drawing on 16-bit, 32-bit and RGB", #"""
+            for (i = 1; i <= nImages; i++) {
+                selectImage(i);
+                setForegroundColor(255, 128, 0);
+                drawLine(0, 0, 60, 46);
+                fillRect(10, 10, 8, 8);
+                setColor(100);
+                fillOval(20, 20, 15, 11);
+                setColor(10, 200, 30);
+                drawOval(30, 5, 12, 12);
+            }
+            """#, on: .gray16, .gray32, .rgb),
+        .init("metadata and calibration", #"""
+            setMetadata("Info", "line one\nkey: value");
+            print(getMetadata("Info"));
+            print(getInfo("key"));
+            setVoxelSize(0.5, 0.25, 2, "um");
+            getVoxelSize(w, h, d, unit);
+            print(w, h, d, unit);
+            run("Properties...", "unit=micron pixel_width=0.1 pixel_height=0.1 voxel_depth=1");
+            getPixelSize(unit, pw, ph);
+            print(unit, pw, ph);
+            makeRectangle(0, 0, 10, 10);
+            print(getValue("Area"));
+            x = 10; y = 20;
+            toScaled(x, y);
+            print(x, y);
+            toUnscaled(x, y);
+            print(x, y);
+            """#, on: .gray8),
+        .init("no image open", #"""
+            print("start");
+            print(getTitle());
+            """#),
+    ]
 }

@@ -142,6 +142,28 @@ public struct ImageStack: Sendable, Equatable {
         }
     }
 
+    /// Changes plane `index` in place: no copy is made when the stack's
+    /// storage isn't shared. `body` must keep the plane's size and type.
+    public mutating func modifyPlane<T>(at index: Int, _ body: (inout Plane) throws -> T) rethrows -> T {
+        switch storage {
+        case .memory(var planes):
+            storage = .memory([])  // release the reference so the write below doesn't copy
+            defer {
+                precondition(planes[index].count == pixelsPerPlane && planes[index].pixelType == pixelType, "plane changed size or type")
+                storage = .memory(planes)
+            }
+            return try body(&planes[index])
+        case .virtual(let source, var edits):
+            var plane = self[index]
+            edits[index] = nil
+            defer {
+                edits[index] = plane
+                storage = .virtual(source, edits: edits)
+            }
+            return try body(&plane)
+        }
+    }
+
     /// Stacks are equal when their sizes, types, labels and pixels are (a
     /// virtual stack is read in full to compare).
     public static func == (a: ImageStack, b: ImageStack) -> Bool {

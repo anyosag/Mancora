@@ -186,6 +186,7 @@ public class MancoraBridgeHelper {
 
     static Map<String, Object> runWithImages(String method, Map<String, Object> params) throws Exception {
         closeAll();
+        resetSettings();
         takeLog();
         ensureResultsPanel();
         ij.plugin.filter.Analyzer.resetCounter();
@@ -430,7 +431,11 @@ public class MancoraBridgeHelper {
             }
             for (int r = 0; r < rt.size(); r++) {
                 List<Object> row = new ArrayList<>();
-                if (labels) row.add(rt.getLabel(r));
+                if (labels) {
+                    String label = null;
+                    try { label = rt.getLabel(r); } catch (IllegalArgumentException e) { /* no labels after all */ }
+                    row.add(label);
+                }
                 for (int i : indices) {
                     double v = rt.getValueAsDouble(i, r);
                     // JSON has no NaN or Infinity: those go as Java writes them.
@@ -444,6 +449,25 @@ public class MancoraBridgeHelper {
         table.put("columns", columns);
         table.put("rows", rows);
         return table;
+    }
+
+    /**
+     * Each request starts from ImageJ's defaults, as a fresh ImageJ would:
+     * settings a previous command or macro changed don't carry over.
+     */
+    static void resetSettings() {
+        ij.plugin.filter.Analyzer.setMeasurements(
+            ij.measure.Measurements.AREA + ij.measure.Measurements.MEAN + ij.measure.Measurements.MIN_MAX);
+        ij.plugin.filter.Analyzer.setPrecision(3);
+        ij.Prefs.blackBackground = true;
+        ij.Prefs.padEdges = false;
+        ij.process.ImageConverter.setDoScaling(true);
+        ij.gui.Toolbar.setForegroundColor(java.awt.Color.white);
+        ij.gui.Toolbar.setBackgroundColor(java.awt.Color.black);
+        ij.gui.Toolbar.setForegroundValue(Double.NaN);
+        ij.gui.Toolbar.setBackgroundValue(Double.NaN);
+        ij.plugin.frame.RoiManager rm = ij.plugin.frame.RoiManager.getInstance();
+        if (rm != null) rm.reset();
     }
 
     static void closeAll() {

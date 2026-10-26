@@ -36,8 +36,12 @@ enum MacroParity {
         do {
             _ = try await bridge.start()
             for parityCase in cases {
-                for difference in try await compare(parityCase, bridge: bridge) {
-                    Issue.record("\(parityCase): \(difference)", sourceLocation: sourceLocation)
+                do {
+                    for difference in try await compare(parityCase, bridge: bridge) {
+                        Issue.record("\(parityCase): \(difference)", sourceLocation: sourceLocation)
+                    }
+                } catch {
+                    Issue.record("\(parityCase): \(error)", sourceLocation: sourceLocation)
                 }
             }
         } catch {
@@ -91,5 +95,26 @@ enum MacroParity {
 struct MacroParityTests {
     @Test func language() async throws {
         try await MacroParity.check(MacroCorpus.language)
+    }
+
+    @Test func images() async throws {
+        try await MacroParity.check(MacroCorpus.images)
+    }
+}
+
+@Suite("Bundled macros give ImageJ's results", .enabled(if: Parity.available), .serialized)
+struct BundledMacroParityTests {
+    /// File ▸ Open Samples macros that draw their images. (Adelson's Squares
+    /// needs Fiji's Linear Gradient, and Comparing Lengths flattens an overlay.)
+    static let samples = ["Spirals_", "Straight_Lines", "Striped_Circles"]
+
+    @Test func openSamples() async throws {
+        var cases: [MacroParityCase] = []
+        for name in Self.samples {
+            let path = "Resources/Scripts/File/Open_Samples/\(name).ijm"
+            let code = try String(contentsOf: Parity.url(path), encoding: .utf8)
+            cases.append(MacroParityCase(name, code))
+        }
+        try await MacroParity.check(cases)
     }
 }

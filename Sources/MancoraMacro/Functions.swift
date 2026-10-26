@@ -22,6 +22,10 @@ final class Functions {
     /// The file `File.open` opened, which `print(f, ...)` writes to.
     var writer: FileHandle?
     var writerPath: String?
+    /// The image whose processor `getProcessor()` last set up (ImageJ's `defaultIP`).
+    var cachedProcessor: Int?
+    /// The drawing position `moveTo` and `lineTo` use.
+    var pen: (x: Int, y: Int) = (0, 0)
     /// `snapshot()`'s copy of a plane, for `reset()`.
     var snapshot: (id: Int, index: Int, plane: Plane)?
 
@@ -73,6 +77,9 @@ final class Functions {
         case MAKE_OVAL: try makeOval()
         case MAKE_RECTANGLE: try makeRectangle()
         case DUMP: try interp.getParens()
+        case MOVE_TO: try moveTo()
+        case LINE_TO: try lineTo()
+        case DRAW_LINE: try drawLine()
         case REQUIRES: try requires()
         case AUTO_UPDATE: _ = try getBooleanArg()
         case UPDATE_DISPLAY: try interp.getParens()
