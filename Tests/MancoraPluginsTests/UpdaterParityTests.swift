@@ -259,6 +259,36 @@ struct UpdaterUnitTests {
         #expect(throws: XML.ParseError.self) { try XML.parse(Array("<r/><s/>".utf8)) }
     }
 
+    /// An internal entity's character references are expanded where it is
+    /// declared, and its replacement text is parsed where it is referenced
+    /// (XML 1.0 §4.4–4.5, as Xerces does).
+    @Test func xmlEntitiesExpandAsXercesDoes() throws {
+        let xml = """
+            <!DOCTYPE r [
+            <!ENTITY who "J&#246;rg"><!ENTITY amp2 "a&amp;b"><!ENTITY both "&who; and &amp2;">
+            <!ENTITY em "<i a='&who;'>x</i>">
+            ]>
+            <r><a>&who;</a><b>&amp2;</b><c>&both;</c><f>&em;</f><g v="&both;"/></r>
+            """
+        #expect(
+            try XML.parse(Array(xml.utf8)) == [
+                .start(name: "r", attributes: []),
+                .start(name: "a", attributes: []), .text("Jörg"), .end(name: "a"),
+                .start(name: "b", attributes: []), .text("a&b"), .end(name: "b"),
+                .start(name: "c", attributes: []), .text("Jörg and a&b"), .end(name: "c"),
+                .start(name: "f", attributes: []), .start(name: "i", attributes: [("a", "Jörg")]), .text("x"), .end(name: "i"),
+                .end(name: "f"),
+                .start(name: "g", attributes: [("v", "Jörg and a&b")]), .end(name: "g"),
+                .end(name: "r"),
+            ])
+        // Recursive entities and entity bombs are errors, as in the JDK's parser.
+        #expect(throws: XML.ParseError.self) { try XML.parse(Array("<!DOCTYPE r [<!ENTITY a \"x&a;\">]><r>&a;</r>".utf8)) }
+        var bomb = "<!DOCTYPE r [<!ENTITY l0 \"lol\">"
+        for i in 1...9 { bomb += "<!ENTITY l\(i) \"" + String(repeating: "&l\(i - 1);", count: 10) + "\">" }
+        bomb += "]><r a=\"&l9;\">&l9;</r>"
+        #expect(throws: XML.ParseError.self) { try XML.parse(Array(bomb.utf8)) }
+    }
+
     @Test func xmlIsWrittenAsTheJDKSerializes() {
         var w = XMLWriter()
         w.start("pluginRecords")
