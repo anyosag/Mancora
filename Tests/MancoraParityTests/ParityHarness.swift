@@ -201,6 +201,10 @@ enum ParityInput: String, Sendable {
     case gray16Freehand = "gray16+freehand", gray32Subpixel = "gray32+subpixel", rgbLine = "rgb+line"
     // Odd shapes for geometry: one pixel wide or high, and an RGB stack.
     case column8, row16, row32, columnRGB, stackRGB
+    // Wide lines and other selections for profiles (macros can't set a polyline's width).
+    case polylineROI, subpixelPolylineROI, freelineROI, subpixelFreelineROI, angleROI, arrowROI
+    // 8- and 16-bit images with a straight-line value calibration.
+    case functionCalibrated8, functionCalibrated16
     case fixtureHyperstack = "ij-hyperstack-16bit.tif"
     case fixtureFire = "ij-8bit-fire.tif"
     // Blobs-like images for background subtraction, maxima and EDMs (see BlobImages).
@@ -251,6 +255,15 @@ enum ParityInput: String, Sendable {
             }
             image.encodedROI = RoiCodec.encode(Self.roi(for: self))
             made = image
+        case .polylineROI, .subpixelPolylineROI, .freelineROI, .subpixelFreelineROI, .angleROI, .arrowROI:
+            var image = try Self.make(rawValue + ".tif", self == .freelineROI ? .gray8 : self == .arrowROI ? .rgb8 : .gray16)
+            image.encodedROI = RoiCodec.encode(Self.roi(for: self))
+            made = image
+        case .functionCalibrated8, .functionCalibrated16:
+            var image = try Self.make(rawValue + ".tif", self == .functionCalibrated8 ? .gray8 : .gray16)
+            image.calibration.valueFunction = .straightLine(intercept: -12.5, slope: self == .functionCalibrated8 ? 0.75 : 0.0625)
+            image.calibration.valueUnit = "OD"
+            made = image
         case .fixtureHyperstack, .fixtureFire:
             return try TIFFImporter.read(path: Parity.url("Tests/Fixtures/tiff/" + rawValue).path)
         case .blobs8, .blobs16, .blobs32, .blobsRGB, .blobsLight, .blobsInverted, .blobsStack8, .blobsStack16,
@@ -287,6 +300,28 @@ enum ParityInput: String, Sendable {
             var roi = Roi(.oval(.integer(x: 5, y: 5, width: 25, height: 36)))
             roi.name = "cell 1"
             return roi
+        case .polylineROI:
+            return Roi(.polygon(.init(.polyline, ints([(5, 8), (22, 30), (40, 12), (55, 38), (30, 42)]))), strokeWidth: 5)
+        case .subpixelPolylineROI:
+            let points = [(3.25, 40.5), (20.75, 5.125), (38.5, 30.25), (57.875, 9.5)]
+                .map { Roi.FloatPoint(x: Float($0.0), y: Float($0.1)) }
+            return Roi(.polygon(.init(.polyline, .subpixel(points))), strokeWidth: 3)
+        case .freelineROI:
+            let points = (0..<24).map { k -> (Int32, Int32) in
+                let t = Double(k) / 23
+                return (Int32(6 + 48 * t), Int32(24 + 14 * sin(t * 2 * Double.pi)))
+            }
+            return Roi(.polygon(.init(.freeline, ints(points))), strokeWidth: 8)
+        case .subpixelFreelineROI:
+            let points = (0..<30).map { k -> Roi.FloatPoint in
+                let a = Double(k) / 30 * 1.5 * Double.pi
+                return Roi.FloatPoint(x: Float(30 + 16 * cos(a)), y: Float(23 + 15 * sin(a)))
+            }
+            return Roi(.polygon(.init(.freeline, .subpixel(points))), strokeWidth: 4)
+        case .angleROI:
+            return Roi(.polygon(.init(.angle, ints([(10, 40), (30, 8), (52, 30)]))))
+        case .arrowROI:
+            return Roi(.line(Roi.Line(x1: 6, y1: 6, x2: 52, y2: 38, arrow: Roi.Arrow())), strokeWidth: 3)
         default: return Roi(.rectangle(.integer(x: 10, y: 7, width: 25, height: 19)))
         }
     }
