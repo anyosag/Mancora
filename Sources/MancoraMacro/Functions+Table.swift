@@ -556,7 +556,6 @@ extension Functions {
             }
         }
         if rowNumbers { rt.showsRowNumbers = true }
-        if title == "Results" { rt.hasDefaultHeadings = true }
         store(title, rt)
         session.tableDisplay[title] = nil
         session.showTable(title)

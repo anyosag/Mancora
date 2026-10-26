@@ -127,6 +127,49 @@ extension Plane {
     public func despeckled(width: Int, rect: RoiBounds? = nil) -> Plane {
         rankFiltered(.median, radius: 1, width: width, rect: rect)
     }
+
+    /// Process ▸ Filters ▸ Top Hat: `RankFilters.rank(ip, radius, TOP_HAT,
+    /// …)`. A grayscale opening (minimum, then maximum) for a dark
+    /// background, or closing for a light one (`lightBackground`, swapped
+    /// for an inverted LUT), subtracted from the image unless
+    /// `dontSubtract`; a light background's result is offset by the type's
+    /// maximum (255 or 65535; none for float). Within `rect`, the first
+    /// filter runs on the rectangle grown by the kernel's radius, whose rim
+    /// gets its pixels back after the second.
+    public func topHat(
+        radius: Double, lightBackground: Bool, dontSubtract: Bool, invertedLUT: Bool, width: Int, rect: RoiBounds? = nil
+    ) -> Plane {
+        let height = filterHeight(width: width)
+        precondition(radius.isFinite, "rank filter radius must be finite")
+        guard count > 0 else { return self }
+        let roi = rect ?? .whole(width: width, height: height)
+        guard !roi.isEmpty else { return self }
+        let invert = invertedLUT != lightBackground
+        let kernel = RankKernel(radius: radius)
+        var roi1 = roi
+        if roi.width < width || roi.height < height {
+            // roi.grow(kRadius, kHeight/2), within the image.
+            let x1 = max(roi.x - kernel.kRadius, 0), y1 = max(roi.y - kernel.kHeight / 2, 0)
+            let x2 = min(roi.x + roi.width + kernel.kRadius, width)
+            let y2 = min(roi.y + roi.height + kernel.kHeight / 2, height)
+            roi1 = RoiBounds(x: x1, y: y1, width: x2 - x1, height: y2 - y1)
+        }
+        let opened = rankFiltered(invert ? .maximum : .minimum, radius: radius, width: width, rect: roi1)
+            .rankFiltered(invert ? .minimum : .maximum, radius: radius, width: width, rect: roi)
+            .merged(into: self, width: width, within: roi)  // resetRoiBoundary
+        guard !dontSubtract else { return opened }
+        let offset: Float = !invert || pixelType == .gray32Float ? 0 : pixelType == .gray16 ? 65535 : 255
+        let snapshot = FloatChannels.split(self)
+        var channels = FloatChannels.split(opened)
+        for c in channels.indices {
+            for y in roi.y..<(roi.y + roi.height) {
+                for p in (y * width + roi.x)..<(y * width + roi.x + roi.width) {
+                    channels[c][p] = snapshot[c][p] - channels[c][p] + offset
+                }
+            }
+        }
+        return FloatChannels.merge(channels, as: pixelType)
+    }
 }
 
 extension ImageStack {

@@ -43,7 +43,11 @@ public enum EditCommands {
     ) throws {
         guard let open = context.current else { throw CommandError.noImage(name) }
         guard let roi = open.roi else { throw CommandError.failed(command: name, detail: "This command requires a selection") }
-        guard roi.isArea, roi.kind != .composite else { throw CommandError.notNative(name) }
+        if !roi.isArea {
+            try SelectionDrawing.paintNonArea(name, roi, value: value(open), &context, options)
+            return
+        }
+        guard roi.kind != .composite else { throw CommandError.notNative(name) }
         let width = open.image.width, height = open.image.height
         let region: MeasurementRegion
         do { region = try roi.measurementRegion(width: width, height: height) } catch {

@@ -56,6 +56,10 @@ public struct CommandSettings: Sendable, Hashable {
     public var binaryIterations = 1
     public var binaryCount = 1
     public var padEdges = false
+    /// Process ▸ Binary ▸ Median's radius, which ImageJ keeps between runs.
+    public var binaryMedianRadius = 3.0
+    /// Process ▸ Noise ▸ Add Specified Noise's standard deviation, kept between runs.
+    public var noiseStandardDeviation = 25.0
     /// Process ▸ Binary ▸ Options ▸ EDM output: where Distance Map, Ultimate
     /// Points and Voronoi put their result.
     public var edmOutput = EDMOutput.overwrite
@@ -70,6 +74,9 @@ public struct CommandSettings: Sendable, Hashable {
     public var decimalPlaces = 3
     /// Analyze ▸ Set Measurements: what Measure records.
     public var measurements = Measurements.defaults
+    /// Analyze ▸ Set Measurements ▸ Redirect to: the ID of the image whose
+    /// pixels Measure reads, or `nil` for None.
+    public var measurementRedirect: Int?
     /// The foreground and background colors (`0xRRGGBB`): ImageJ starts with white on black.
     public var foreground: UInt32 = 0xFFFFFF
     public var background: UInt32 = 0x000000
@@ -97,6 +104,11 @@ public struct CommandContext: Sendable {
     public var tables: [String: ResultsTable] = [:]
     public var log: [String] = []
     public var settings = CommandSettings()
+    /// `ImageProcessor.setRandomSeed` (a macro's `random("seed", n)`), or
+    /// NaN: the next noise filter seeds its generator with it, once.
+    public var randomSeed = Double.nan
+    /// `ImageProcessor.rnd`, the generator every noise filter shares.
+    public var noiseRandom: JavaRandom?
     private var nextID = -1
 
     public init() {}

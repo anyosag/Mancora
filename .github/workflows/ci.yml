@@ -61,14 +61,21 @@ jobs:
         run: swift build --build-tests
       - name: Save with Mancora, reopen with ImageJ 1.54p
         run: Tools/parity/tiff-reopen.sh "$(swift build --show-bin-path)/mancora"
+      # The bridge tests share one X display. Without it each bridge starts its
+      # own Xvfb, and with dozens starting at once some aren't up in time, so
+      # ImageJ runs without a screen (HeadlessException) and its results differ.
       - name: Java bridge integration tests
-        run: MANCORA_TEST_IJ_JAR="$GITHUB_WORKSPACE/Tools/fixtures/.cache/ij-1.54p.jar" swift test --skip-build --filter MancoraBridgeTests
+        run: >-
+          MANCORA_TEST_IJ_JAR="$GITHUB_WORKSPACE/Tools/fixtures/.cache/ij-1.54p.jar"
+          xvfb-run -a -s "-screen 0 1280x1024x24 -nolisten tcp" swift test --skip-build --filter MancoraBridgeTests
       - name: Native commands and macros against ImageJ 1.54p
-        run: MANCORA_TEST_IJ_JAR="$GITHUB_WORKSPACE/Tools/fixtures/.cache/ij-1.54p.jar" swift test --skip-build --filter MancoraParityTests
+        run: >-
+          MANCORA_TEST_IJ_JAR="$GITHUB_WORKSPACE/Tools/fixtures/.cache/ij-1.54p.jar"
+          xvfb-run -a -s "-screen 0 1280x1024x24 -nolisten tcp" swift test --skip-build --filter MancoraParityTests
       - name: Fiji update sites, MorphoLibJ and Bio-Formats from them in the bridge
         run: >-
           MANCORA_NETWORK_TESTS=1 MANCORA_TEST_IJ_JAR="$GITHUB_WORKSPACE/Tools/fixtures/.cache/ij-1.54p.jar"
-          swift test --skip-build --filter UpdateSiteNetworkTests
+          xvfb-run -a -s "-screen 0 1280x1024x24 -nolisten tcp" swift test --skip-build --filter UpdateSiteNetworkTests
 
   windows:
     name: Windows · Swift 6.2
