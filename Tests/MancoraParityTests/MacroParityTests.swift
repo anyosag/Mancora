@@ -116,6 +116,10 @@ struct MacroParityTests {
     @Test func rois() async throws {
         try await MacroParity.check(MacroCorpus.rois)
     }
+
+    @Test func roiManager() async throws {
+        try await MacroParity.check(MacroCorpus.roiManager)
+    }
 }
 
 @Suite("Bundled macros give ImageJ's results", .enabled(if: Parity.available), .serialized)

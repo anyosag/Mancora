@@ -235,7 +235,10 @@ public enum MacroSupport {
             "getDefaultColor", "getDefaultStrokeWidth", "setDefaultStrokeWidth", "getDefaultGroup", "getGroupNames",
             "setGroupNames", "setFontSize", "setJustification",
         ],
-        "RoiManager": ["size", "selected", "getName", "getIndex", "select"],
+        "RoiManager": [
+            "size", "selected", "getName", "getIndex", "select", "selectByName", "selectGroup", "selectPosition",
+            "setPosition", "translate", "delete", "associateROIsWithSlices", "restoreCentered", "useNamesAsLabels",
+        ],
         "Property": ["get", "set", "getInfo", "setInfo", "getSliceLabel"],
         "Image": ["title", "name", "width", "height"],
         "Color": ["foreground", "background", "setForeground", "setBackground"],

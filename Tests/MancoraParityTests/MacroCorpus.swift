@@ -923,4 +923,112 @@ enum MacroCorpus {
             print(selectionType(), Roi.size);
             """#, on: .gray8),
     ]
+
+    /// The ROI Manager: colors and widths, positions, saving, filling and Multi Measure.
+    static let roiManager: [MacroParityCase] = [
+        .init("ROI Manager colors, selection and saving", #"""
+            roiManager("reset");
+            makeRectangle(5, 5, 10, 10);
+            roiManager("add");
+            makeOval(20, 10, 15, 12);
+            roiManager("add", "red", 3);
+            makeRectangle(30, 30, 8, 6);
+            Roi.setName("box");
+            roiManager("add", "#00ff00");
+            print(roiManager("count"), RoiManager.getName(2), RoiManager.getIndex("box"));
+            roiManager("select", 1);
+            print(Roi.getStrokeColor, Roi.getStrokeWidth);
+            roiManager("select", 2);
+            print(Roi.getStrokeColor);
+            roiManager("deselect");
+            roiManager("set color", "blue");
+            roiManager("select", 0);
+            print(Roi.getStrokeColor, Roi.getFillColor);
+            roiManager("set fill color", "yellow");
+            print(Roi.getFillColor, Roi.getStrokeColor);
+            roiManager("select", 0);
+            print(Roi.getFillColor, Roi.getStrokeColor);
+            roiManager("deselect");
+            roiManager("set line width", 4);
+            roiManager("select", 2);
+            print(Roi.getStrokeWidth, Roi.getFillColor, Roi.getStrokeColor);
+            RoiManager.selectByName("box");
+            print(roiManager("index"));
+            RoiManager.setPosition(2);
+            roiManager("select", 2);
+            Roi.getPosition(c, z, t);
+            print(c, z, t);
+            RoiManager.selectPosition(0, 2, 0);
+            print(RoiManager.selected, roiManager("index"));
+            RoiManager.selectGroup(0);
+            print(RoiManager.selected);
+            RoiManager.translate(2, 3);
+            roiManager("select", 0);
+            getSelectionBounds(x, y, w, h);
+            print(x, y, w, h);
+            RoiManager.delete(1);
+            print(roiManager("count"), RoiManager.getName(1));
+            dir = getDirectory("temp");
+            roiManager("save", dir + "mancora-rois.zip");
+            roiManager("select", 1);
+            roiManager("save", dir + "mancora-one.roi");
+            roiManager("save selected", dir + "mancora-sel.zip");
+            roiManager("reset");
+            roiManager("open", dir + "mancora-sel.zip");
+            print(roiManager("count"), RoiManager.getName(0));
+            roiManager("open", dir + "mancora-rois.zip");
+            roiManager("open", dir + "mancora-one.roi");
+            print(roiManager("count"), RoiManager.getName(2), RoiManager.getName(3));
+            roiManager("select all");
+            print(RoiManager.selected);
+            ok = File.delete(dir + "mancora-rois.zip");
+            ok = File.delete(dir + "mancora-one.roi");
+            ok = File.delete(dir + "mancora-sel.zip");
+            roiManager("reset");
+            """#, on: .gray8),
+        .init("ROI Manager fill", #"""
+            setForegroundColor(200, 200, 200);
+            roiManager("reset");
+            makeRectangle(5, 5, 10, 10);
+            roiManager("add");
+            makeOval(20, 10, 15, 12);
+            roiManager("add");
+            roiManager("fill");
+            print(selectionType(), getPixel(7, 7), getPixel(27, 16), getPixel(1, 1));
+            roiManager("reset");
+            """#, on: .gray8),
+        .init("ROI Manager Multi Measure", #"""
+            run("Set Measurements...", "area mean min display redirect=None decimal=3");
+            roiManager("reset");
+            makeRectangle(5, 5, 10, 10);
+            roiManager("add");
+            makeOval(20, 10, 15, 12);
+            Roi.setName("ov");
+            roiManager("add");
+            roiManager("multi measure");
+            print(nResults, getResult("Mean1", 0), getResult("Area(ov)", 0), getResultLabel(0), selectionType());
+            roiManager("reset");
+            """#, on: .gray8),
+        .init("ROI Manager Multi Measure on a stack", #"""
+            roiManager("reset");
+            makeRectangle(5, 5, 10, 10);
+            roiManager("add");
+            roiManager("multi-measure measure_all one");
+            print(nResults, getResult("Mean1", 4), selectionType());
+            roiManager("reset");
+            """#, on: .stack8),
+        .init("ROI Manager slice info", #"""
+            roiManager("reset");
+            setSlice(3);
+            makeRectangle(2, 2, 5, 5);
+            roiManager("add");
+            print(RoiManager.getName(0));
+            roiManager("remove slice info");
+            print(RoiManager.getName(0));
+            roiManager("select", 0);
+            Roi.getPosition(c, z, t);
+            print(c, z, t, getSliceNumber());
+            roiManager("reset");
+            """#, on: .stack8),
+    ]
 }
