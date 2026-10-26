@@ -222,7 +222,9 @@ public enum XML {
                         // Character references are replaced now, entity references
                         // where the entity is used (XML 1.0 §4.5).
                         let value = try Self.replacingCharacterReferences(literal)
-                        if !parameter { entities[entity] = value }
+                        // "If the same entity is declared more than once, the first
+                        // declaration encountered is binding" (§4.2).
+                        if !parameter, entities[entity] == nil { entities[entity] = value }
                     } else if peek("<!") {
                         p += 2
                         _ = try declarationBody()

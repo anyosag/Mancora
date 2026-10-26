@@ -289,6 +289,13 @@ struct UpdaterUnitTests {
         #expect(throws: XML.ParseError.self) { try XML.parse(Array(bomb.utf8)) }
     }
 
+    /// "If the same entity is declared more than once, the first declaration
+    /// encountered is binding" (XML 1.0 §4.2).
+    @Test func xmlFirstEntityDeclarationIsBinding() throws {
+        let xml = "<!DOCTYPE r [<!ENTITY e \"first\"><!ENTITY e \"second\">]><r a=\"&e;\">&e;</r>"
+        #expect(try XML.parse(Array(xml.utf8)) == [.start(name: "r", attributes: [("a", "first")]), .text("first"), .end(name: "r")])
+    }
+
     @Test func xmlIsWrittenAsTheJDKSerializes() {
         var w = XMLWriter()
         w.start("pluginRecords")
