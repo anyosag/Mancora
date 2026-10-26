@@ -33,6 +33,7 @@ import ij.Macro;
 import ij.Menus;
 import ij.WindowManager;
 import ij.io.FileSaver;
+import ij.io.Opener;
 import ij.macro.Interpreter;
 import ij.measure.ResultsTable;
 import ij.process.LUT;
@@ -281,6 +282,22 @@ public class MancoraBridgeHelper {
      * if installed), or with Bio-Formats when it's installed, and saves each
      * image it opens as a TIFF for Mancora.
      */
+    /** Opens every image in the file with Bio-Formats' {@code BF.openImagePlus}. */
+    static String openWithBioFormats(Class<?> bf, String path, List<ImagePlus> opened) throws Exception {
+        DialogWatchdog.reset();
+        ImagePlus[] all;
+        try {
+            all = (ImagePlus[]) bf.getMethod("openImagePlus", String.class).invoke(null, path);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            // Bio-Formats' own exception says what went wrong.
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            throw new IOException("Bio-Formats could not open " + path + ": " + cause, cause);
+        }
+        if (all != null) for (ImagePlus i : all) if (i != null) opened.add(i);
+        DialogWatchdog.check("Bio-Formats");
+        return "Bio-Formats";
+    }
+
     static Map<String, Object> openFile(Map<String, Object> params) throws Exception {
         closeAll();
         resetSettings();
@@ -289,30 +306,37 @@ public class MancoraBridgeHelper {
         File outputDir = new File((String) params.get("outputDir"));
         List<ImagePlus> opened = new ArrayList<>();
         String reader = "ImageJ";
-        DialogWatchdog.reset();
-        ImagePlus imp = IJ.openImage(path);
-        if (imp != null) {
-            opened.add(imp);
-            DialogWatchdog.check("Opening " + new File(path).getName());
-        }
         Class<?> bf = findClass("loci.plugins.BF");
-        if (imp == null && bf != null) {
-            // ImageJ's "unsupported format" message doesn't count if Bio-Formats can.
-            DialogWatchdog.reset();
-            ImagePlus[] all;
+        // ImageJ's Opener hands formats it doesn't know to Bio-Formats (then
+        // to HandleExtraFileTypes); ask Bio-Formats first here too, so the
+        // reader is known. Formats ImageJ knows go to ImageJ first.
+        int type = new Opener().getFileType(path);
+        boolean unknown = type == Opener.UNKNOWN || type == Opener.TEXT;
+        IOException bioFormatsError = null;
+        if (unknown && bf != null) {
             try {
-                all = (ImagePlus[]) bf.getMethod("openImagePlus", String.class).invoke(null, path);
-            } catch (java.lang.reflect.InvocationTargetException e) {
-                // Bio-Formats' own exception says what went wrong.
-                Throwable cause = e.getCause() == null ? e : e.getCause();
-                throw new IOException("Bio-Formats could not open " + path + ": " + cause, cause);
+                reader = openWithBioFormats(bf, path, opened);
+            } catch (IOException e) {
+                bioFormatsError = e;
             }
-            if (all != null) for (ImagePlus i : all) if (i != null) opened.add(i);
-            reader = "Bio-Formats";
-            DialogWatchdog.check("Bio-Formats");
         }
-        if (opened.isEmpty())
+        if (opened.isEmpty()) {
+            DialogWatchdog.reset();
+            ImagePlus imp = IJ.openImage(path);
+            if (imp != null) {
+                opened.add(imp);
+                reader = "ImageJ";
+                DialogWatchdog.check("Opening " + new File(path).getName());
+            }
+        }
+        if (opened.isEmpty() && !unknown && bf != null) {
+            // ImageJ's "unsupported format" message doesn't count if Bio-Formats can.
+            reader = openWithBioFormats(bf, path, opened);
+        }
+        if (opened.isEmpty()) {
+            if (bioFormatsError != null) throw bioFormatsError;
             throw new IOException("ImageJ could not open " + path + (bf == null ? " (Bio-Formats isn't installed)" : ", nor could Bio-Formats"));
+        }
         List<Object> outputs = new ArrayList<>();
         int n = 0;
         for (ImagePlus i : opened) {
