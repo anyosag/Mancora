@@ -95,32 +95,19 @@ struct ViewerView: View {
             }
         }
         .navigationTitle(model.image?.title ?? "Mancora")
+        // The inspector's histogram is counted only while it shows.
+        .onChange(of: showsInspector) { if showsInspector { model.render() } }
         .inspector(isPresented: $showsInspector) {
             DisplayInspector(model: model)
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
-                ToolPicker(session: AppSession.shared)
-            }
-            ToolbarItem {
-                Menu("LUT", systemImage: "paintpalette") {
-                    ForEach(LUT.builtIn, id: \.name) { lut in
-                        Button(lut.name) { model.apply(lut) }
-                    }
-                    if !ViewerModel.bundledLUTs.isEmpty {
-                        Divider()
-                        ForEach(ViewerModel.bundledLUTs, id: \.url) { item in
-                            Button(item.name) { model.applyLUT(at: item.url) }
-                        }
-                    }
-                    Divider()
-                    Button("Open LUT File…") { model.presentLUTPanel() }
-                }
-                .disabled(!model.canAdjustContrast)
+                ToolPicker(session: AppSession.shared, isEnabled: model.hasImage)
             }
             ToolbarItem {
                 Button("Inspector", systemImage: "sidebar.right") { showsInspector.toggle() }
+                    .help("Show or hide the inspector")
             }
         }
         .alert(
@@ -143,12 +130,22 @@ struct ImageCanvas: View {
     @Bindable var model: ViewerModel
     let bitmap: CGImage
     let imageSize: CGSize
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// Room around the image, for its shadow and so that it doesn't touch the edge when scrolled.
+    private static let margin: CGFloat = 24
+
+    /// A calm neutral behind the image: light gray in light mode, near-black in dark mode.
+    private var backdrop: Color { Color(white: colorScheme == .dark ? 0.12 : 0.91) }
 
     var body: some View {
         GeometryReader { geometry in
             let scale = displayScale(in: geometry.size)
             let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
             let tool = AppSession.shared.tool
+            // A shadow only where it can show; a large view of an image that scrolls has none to draw.
+            let floats =
+                size.width + 2 * Self.margin <= geometry.size.width && size.height + 2 * Self.margin <= geometry.size.height
             ScrollView([.horizontal, .vertical]) {
                 Image(decorative: bitmap, scale: 1)
                     .interpolation(scale >= 1 ? .none : .medium)
@@ -179,11 +176,27 @@ struct ImageCanvas: View {
                         case .ended: model.pointerMoved(to: nil, displaySize: size)
                         }
                     }
+                    .background {
+                        if floats {
+                            Rectangle()
+                                .fill(Color.black)
+                                .shadow(color: .black.opacity(0.22), radius: 10, y: 3)
+                                .shadow(color: .black.opacity(0.3), radius: 1, y: 0.5)
+                        }
+                    }
+                    .overlay {
+                        // A hairline just outside the edge, so a dark image still has one on a dark backdrop.
+                        Rectangle()
+                            .stroke(Color.primary.opacity(0.18), lineWidth: 1)
+                            .padding(-0.5)
+                            .allowsHitTesting(false)
+                    }
+                    .padding(Self.margin)
                     .frame(
                         minWidth: geometry.size.width, minHeight: geometry.size.height
                     )
             }
-            .background(Color(nsColor: .underPageBackgroundColor))
+            .background(backdrop)
             .focusable()
             .focusEffectDisabled()
             .modifier(NavigationKeys(model: model))
@@ -218,7 +231,8 @@ struct ImageCanvas: View {
         case .scale(let s):
             return s
         case .fit:
-            let margin: CGFloat = 16
+            // The margin on both sides, and a little slack so that the fitted image never scrolls.
+            let margin = 2 * Self.margin + 8
             let fit = min(
                 (available.width - margin) / max(imageSize.width, 1),
                 (available.height - margin) / max(imageSize.height, 1))
@@ -227,37 +241,121 @@ struct ImageCanvas: View {
     }
 }
 
-/// Channel, slice and frame sliders (for dimensions above 1) and the pointer readout.
+/// What the pointer is over, in parts: x and y (calibrated when the image has a scale), the
+/// pixel they are, and the value there.
+struct PointerReadout: Equatable {
+    var x: String
+    var y: String
+    /// The pixel as "x, y", when x and y are calibrated.
+    var pixel: String?
+    var value: String
+}
+
+/// The position in a stack or hyperstack, and below it the readout: the pixel under the pointer
+/// while it is over the image, else the image's size and type; always the zoom.
 struct StatusBar: View {
     @Bindable var model: ViewerModel
     let image: Hyperstack
+    /// The dimension being animated; only one plays at a time.
+    @State private var playing: PlayAxis?
+
+    enum PlayAxis: Hashable {
+        case slice
+        case frame
+    }
+
+    /// ImageJ's default animation speed.
+    private static let framesPerSecond = 7.0
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            let dims = image.dimensions
-            if dims.channels > 1 {
-                PositionSlider(label: "c", value: $model.channel, count: dims.channels)
+        let dims = image.dimensions
+        // Counts of different widths would stagger the sliders; give every row the widest.
+        let digits = String(max(dims.channels, dims.slices, dims.frames)).count
+        VStack(spacing: 6) {
+            if dims.channels > 1 || dims.slices > 1 || dims.frames > 1 {
+                VStack(spacing: 4) {
+                    if dims.channels > 1 {
+                        PositionSlider(label: "Channel", value: $model.channel, count: dims.channels, digits: digits)
+                    }
+                    if dims.slices > 1 {
+                        PositionSlider(
+                            label: "Slice", value: $model.slice, count: dims.slices, digits: digits,
+                            isPlaying: playbackBinding(.slice))
+                    }
+                    if dims.frames > 1 {
+                        PositionSlider(
+                            label: "Frame", value: $model.frame, count: dims.frames, digits: digits,
+                            isPlaying: playbackBinding(.frame))
+                    }
+                }
+                Divider()
             }
-            if dims.slices > 1 {
-                PositionSlider(label: "z", value: $model.slice, count: dims.slices)
-            }
-            if dims.frames > 1 {
-                PositionSlider(label: "t", value: $model.frame, count: dims.frames)
-            }
-            HStack {
-                Text(model.selectionText ?? model.pointerText ?? summary)
-                    .font(.callout.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer()
-                if model.isBusy { ProgressView().controlSize(.small) }
-            }
+            readout
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        .background(.bar)
         .onChange(of: model.channel) { model.positionChanged() }
         .onChange(of: model.slice) { model.positionChanged() }
         .onChange(of: model.frame) { model.positionChanged() }
+        .task(id: playing) {
+            guard let axis = playing else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1.0 / Self.framesPerSecond))
+                if Task.isCancelled { break }
+                advance(axis)
+            }
+        }
+    }
+
+    private var readout: some View {
+        HStack(spacing: 12) {
+            if let text = model.selectionText {
+                Text(text)
+            } else if let reading = model.pointerReadout {
+                ReadoutField(label: "X", value: reading.x, width: 56)
+                ReadoutField(label: "Y", value: reading.y, width: 56)
+                if let pixel = reading.pixel {
+                    Text("(\(pixel))").foregroundStyle(.tertiary)
+                }
+                ReadoutField(label: "Value", value: reading.value, width: 72)
+            } else {
+                Text(summary)
+            }
+            Spacer(minLength: 8)
+            if model.isBusy { ProgressView().controlSize(.small) }
+            Text(Self.zoomText(model.displayedScale))
+        }
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .frame(minHeight: 16)
+    }
+
+    private func playbackBinding(_ axis: PlayAxis) -> Binding<Bool> {
+        Binding(get: { playing == axis }, set: { playing = $0 ? axis : nil })
+    }
+
+    /// Steps the animated dimension on, from the last back to the first.
+    private func advance(_ axis: PlayAxis) {
+        guard let dims = model.image?.dimensions else {
+            playing = nil
+            return
+        }
+        switch axis {
+        case .slice:
+            if dims.slices > 1 {
+                model.slice = (model.slice + 1) % dims.slices
+            } else {
+                playing = nil
+            }
+        case .frame:
+            if dims.frames > 1 {
+                model.frame = (model.frame + 1) % dims.frames
+            } else {
+                playing = nil
+            }
+        }
     }
 
     private var summary: String {
@@ -266,31 +364,83 @@ struct StatusBar: View {
         if image.stack.isVirtual { parts.append("virtual") }
         return parts.joined(separator: " · ")
     }
+
+    /// The zoom as a percentage: whole when it is, else to a tenth ("33.3%").
+    static func zoomText(_ scale: Double) -> String {
+        let percent = scale * 100
+        if percent >= 100 || abs(percent - percent.rounded()) < 0.05 { return "\(Int(percent.rounded()))%" }
+        return String(format: "%.1f%%", percent)
+    }
 }
 
-/// An ImageJ-style position scrollbar with step buttons.
+/// A caption and its value in the status bar, held to a width so that the fields beside it stay put.
+private struct ReadoutField: View {
+    let label: String
+    let value: String
+    let width: CGFloat
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(label).foregroundStyle(.tertiary)
+            Text(value)
+        }
+        .frame(minWidth: width, alignment: .leading)
+    }
+}
+
+/// A labelled position scrollbar with step buttons, its value as "2 / 3", and, for a dimension
+/// that can be animated, a play button.
 struct PositionSlider: View {
     let label: String
     @Binding var value: Int
     let count: Int
+    /// The widest count's digits, which sets the value column's width.
+    var digits = 1
+    /// Plays the dimension; nil where it can't be (channels).
+    var isPlaying: Binding<Bool>?
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text("\(label) \(value + 1)/\(count)")
-                .font(.callout.monospacedDigit())
-                .frame(width: 92, alignment: .leading)
-            Button("Previous", systemImage: "chevron.left") { value = max(value - 1, 0) }
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 48, alignment: .leading)
+            Button("Previous \(label)", systemImage: "chevron.left") { value = max(value - 1, 0) }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
+                .disabled(value <= 0)
+            // No `step:`, which draws a tick for every position; the binding rounds instead.
             Slider(
                 value: Binding(get: { Double(value) }, set: { value = Int($0.rounded()) }),
-                in: 0...Double(count - 1),
-                step: 1
+                in: 0...Double(max(count - 1, 1))
             )
-            Button("Next", systemImage: "chevron.right") { value = min(value + 1, count - 1) }
+            .controlSize(.small)
+            Button("Next \(label)", systemImage: "chevron.right") { value = min(value + 1, count - 1) }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
+                .disabled(value >= count - 1)
+            Text("\(value + 1) / \(count)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: CGFloat(digits) * 13 + 14, alignment: .trailing)
+            if let isPlaying {
+                playButton(isPlaying)
+            } else {
+                Color.clear.frame(width: 18, height: 1)
+            }
         }
+    }
+
+    private func playButton(_ isPlaying: Binding<Bool>) -> some View {
+        let playing = isPlaying.wrappedValue
+        let title: String = playing ? "Pause" : "Play"
+        let symbol: String = playing ? "pause.fill" : "play.fill"
+        let help: String = playing ? "Pause the animation" : "Play the animation at 7 frames per second"
+        return Button(title, systemImage: symbol) { isPlaying.wrappedValue = !playing }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .frame(width: 18)
+            .help(help)
     }
 }
 
@@ -316,31 +466,51 @@ struct DisplayInspector: View {
             }
         }
         .formStyle(.grouped)
+        .controlSize(.small)
+        // The histogram is only counted while the inspector shows; count it for what is there now.
+        .onAppear { model.render() }
     }
 
     private func contrastSection(_ image: Hyperstack) -> some View {
-        let bounds = model.sliderBounds
-        let range = model.displayRange
-        let step = image.pixelType == .gray32Float ? 0 : 1.0
+        let isIntegral = image.pixelType != .gray32Float
+        let lut = image.channels[min(model.channel, image.channels.count - 1)].lut
         return Section("Brightness & Contrast") {
-            RangeSlider(
-                title: "Minimum",
-                value: Binding(
-                    get: { range.lowerBound },
-                    set: { model.setDisplayRange(min($0, range.upperBound)...range.upperBound) }),
-                bounds: bounds, step: step)
-            RangeSlider(
-                title: "Maximum",
-                value: Binding(
-                    get: { range.upperBound },
-                    set: { model.setDisplayRange(range.lowerBound...max($0, range.lowerBound)) }),
-                bounds: bounds, step: step)
-            HStack {
+            VStack(spacing: 8) {
+                LevelsHistogram(
+                    bins: model.histogram, binRange: model.histogramRange, domain: model.levelsDomain,
+                    values: Binding(get: { model.displayRange }, set: { model.setDisplayRange($0) }),
+                    limits: model.levelLimits, isIntegral: isIntegral, label: "Display range")
+                HStack {
+                    LevelField(
+                        title: "Min",
+                        value: Binding(
+                            get: { model.displayRange.lowerBound },
+                            set: {
+                                let upper = model.displayRange.upperBound
+                                model.setDisplayRange(min(model.clampedLevel($0), upper)...upper)
+                            }),
+                        isIntegral: isIntegral)
+                    Spacer(minLength: 8)
+                    LevelField(
+                        title: "Max",
+                        value: Binding(
+                            get: { model.displayRange.upperBound },
+                            set: {
+                                let lower = model.displayRange.lowerBound
+                                model.setDisplayRange(lower...max(model.clampedLevel($0), lower))
+                            }),
+                        isIntegral: isIntegral)
+                }
+            }
+            LabeledContent("LUT") {
+                LUTPicker(model: model, current: lut)
+            }
+            HStack(spacing: 8) {
                 Button("Auto") { model.autoContrast() }
                 Button("Reset") { model.resetContrast() }
                 Spacer()
-                Text(image.channels[model.channel].lut.name).foregroundStyle(.secondary)
             }
+            .buttonStyle(.bordered)
         }
     }
 
@@ -356,9 +526,14 @@ struct DisplayInspector: View {
             }
             ForEach(0..<image.dimensions.channels, id: \.self) { c in
                 Toggle(
-                    "\(c + 1): \(image.channels[c].lut.name)",
                     isOn: Binding(get: { image.channels[c].isVisible }, set: { model.setChannelVisible($0, channel: c) })
-                )
+                ) {
+                    HStack(spacing: 8) {
+                        LUTSwatch(lut: image.channels[c].lut)
+                            .frame(width: 22, height: 10)
+                        Text("\(c + 1): \(image.channels[c].lut.name)")
+                    }
+                }
                 .disabled(image.compositeMode != .composite)
             }
         }
@@ -395,32 +570,6 @@ struct DisplayInspector: View {
     }
 
     private static func number(_ v: Double) -> String { String(format: "%.4g", v) }
-}
-
-/// A labelled slider with its value, for the display range ends.
-struct RangeSlider: View {
-    let title: String
-    @Binding var value: Double
-    let bounds: ClosedRange<Double>
-    let step: Double
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Text(title)
-                Spacer()
-                Text(String(format: step == 0 ? "%.4g" : "%.0f", value)).monospacedDigit().foregroundStyle(.secondary)
-            }
-            let clamped = Binding(
-                get: { min(max(value, bounds.lowerBound), bounds.upperBound) },
-                set: { value = $0 })
-            if step > 0 {
-                Slider(value: clamped, in: bounds, step: step)
-            } else {
-                Slider(value: clamped, in: bounds)
-            }
-        }
-    }
 }
 
 /// What an ImageJ command or macro logged and measured.
