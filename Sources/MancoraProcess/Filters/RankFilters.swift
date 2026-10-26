@@ -47,7 +47,9 @@ extension Plane {
     ///   - filter: The statistic to compute.
     ///   - radius: The kernel radius as in ImageJ's dialogs (Process ▸
     ///     Filters ▸ Show Circular Masks): 0.5 is the 4-neighborhood, 1 a
-    ///     3×3 square. Must be finite and not negative.
+    ///     3×3 square. Must be finite. A negative radius, which ImageJ's
+    ///     dialogs pass on from a macro, is squared as it is (without the
+    ///     adjustments of 1.5 and 2.5).
     ///   - width: The plane's width in pixels.
     ///   - rect: A selection's bounds, within the plane, or `nil` for the
     ///     whole plane. Only the rectangle changes; the kernel reads the
@@ -55,7 +57,7 @@ extension Plane {
     ///     edge, as in ImageJ.
     public func rankFiltered(_ filter: RankFilter, radius: Double, width: Int, rect: RoiBounds? = nil) -> Plane {
         let height = filterHeight(width: width)
-        precondition(radius.isFinite && radius >= 0, "rank filter radius must be finite and not negative")
+        precondition(radius.isFinite, "rank filter radius must be finite")
         guard count > 0 else { return self }
         let rect = rect ?? .whole(width: width, height: height)
         guard !rect.isEmpty else { return self }

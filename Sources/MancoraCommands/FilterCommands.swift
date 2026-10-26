@@ -83,7 +83,9 @@ enum FilterCommands {
     // MARK: Process ▸ Filters
 
     /// `GaussianBlur`: `sigma=` (or an old macro's `radius=`, 2.5 sigmas),
-    /// in calibrated units with `scaled` when the image has a scale.
+    /// in calibrated units with `scaled` when the image has a scale. A
+    /// negative sigma, which the dialog listener takes as given, blurs
+    /// nothing.
     static let gaussianBlur = CommandDefinition("Gaussian Blur...", menu: "Process>Filters") { context, options in
         var macro = options
         var oldMacro = false
@@ -91,7 +93,7 @@ enum FilterCommands {
             oldMacro = true
             macro = MacroOptions(options.text.replacing("radius=", with: "sigma="))
         }
-        var sigma = abs(macro.number(forLabel: "Sigma (Radius):", default: 2))
+        var sigma = macro.number(forLabel: "Sigma (Radius):", default: 2)
         if oldMacro { sigma /= 2.5 }
         try applyInSelection("Gaussian Blur...", &context, macro) { plane, width, open, region in
             let cal = open.image.calibration
@@ -126,7 +128,7 @@ enum FilterCommands {
         rank("Mean...", .mean), rank("Minimum...", .minimum), rank("Maximum...", .maximum),
         rank("Variance...", .variance), rank("Median...", .median), rank("Remove NaNs...", .removeNaNs),
         CommandDefinition("Remove Outliers...", menu: "Process>Noise") { context, options in
-            let radius = options.number(forLabel: "Radius", default: 2)
+            let radius = try rankRadius(options, "Remove Outliers...")
             let threshold = options.number(forLabel: "Threshold:", default: 50)
             let dark = options.value(forLabel: "Which outliers") == "Dark"
             try applyInSelection("Remove Outliers...", &context, options) { plane, width, open, region in
@@ -141,12 +143,22 @@ enum FilterCommands {
 
     static func rank(_ name: String, _ filter: RankFilter) -> CommandDefinition {
         CommandDefinition(name, menu: name == "Remove NaNs..." ? "Process>Noise" : "Process>Filters") { context, options in
-            let radius = options.number(forLabel: "Radius", default: 2)
+            let radius = try rankRadius(options, name)
             try applyInSelection(name, &context, options) { plane, width, _, region in
                 plane.rankFiltered(filter, radius: radius, width: width, rect: region?.rect)
             }
             if filter == .variance { try varianceDisplayRange(name, &context) }
         }
+    }
+
+    /// The `radius=` a rank filter runs with. RankFilters' dialog listener
+    /// rejects a negative radius but keeps it, and `makeLineRadii` squares it.
+    static func rankRadius(_ options: MacroOptions, _ name: String) throws(CommandError) -> Double {
+        let radius = options.number(forLabel: "Radius", default: 2)
+        guard radius.isFinite, radius.magnitude <= 1000 else {
+            throw .invalidOption(command: name, detail: "radius \(radius) is out of range")
+        }
+        return radius
     }
 
     /// RankFilters' final step after Variance: a 0.5% saturated display

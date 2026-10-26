@@ -152,6 +152,9 @@ struct FilterParityTests {
             ParityCase("Gaussian Blur...", "sigma=0.5 scaled stack", on: .calibrated),
             ParityCase("Gaussian Blur...", "radius=5", on: .gray8),
             ParityCase("Gaussian Blur...", "sigma=3", on: .hyperstack),
+            ParityCase("Gaussian Blur...", "sigma=12", on: .gray16),
+            // The dialog listener takes a negative sigma as given: nothing is blurred.
+            ParityCase("Gaussian Blur...", "sigma=-2", on: .gray8),
         ])
     }
 
@@ -171,6 +174,10 @@ struct FilterParityTests {
             ParityCase("Despeckle", on: .gray8),
             ParityCase("Despeckle", on: .rgb),
             ParityCase("Despeckle", "stack", on: .stack16),
+            // makeLineRadii squares a negative radius (without the 1.5 and 2.5 adjustments).
+            ParityCase("Mean...", "radius=-1.6", on: .gray8),
+            ParityCase("Median...", "radius=-2.6", on: .gray16),
+            ParityCase("Median...", "radius=0.5", on: .gray8),
         ])
     }
 
