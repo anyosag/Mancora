@@ -7,8 +7,15 @@ extension Plane {
     /// Out-of-image pixels take the value of the nearest edge pixel; integer
     /// results are rounded. Like ImageJ, a plane one pixel wide is returned
     /// unchanged.
-    public func smoothed(width: Int) -> Plane {
-        Filters3x3.apply(.smooth, to: self, width: width)
+    ///
+    /// With `rect` (a selection's bounds, within the plane) only the pixels
+    /// ImageJ writes for that rectangle change: for 8-bit planes the
+    /// rectangle's inner part, its parts on the image edge, and the last
+    /// column or row of the image when the rectangle ends just before it
+    /// (`ByteProcessor.filter`); for the other types the rectangle. Pixels
+    /// outside are read as they are.
+    public func smoothed(width: Int, rect: RoiBounds? = nil) -> Plane {
+        Filters3x3.apply(.smooth, to: self, width: width, rect: rect)
     }
 
     /// Process ▸ Sharpen: ImageJ's `ImageProcessor.sharpen()`, a 3×3
@@ -18,8 +25,11 @@ extension Plane {
     /// `convolve3x3` does. ImageJ's RGB version (`ColorProcessor.convolve3x3`)
     /// leaves the edge pixels unchanged and truncates instead of rounding;
     /// Mancora does the same. A plane one pixel wide is returned unchanged.
-    public func sharpened(width: Int) -> Plane {
-        Filters3x3.apply(.sharpen, to: self, width: width)
+    ///
+    /// With `rect` only the rectangle changes, and for RGB only its part off
+    /// the image edge.
+    public func sharpened(width: Int, rect: RoiBounds? = nil) -> Plane {
+        Filters3x3.apply(.sharpen, to: self, width: width, rect: rect)
     }
 
     /// Process ▸ Find Edges: ImageJ's `ImageProcessor.findEdges()`, the
@@ -28,8 +38,11 @@ extension Plane {
     /// Out-of-image pixels take the value of the nearest edge pixel; integer
     /// results are truncated and clipped to the type's range, RGB channels
     /// are filtered separately. A plane one pixel wide is returned unchanged.
-    public func findingEdges(width: Int) -> Plane {
-        Filters3x3.apply(.findEdges, to: self, width: width)
+    ///
+    /// With `rect`, 8-bit and RGB planes change where 8-bit Smooth does
+    /// (RGB is filtered as three 8-bit planes), the other types in the rectangle.
+    public func findingEdges(width: Int, rect: RoiBounds? = nil) -> Plane {
+        Filters3x3.apply(.findEdges, to: self, width: width, rect: rect)
     }
 }
 
@@ -49,6 +62,25 @@ extension ImageStack {
 enum Filters3x3 {
     enum Operation {
         case smooth, sharpen, findEdges
+    }
+
+    /// The filter within `rect`: the whole plane's result where ImageJ
+    /// writes for that rectangle (each output pixel depends only on the
+    /// input around it), the input elsewhere.
+    static func apply(_ op: Operation, to plane: Plane, width: Int, rect: RoiBounds?) -> Plane {
+        let height = plane.filterHeight(width: width)
+        guard let rect, !rect.covers(width: width, height: height) else { return apply(op, to: plane, width: width) }
+        guard width > 1, !rect.isEmpty else { return plane }
+        let whole = apply(op, to: plane, width: width)
+        let area = ByteFilterArea(rect: rect, width: width, height: height)
+        switch (plane.pixelType, op) {
+        case (.gray8, .smooth), (.gray8, .findEdges), (.rgb8, .findEdges):
+            return whole.merged(into: plane, width: width, where: area.contains)
+        case (.rgb8, .sharpen):
+            return whole.merged(into: plane, width: width, where: area.containsInner)
+        default:
+            return whole.merged(into: plane, width: width, within: rect)
+        }
     }
 
     static func apply(_ op: Operation, to plane: Plane, width: Int) -> Plane {
