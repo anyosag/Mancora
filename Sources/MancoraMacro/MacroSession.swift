@@ -230,16 +230,7 @@ public final class MacroSession {
         guard rows > 0 else { return }
         let lo = max(0, first), hi = min(rows - 1, last)
         guard lo <= hi else { return }
-        var table = ResultsTable()
-        table.emptyCellsAreNaN = context.results.emptyCellsAreNaN
-        for column in context.results.decimalColumns { table.setDecimal(column) }
-        for row in 0..<rows where row < lo || row > hi {
-            let r = table.addRow(label: context.results.labels[row])
-            for column in context.results.columns {
-                if let value = context.results.value(column, row: row) { table.set(column, row: r, value) }
-            }
-        }
-        context.results = table
+        context.results.removeRows(lo...hi)
     }
 
     /// When a macro ends.

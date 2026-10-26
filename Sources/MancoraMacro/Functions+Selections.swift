@@ -89,7 +89,9 @@ extension Functions {
             let x = Int32(truncatingIfNeeded: javaMathRound(try interp.getExpression()))
             if points.count == 2 && interp.nextToken() == ch(")") {
                 try interp.getRightParen()
-                try unsupported("makeLine with a line width")
+                // Roi.updateWideLine: the width, and the default ROI color (yellow) at alpha 77.
+                try setSelection(Roi(.line(Roi.Line(x1: x1, y1: y1, x2: x2, y2: y2)), strokeColor: 0x4DFF_FF00, strokeWidth: Float(x)))
+                return
             }
             try interp.getComma()
             let y = Int32(truncatingIfNeeded: javaMathRound(try interp.getExpression()))

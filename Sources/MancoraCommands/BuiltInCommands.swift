@@ -8,7 +8,7 @@ enum BuiltInCommands {
         lutCommands + [invertLUT, enhanceContrast, rename, close, closeAll, duplicate, properties, setScale]
             + [setMeasurements, measure, clearResults, analyzeParticles] + FilterCommands.all + ProcessCommands.all + ThresholdCommands.all + EditCommands.all
             + CropCommands.all + TransformCommands.all
-            + GeometryCommands.all + ExtraFilterCommands.all
+            + GeometryCommands.all + ExtraFilterCommands.all + AnalyzeCommands.all + SelectionDrawing.all
     }
 
     // MARK: Image ▸ Lookup Tables
@@ -380,7 +380,6 @@ enum BuiltInCommands {
     /// `Analyzer("set")`: each checkbox is on only when the macro names it,
     /// as with any ImageJ dialog a macro fills in.
     static let setMeasurements = CommandDefinition("Set Measurements...", menu: "Analyze") { context, options in
-        let name = "Set Measurements..."
         // Older macros use the labels ImageJ had before. ImageJ rewrites the
         // original options each time, so with both, only "slice" is rewritten.
         let padded = options.text.hasSuffix(" ") ? options.text : options.text + " "
@@ -392,30 +391,19 @@ enum BuiltInCommands {
         for (label, option) in Measurements.dialogLabels where macro.flag(forLabel: label) {
             measurements.insert(option)
         }
-        if let redirect = macro.value(forLabel: "Redirect to:"), redirect != "None" {
-            throw CommandError.notNative(name)  // measuring another image's pixels: ImageJ can
-        }
+        let old = context.settings.measurements
+        context.settings.measurements = measurements
+        AnalyzeCommands.updateResults(&context, from: old)
+        context.settings.measurementRedirect = try AnalyzeCommands.redirectChoice(macro, context)
         let precision = Int(JavaNumerics.int32(macro.number(forLabel: "Decimal places (0-9):", default: Double(context.settings.decimalPlaces))))
         context.settings.decimalPlaces = min(max(precision, 0), 9)
-        context.settings.measurements = measurements
         context.results.emptyCellsAreNaN = measurements.contains(.nanEmptyCells)
         if !measurements.contains(.labels) { context.results.removeLabels() }
     }
 
-    /// `Analyzer.measure`: the current plane, within an area selection.
-    /// Lines and points (profiles, coordinates) are measured by ImageJ.
+    /// `Analyzer.measure`: see ``AnalyzeCommands/measure(_:)``.
     static let measure = CommandDefinition("Measure", menu: "Analyze") { context, _ in
-        guard let open = context.current else { throw CommandError.noImage("Measure") }
-        let roi = open.roi
-        if let roi, !roi.isArea || roi.kind == .composite { throw CommandError.notNative("Measure") }
-        let threshold = open.threshold.flatMap { $0.lower <= $0.upper ? $0.lower...$0.upper : nil }
-        do {
-            try Analyzer.measure(
-                open.image, channel: open.channel, slice: open.slice, frame: open.frame, roi: roi,
-                options: context.settings.measurements, threshold: threshold, into: &context.results)
-        } catch {
-            throw CommandError.notNative("Measure")
-        }
+        try AnalyzeCommands.measure(&context)
     }
 
     /// `ParticleAnalyzer` from a macro: `size=` (calibrated unless `pixel`),
