@@ -729,4 +729,106 @@ enum MacroCorpus {
             print(getTitle());
             """#),
     ]
+
+    /// What commands leave behind besides pixels: the invisible threshold
+    /// of binary images, and selections on stacks.
+    static let commandState: [MacroParityCase] = [
+        .init("a filter clears Convert to Mask's threshold", #"""
+            run("Convert to Mask");
+            run("Smooth");
+            getThreshold(lower, upper);
+            print(lower, upper);
+            run("Set Measurements...", "area mean limit redirect=None decimal=3");
+            run("Measure");
+            """#, on: .gray8),
+        .init("math and Fill clear it too", #"""
+            run("Convert to Mask");
+            run("Add...", "value=1");
+            getThreshold(lower, upper);
+            print(lower, upper);
+            run("Convert to Mask");
+            makeRectangle(2, 2, 5, 5);
+            run("Fill", "slice");
+            getThreshold(lower, upper);
+            print(lower, upper);
+            """#, on: .gray8),
+        .init("a stack filter keeps it", #"""
+            run("Convert to Mask", "method=Default background=Default black");
+            run("Smooth", "stack");
+            getThreshold(lower, upper);
+            print(lower, upper);
+            """#, on: .stack8),
+        .init("a visible threshold survives math", #"""
+            setThreshold(100, 200);
+            run("Add...", "value=10");
+            getThreshold(lower, upper);
+            print(lower, upper);
+            """#, on: .gray8),
+        .init("binary commands set it", #"""
+            run("Options...", "iterations=1 count=1 black do=Nothing");
+            run("Erode");
+            getThreshold(lower, upper);
+            print(lower, upper);
+            run("Set Measurements...", "area mean limit redirect=None decimal=3");
+            run("Measure");
+            run("Invert LUT");
+            run("Dilate");
+            getThreshold(lower, upper);
+            print(lower, upper);
+            """#, on: .binary),
+        .init("binary commands with a white background", #"""
+            run("Options...", "iterations=1 count=1 do=Nothing");
+            run("Dilate");
+            getThreshold(lower, upper);
+            print(lower, upper);
+            run("Options...", "iterations=1 count=1 black do=Nothing");
+            """#, on: .binary),
+        .init("binary commands on a stack don't", #"""
+            run("Options...", "iterations=1 count=1 black do=Nothing");
+            run("Erode", "stack");
+            getThreshold(lower, upper);
+            print(lower, upper);
+            """#, on: .binaryStack),
+        .init("Convert to Mask ignores the invisible threshold", #"""
+            newImage("w", "8-bit white", 30, 30, 1);
+            makeRectangle(5, 5, 5, 5);
+            setColor(0);
+            fill();
+            run("Select None");
+            run("Make Binary");
+            getThreshold(lower, upper);
+            print(lower, upper, getPixel(0, 0), getPixel(6, 6));
+            run("Convert to Mask");
+            print(getPixel(0, 0), getPixel(6, 6));
+            """#),
+        .init("type conversions clear the threshold", #"""
+            setThreshold(1500, 3000);
+            run("8-bit");
+            getThreshold(lower, upper);
+            print(lower, upper);
+            setThreshold(10, 100);
+            run("8-bit");
+            getThreshold(lower, upper);
+            print(lower, upper);
+            """#, on: .gray16),
+        .init("filters on a stack's selection", #"""
+            makeRectangle(10, 7, 25, 19);
+            run("Gaussian Blur...", "sigma=2 stack");
+            makeOval(12, 9, 33, 21);
+            run("Median...", "radius=2 stack");
+            run("Invert", "stack");
+            """#, on: .stack16),
+        .init("Outline on a stack's selection", #"""
+            run("Options...", "iterations=1 count=1 black do=Nothing");
+            makeRectangle(5, 5, 30, 30);
+            run("Outline", "stack");
+            makeOval(5, 5, 40, 30);
+            run("Outline", "stack");
+            """#, on: .binaryStack),
+        .init("a line selection doesn't limit filters", #"""
+            makeLine(5, 5, 40, 30);
+            run("Gaussian Blur...", "sigma=2");
+            run("Convolve...", "text1=[1 1 1\n1 1 1\n1 1 1] normalize");
+            """#, on: .gray16),
+    ]
 }

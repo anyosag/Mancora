@@ -123,7 +123,7 @@ extension Plane {
     }
 
     /// `original` with this plane's pixels (a filtered copy of it) inside `rect`.
-    func merged(into original: Plane, width: Int, within rect: RoiBounds) -> Plane {
+    public func merged(into original: Plane, width: Int, within rect: RoiBounds) -> Plane {
         var out = original
         out.copyPixels(from: self) { copy in
             for y in rect.y..<(rect.y + rect.height) {

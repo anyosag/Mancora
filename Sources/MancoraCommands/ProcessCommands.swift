@@ -107,6 +107,9 @@ enum ProcessCommands {
         guard let open = context.current else { throw CommandError.noImage(name) }
         let region = try FilterCommands.selectionRegion(name, open)
         let targets = FilterCommands.targetPlanes(open, options)
+        if targets.count == 1 {
+            try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in open.resetBinaryThreshold() }
+        }
         if targets.count == open.image.stack.count {
             try replaceCurrent(name, &context) { open in ImageMath.apply(operation, to: open.image, region: region) }
             return

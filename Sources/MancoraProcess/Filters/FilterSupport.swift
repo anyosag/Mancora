@@ -75,3 +75,25 @@ enum FloatChannels {
         return JavaNumerics.int32(value)
     }
 }
+
+extension Plane {
+    /// The values of the pixels in `region` (its bounds and mask), row by
+    /// row: what ImageJ's statistics count for a selection.
+    public func values(in region: MeasurementRegion, width: Int) -> Plane {
+        let height = filterHeight(width: width)
+        var indices: [Int] = []
+        let x0 = max(region.x, 0), x1 = min(region.x + region.width, width)
+        let y0 = max(region.y, 0), y1 = min(region.y + region.height, height)
+        if x0 < x1, y0 < y1 {
+            for y in y0..<y1 {
+                for x in x0..<x1 where region.contains(x, y) { indices.append(y * width + x) }
+            }
+        }
+        switch self {
+        case .gray8(let p): return .gray8(indices.map { p[$0] })
+        case .gray16(let p): return .gray16(indices.map { p[$0] })
+        case .gray32Float(let p): return .gray32Float(indices.map { p[$0] })
+        case .rgb8(let p): return .rgb8(indices.map { p[$0] })
+        }
+    }
+}

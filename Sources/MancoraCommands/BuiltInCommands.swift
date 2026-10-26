@@ -77,7 +77,8 @@ enum BuiltInCommands {
             guard image.pixelType != .rgb8 else { throw .notNative(name) }
             // The histogram is the selection's (`ip.setRoi(imp.getRoi())`).
             if let roi = open.roi, !roi.isArea { throw .notNative(name) }
-            let region = try FilterCommands.selectionRegion(open, name)
+            let region = try FilterCommands.measurementRegion(open, name)
+            let filterRegion = try FilterCommands.selectionRegion(name, open)
             let width = image.width
             func selected(_ plane: Plane) -> Plane { region.map { plane.values(in: $0, width: width) } ?? plane }
             // showDialog: a composite (several channels) counts as one image and has no Normalize.
@@ -109,8 +110,10 @@ enum BuiltInCommands {
                     let original = image.stack[index]
                     var plane = ContrastEnhancer.normalized(original, min: lo, max: hi)
                     // The table applies within the selection (normalizeFloat ignores it).
-                    if updateSelectionOnly, let region, image.pixelType != .gray32Float {
-                        plane = plane.restricted(to: region, original: original, width: width)
+                    if updateSelectionOnly, let filterRegion, image.pixelType != .gray32Float {
+                        plane = filterRegion.restoringOutsideMask(
+                            plane.merged(into: original, width: width, within: filterRegion.rect), snapshot: original,
+                            width: width)
                     }
                     try open.image.setPlane(plane, at: index)
                 }

@@ -23,14 +23,18 @@ enum FilterCommands {
         return text.contains("stack ") ? Array(0..<image.stack.count) : [current]
     }
 
-    /// Runs `filter` on each target plane of the current image.
+    /// Runs `filter` on each target plane of the current image. Run on the
+    /// current plane alone (not as a stack), the filter clears an invisible
+    /// binary threshold, as `PlugInFilterRunner` does.
     static func apply(
         _ name: String, _ context: inout CommandContext, _ options: MacroOptions,
         _ filter: (Plane, Int, OpenImage) throws -> Plane
     ) throws {
         try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in
             let snapshot = open
-            for index in targetPlanes(snapshot, options) {
+            let targets = targetPlanes(snapshot, options)
+            if targets.count == 1 { open.resetBinaryThreshold() }
+            for index in targets {
                 do {
                     try open.image.setPlane(filter(snapshot.image.stack[index], snapshot.image.width, snapshot), at: index)
                 } catch let error as CommandError {
@@ -52,6 +56,19 @@ enum FilterCommands {
         if case .opaque = roi.shape { throw .notNative(name) }
         do {
             return try FilterRegion(selection: roi, width: open.image.width, height: open.image.height)
+        } catch {
+            throw .notNative(name)
+        }
+    }
+
+    /// The area selection as the pixels it measures (its bounds clipped to
+    /// the image, and a mask unless it's a rectangle), or `nil` for none or
+    /// a line or point selection.
+    static func measurementRegion(_ open: OpenImage, _ name: String) throws(CommandError) -> MeasurementRegion? {
+        guard let roi = open.roi, roi.isArea else { return nil }
+        guard roi.kind != .composite else { throw .notNative(name) }  // ShapeRoi masks: ImageJ
+        do {
+            return try roi.measurementRegion(width: open.image.width, height: open.image.height)
         } catch {
             throw .notNative(name)
         }
@@ -280,7 +297,8 @@ enum FilterCommands {
         // and of a stack plane it masks; Outline then reads it (Binary runs
         // in snapshot copy mode).
         let masked = try selectionRegion(name, open)?.mask != nil
-        let readsSnapshot = targetPlanes(open, options).count == 1 || masked
+        let singlePlane = targetPlanes(open, options).count == 1
+        let readsSnapshot = singlePlane || masked
         // Skeletonize resets the processor's selection, and its mask with it.
         try applyInSelection(name, &context, options, masking: operation != .skeletonize) { plane, width, open, region in
             let inverted = hasInvertedLUT(open)
@@ -289,6 +307,13 @@ enum FilterCommands {
                 blackBackground: black, iterations: settings.binaryIterations, count: settings.binaryCount,
                 padEdges: settings.padEdges, invertedLUT: inverted, outlineReadsSnapshot: readsSnapshot)
             return try plane.binary(operation, options: binaryOptions, width: width, rect: region?.rect)
+        }
+        // Binary.run ends with ip.setBinaryThreshold(), which only the image's
+        // own processor (one image, not a stack) keeps.
+        guard singlePlane else { return }
+        try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in
+            let inverted = hasInvertedLUT(open)
+            open.setBinaryThreshold(inverted == settings.blackBackground ? 0 : 255)
         }
     }
 
