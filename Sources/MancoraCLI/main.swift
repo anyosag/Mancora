@@ -1,6 +1,6 @@
 // `mancora`: headless command-line access to Mancora's core.
 //
-//   mancora info <image.tif>               describe an image
+//   mancora info [--virtual] <image.tif>   describe an image (--virtual reads planes on demand)
 //   mancora convert <in.tif> <out.tif>     re-save a TIFF the way ImageJ writes them
 //   mancora lut <file.lut>                 describe a LUT file
 //   mancora luts                           list the built-in LUTs
@@ -14,7 +14,7 @@ import MancoraSupport
 import MancoraUpdate
 
 let usage = """
-    usage: mancora info <image.tif>
+    usage: mancora info [--virtual] [--scan] <image.tif>
            mancora convert <in.tif> <out.tif> [--big-endian]
            mancora lut <file.lut>
            mancora luts
@@ -52,9 +52,27 @@ func describe(_ image: Hyperstack) -> String {
 
 let args = Array(CommandLine.arguments.dropFirst())
 switch (args.first, args.count) {
-case ("info", 2):
+case ("info", 2...4):
+    let flags = Set(args.dropFirst().dropLast())
+    guard flags.isSubset(of: ["--virtual", "--scan"]) else { fail(usage) }
     do {
-        print(describe(try TIFFImporter.read(path: args[1])))
+        let started = Date()
+        let image = try TIFFImporter.read(path: args[args.count - 1], options: .init(virtual: flags.contains("--virtual")))
+        print(describe(image))
+        print("opened in \(milliseconds(since: started)) ms\(image.stack.isVirtual ? " (virtual)" : "")")
+        if flags.contains("--scan") {
+            // Touch every plane, as scrolling through the whole stack would.
+            let scanStart = Date()
+            var range: ClosedRange<Double>?
+            for k in 0..<image.stack.count {
+                let plane = try image.stack.loadPlane(at: k)
+                if let r = plane.valueRange() {
+                    range = range.map { min($0.lowerBound, r.lowerBound)...max($0.upperBound, r.upperBound) } ?? r
+                }
+            }
+            let shown = range.map { "\($0.lowerBound)–\($0.upperBound)" } ?? "none"
+            print("scanned \(image.stack.count) planes in \(milliseconds(since: scanStart)) ms; values \(shown)")
+        }
     } catch {
         fail("mancora: \(error)")
     }
@@ -83,6 +101,8 @@ case ("--version", 1), ("version", 1):
 default:
     fail(usage)
 }
+
+func milliseconds(since start: Date) -> Int { Int(Date().timeIntervalSince(start) * 1000) }
 
 func hex(_ argb: UInt32) -> String {
     let digits = String(argb & 0xFF_FFFF, radix: 16, uppercase: true)

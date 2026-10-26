@@ -87,23 +87,28 @@ public struct Hyperstack: Sendable, Equatable {
         channels[channel] = display
     }
 
-    /// Colors ImageJ assigns to channels 1–7 of a new composite image.
-    public static let defaultChannelLUTs: [LUT] = [.red, .green, .blue, .grays, .cyan, .magenta, .yellow]
+    /// Colors ImageJ assigns to channels 1–8 of a new composite image
+    /// (`CompositeImage.colors`); later channels are gray.
+    public static let defaultChannelLUTs: [LUT] = [.red, .green, .blue, .grays, .cyan, .magenta, .yellow, .grays]
 
-    /// Gray for single-channel images, ImageJ's channel colors otherwise; the
-    /// display range covers each channel's first plane (ImageJ's
-    /// `resetMinAndMax`), or `0...255` for 8-bit and RGB data.
+    /// The LUT ImageJ gives channel `index` (0-based) of a new composite.
+    public static func defaultChannelLUT(_ index: Int) -> LUT {
+        index < defaultChannelLUTs.count ? defaultChannelLUTs[index] : .grays
+    }
+
+    /// Gray for single-channel images, ImageJ's channel colors otherwise.
+    /// Every channel shows the first plane's full range (ImageJ's
+    /// `resetMinAndMax` on the first processor, which
+    /// `CompositeImage.setupLuts` copies to each channel), or `0...255` for
+    /// 8-bit and RGB data. Only the first plane is read.
     public static func defaultChannels(for stack: ImageStack, dimensions: HyperstackDimensions) -> [ChannelDisplay] {
-        (0..<max(dimensions.channels, 1)).map { c in
-            let lut = dimensions.channels == 1 ? LUT.grays : defaultChannelLUTs[c % defaultChannelLUTs.count]
-            let range: ClosedRange<Double>
-            switch stack.pixelType {
-            case .gray8, .rgb8:
-                range = 0...255
-            case .gray16, .gray32Float:
-                range = c < stack.count ? (stack[c].valueRange() ?? 0...0) : 0...0
-            }
-            return ChannelDisplay(lut: lut, displayRange: range)
+        let range: ClosedRange<Double>
+        switch stack.pixelType {
+        case .gray8, .rgb8: range = 0...255
+        case .gray16, .gray32Float: range = stack[0].valueRange() ?? 0...0
+        }
+        return (0..<max(dimensions.channels, 1)).map { c in
+            ChannelDisplay(lut: dimensions.channels == 1 ? .grays : defaultChannelLUT(c), displayRange: range)
         }
     }
 }

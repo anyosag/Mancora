@@ -87,6 +87,12 @@ public struct ImageStack: Sendable, Equatable {
         return false
     }
 
+    /// Where a virtual stack's planes come from; `nil` for an in-memory stack.
+    public var source: (any PlaneSource)? {
+        if case .virtual(let source, _) = storage { return source }
+        return nil
+    }
+
     /// Plane `index`. A virtual plane that can't be read comes back blank,
     /// as in ImageJ; use ``loadPlane(at:)`` to see the error.
     public subscript(index: Int) -> Plane {

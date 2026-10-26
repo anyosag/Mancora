@@ -54,9 +54,8 @@ public enum TIFFExporter {
         metadata.properties = image.properties.keys.sorted().flatMap { [$0, image.properties[$0] ?? ""] }
         if image.dimensions.channels > 1 {
             metadata.ranges = image.channels.flatMap { [$0.displayRange.lowerBound, $0.displayRange.upperBound] }
-            let defaults = Hyperstack.defaultChannelLUTs
             let custom = image.channels.enumerated().contains { c, display in
-                !display.lut.hasSameColors(as: defaults[c % defaults.count])
+                !display.lut.hasSameColors(as: Hyperstack.defaultChannelLUT(c))
             }
             if custom { metadata.luts = image.channels.map { $0.lut.reds + $0.lut.greens + $0.lut.blues } }
         }

@@ -14,29 +14,51 @@ public import MancoraCore
 ///   floating-point predictor
 /// - strips and tiles
 /// - multi-page files, and ImageJ stacks whose planes follow the first IFD
+/// - virtual stacks: planes decoded on demand from a memory-mapped file
 public enum TIFFImporter {
     public struct Options: Sendable {
-        /// Refuse files whose decoded pixels would exceed this many bytes.
+        /// Refuse files whose decoded pixels would exceed this many bytes
+        /// (for a virtual stack, one plane at a time).
         public var maximumDecodedBytes: Int
-        /// Refuse files larger than this many bytes.
+        /// Refuse files larger than this many bytes (unless virtual).
         public var maximumFileBytes: Int
+        /// Open as a virtual stack, like File ▸ Import ▸ TIFF Virtual Stack:
+        /// the file is memory-mapped and each plane decoded when first shown.
+        public var virtual: Bool
+        /// Decoded planes a virtual stack keeps for reuse, in bytes.
+        public var virtualCacheBytes: Int
 
-        public init(maximumDecodedBytes: Int = 4 << 30, maximumFileBytes: Int = 4 << 30) {
+        public init(
+            maximumDecodedBytes: Int = 4 << 30,
+            maximumFileBytes: Int = 4 << 30,
+            virtual: Bool = false,
+            virtualCacheBytes: Int = 256 << 20
+        ) {
             self.maximumDecodedBytes = maximumDecodedBytes
             self.maximumFileBytes = maximumFileBytes
+            self.virtual = virtual
+            self.virtualCacheBytes = virtualCacheBytes
         }
     }
 
     public static func read(path: String, options: Options = Options()) throws(MancoraIOError) -> Hyperstack {
-        let bytes = try FileLoader.load(path: path, limit: options.maximumFileBytes)
         let name = path.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last.map(String.init) ?? path
-        return try decode(bytes, title: name, options: options)
+        // Mapped either way: a full read then copies only the pixels it decodes.
+        let data = try FileLoader.map(path: path)
+        if !options.virtual, data.count > options.maximumFileBytes {
+            throw .tooLarge(bytes: data.count, limit: options.maximumFileBytes)
+        }
+        return try decode(ByteReader(mapped: data), title: name, options: options)
     }
 
     public static func decode(_ bytes: [UInt8], title: String, options: Options = Options()) throws(MancoraIOError) -> Hyperstack {
-        var reader = ByteReader(bytes)
-        guard bytes.count >= 8 else { throw .invalidFormat("too short to be a TIFF file") }
-        switch (bytes[0], bytes[1]) {
+        try decode(ByteReader(bytes), title: title, options: options)
+    }
+
+    private static func decode(_ source: ByteReader, title: String, options: Options) throws(MancoraIOError) -> Hyperstack {
+        var reader = source
+        guard reader.count >= 8 else { throw .invalidFormat("too short to be a TIFF file") }
+        switch (try reader.u8(at: 0), try reader.u8(at: 1)) {
         case (0x49, 0x49): reader.bigEndian = false
         case (0x4D, 0x4D): reader.bigEndian = true
         default: throw .invalidFormat("not a TIFF file")
@@ -49,7 +71,7 @@ public enum TIFFImporter {
             firstOffset = Int(try reader.u32(at: 4))
         case 43:
             // BigTIFF: offset size 8, a reserved zero, then a 64-bit first IFD offset.
-            guard bytes.count >= 16, try reader.u16(at: 4) == 8, try reader.u16(at: 6) == 0 else {
+            guard reader.count >= 16, try reader.u16(at: 4) == 8, try reader.u16(at: 6) == 0 else {
                 throw .invalidFormat("BigTIFF header with an unsupported offset size")
             }
             bigTIFF = true
@@ -62,55 +84,67 @@ public enum TIFFImporter {
         guard let first = pages.first else { throw .invalidFormat("no images in file") }
         let description = first.description.flatMap(ImageJDescription.init)
 
-        // Planes, either from each IFD or (ImageJ stacks) contiguous after the first.
-        var planes: [Plane] = []
+        // Where each plane's pixels are: in each IFD, or (ImageJ stacks)
+        // back to back after the first.
+        var units: [TIFFPlaneSource.Unit] = []
         if let n = description?.images, n > 1, first.compression == 1, !first.isPlanar,
             first.bitsPerSample >= 8, let start = contiguousStart(of: first)
         {
             let planeBytes = first.chunkRowBytes(first.width) * first.height
-            try checkBudget(planes: n, page: first, options: options)
-            for k in 0..<n {
-                planes += try TIFFPlaneDecoder.decodeContiguous(first, at: start + k * planeBytes, reader: reader)
-            }
+            units = (0..<n).map { .contiguous(first, offset: start + $0 * planeBytes) }
         } else {
-            let stackable = pages.filter { !$0.isReducedResolution && $0.stackSignature == first.stackSignature }
-            try checkBudget(planes: stackable.count, page: first, options: options)
-            for page in stackable {
-                planes += try TIFFPlaneDecoder.decode(page, reader: reader)
+            units = pages.filter { !$0.isReducedResolution && $0.stackSignature == first.stackSignature }.map {
+                .page($0)
             }
         }
+        let planeCount = units.count * first.planesPerPage
 
         let metadata = first.imageJMetadata
-        var labels = [String?](repeating: nil, count: planes.count)
-        if let saved = metadata?.labels, !saved.isEmpty, saved.count <= planes.count {
+        var labels = [String?](repeating: nil, count: planeCount)
+        if let saved = metadata?.labels, !saved.isEmpty, saved.count <= planeCount {
             labels.replaceSubrange(0..<saved.count, with: saved)
         } else if pages.count == 1, first.planesPerPage > 1 {
             // ImageJ's FileOpener names the samples of a 16-bit RGB(A) image.
-            labels = Array(["Red", "Green", "Blue", "Gray"].prefix(planes.count))
+            labels = Array(["Red", "Green", "Blue", "Gray"].prefix(planeCount))
         }
 
         let stack: ImageStack
         do {
-            stack = try ImageStack(width: first.width, height: first.height, planes: planes, labels: labels)
-        } catch {
+            if options.virtual {
+                try checkBudget(planes: 1, page: first, options: options)
+                let source = TIFFPlaneSource(
+                    reader: reader, first: first, units: units, cacheBytes: options.virtualCacheBytes)
+                stack = try ImageStack(source: source, labels: labels)
+            } else {
+                try checkBudget(planes: units.count, page: first, options: options)
+                var planes: [Plane] = []
+                planes.reserveCapacity(planeCount)
+                for unit in units { planes += try unit.decode(reader) }
+                stack = try ImageStack(width: first.width, height: first.height, planes: planes, labels: labels)
+            }
+        } catch let error as MancoraIOError {
+            throw error
+        } catch let error as ImageModelError {
             throw .model(error)
+        } catch {
+            throw .invalidFormat("\(error)")
         }
 
         let samplePlanes = first.planesPerPage
         var dims =
             samplePlanes > 1
-            ? HyperstackDimensions(channels: samplePlanes, slices: planes.count / samplePlanes)
-            : HyperstackDimensions(slices: planes.count)
+            ? HyperstackDimensions(channels: samplePlanes, slices: planeCount / samplePlanes)
+            : HyperstackDimensions(slices: planeCount)
         if let d = description {
             let candidate = HyperstackDimensions(
                 channels: max(d.channels ?? 1, 1),
                 slices: max(d.slices ?? 1, 1),
                 frames: max(d.frames ?? 1, 1)
             )
-            if candidate.planeCount == planes.count, !(stack.pixelType == .rgb8 && candidate.channels > 1) {
+            if candidate.planeCount == planeCount, !(stack.pixelType == .rgb8 && candidate.channels > 1) {
                 dims = candidate
-            } else if d.frames == planes.count, d.slices == nil {
-                dims = HyperstackDimensions(frames: planes.count)
+            } else if d.frames == planeCount, d.slices == nil {
+                dims = HyperstackDimensions(frames: planeCount)
             }
         }
 
@@ -126,11 +160,14 @@ public enum TIFFImporter {
             }
         } else if let range = description?.displayRange, stack.pixelType.usesLUT {
             for c in channels.indices { channels[c].displayRange = range }
-        } else if samplePlanes == 3, planes.count == 3, !first.isPlanar {
-            // ImageJ shows a chunky 16-bit RGB image with one range spanning all three samples.
-            let ranges = planes.compactMap { $0.valueRange() }
-            if let low = ranges.map(\.lowerBound).min(), let high = ranges.map(\.upperBound).max() {
+        } else if samplePlanes > 1, planeCount == samplePlanes, !first.isPlanar {
+            // FileOpener: a chunky 16-bit RGB image shows one range spanning all three
+            // samples; with a fourth sample, each channel gets its own (resetDisplayRanges).
+            let ranges = (0..<samplePlanes).map { stack[$0].valueRange() ?? 0...0 }
+            if samplePlanes == 3, let low = ranges.map(\.lowerBound).min(), let high = ranges.map(\.upperBound).max() {
                 for c in channels.indices { channels[c].displayRange = low...high }
+            } else {
+                for c in channels.indices { channels[c].displayRange = ranges[c] }
             }
         }
         if dims.channels > 1, let luts = metadata?.luts {
