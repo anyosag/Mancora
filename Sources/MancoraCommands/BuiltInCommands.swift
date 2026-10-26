@@ -5,11 +5,12 @@ import MancoraProcess
 /// Commands Mancora implements natively, named as in ImageJ's menus.
 enum BuiltInCommands {
     static var all: [CommandDefinition] {
-        lutCommands + [invertLUT, enhanceContrast, rename, close, closeAll, duplicate, properties, setScale]
+        lutCommands + [invertLUT, enhanceContrast, rename, close, closeAll, duplicate, duplicateImage, properties, setScale]
             + [setMeasurements, measure, clearResults, analyzeParticles] + FilterCommands.all + ProcessCommands.all + ThresholdCommands.all + EditCommands.all
             + CropCommands.all + TransformCommands.all
             + GeometryCommands.all + StackCommands.all + HyperstackCommands.all
             + SegmentationCommands.all
+            + ExtraFilterCommands.all + AnalyzeCommands.all + SelectionDrawing.all + FFTCommands.all
     }
 
     // MARK: Image ▸ Lookup Tables
@@ -255,6 +256,17 @@ enum BuiltInCommands {
         }
     }
 
+    /// The image popup menu's Duplicate Image (`Executer.extraCommand`):
+    /// Duplicate with the selection ignored (kept on the copy) and no options.
+    static let duplicateImage = CommandDefinition("Duplicate Image...", menu: "Image") { context, _ in
+        guard let open = context.current else { throw CommandError.noImage("Duplicate Image...") }
+        let dims = open.image.dimensions
+        if dims.channels > 1 || (dims.slices > 1 && dims.frames > 1) {
+            throw CommandError.notNative("Duplicate Image...")  // ImageJ's hyperstack dialog
+        }
+        try duplicate.run(&context, MacroOptions("ignore"))
+    }
+
     /// `Tools.split(text, " -")`, each part cast to `int` as Java does
     /// (saturating), or `nil` for a part that isn't a number (NaN).
     static func splitRange(_ text: String) -> [Int?] {
@@ -291,6 +303,7 @@ enum BuiltInCommands {
     /// origin and Invert Y (a checkbox, so off unless named).
     static let properties = CommandDefinition("Properties...", menu: "Image") { context, options in
         let name = "Properties..."
+        guard !options.flag(forLabel: "Global") else { throw CommandError.notNative(name) }  // global calibration: ImageJ
         try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in
             var image = open.image
             let dims = image.dimensions
@@ -353,6 +366,7 @@ enum BuiltInCommands {
     /// `ij.plugin.filter.ScaleDialog`: `distance=` pixels are `known=` units
     /// (`unit=`), with `pixel=` the aspect ratio; anything incomplete resets to pixels.
     static let setScale = CommandDefinition("Set Scale...", menu: "Analyze") { context, options in
+        guard !options.flag(forLabel: "Global") else { throw CommandError.notNative("Set Scale...") }  // global calibration: ImageJ
         try context.withCurrent("Set Scale...") { (open: inout OpenImage) throws(CommandError) in
             var cal = open.image.calibration
             let measured = options.number(forLabel: "distance", default: 0)
@@ -381,7 +395,6 @@ enum BuiltInCommands {
     /// `Analyzer("set")`: each checkbox is on only when the macro names it,
     /// as with any ImageJ dialog a macro fills in.
     static let setMeasurements = CommandDefinition("Set Measurements...", menu: "Analyze") { context, options in
-        let name = "Set Measurements..."
         // Older macros use the labels ImageJ had before. ImageJ rewrites the
         // original options each time, so with both, only "slice" is rewritten.
         let padded = options.text.hasSuffix(" ") ? options.text : options.text + " "
@@ -393,30 +406,19 @@ enum BuiltInCommands {
         for (label, option) in Measurements.dialogLabels where macro.flag(forLabel: label) {
             measurements.insert(option)
         }
-        if let redirect = macro.value(forLabel: "Redirect to:"), redirect != "None" {
-            throw CommandError.notNative(name)  // measuring another image's pixels: ImageJ can
-        }
+        let old = context.settings.measurements
+        context.settings.measurements = measurements
+        AnalyzeCommands.updateResults(&context, from: old)
+        context.settings.measurementRedirect = try AnalyzeCommands.redirectChoice(macro, context)
         let precision = Int(JavaNumerics.int32(macro.number(forLabel: "Decimal places (0-9):", default: Double(context.settings.decimalPlaces))))
         context.settings.decimalPlaces = min(max(precision, 0), 9)
-        context.settings.measurements = measurements
         context.results.emptyCellsAreNaN = measurements.contains(.nanEmptyCells)
         if !measurements.contains(.labels) { context.results.removeLabels() }
     }
 
-    /// `Analyzer.measure`: the current plane, within an area selection.
-    /// Lines and points (profiles, coordinates) are measured by ImageJ.
+    /// `Analyzer.measure`: see ``AnalyzeCommands/measure(_:)``.
     static let measure = CommandDefinition("Measure", menu: "Analyze") { context, _ in
-        guard let open = context.current else { throw CommandError.noImage("Measure") }
-        let roi = open.roi
-        if let roi, !roi.isArea || roi.kind == .composite { throw CommandError.notNative("Measure") }
-        let threshold = open.threshold.flatMap { $0.lower <= $0.upper ? $0.lower...$0.upper : nil }
-        do {
-            try Analyzer.measure(
-                open.image, channel: open.channel, slice: open.slice, frame: open.frame, roi: roi,
-                options: context.settings.measurements, threshold: threshold, into: &context.results)
-        } catch {
-            throw CommandError.notNative("Measure")
-        }
+        try AnalyzeCommands.measure(&context)
     }
 
     /// `ParticleAnalyzer` from a macro: `size=` (calibrated unless `pixel`),

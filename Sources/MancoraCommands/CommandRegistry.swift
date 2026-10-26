@@ -41,12 +41,39 @@ public struct CommandRegistry: Sendable {
         commands[command.name] = command
     }
 
-    public func isNative(_ name: String) -> Bool { commands[name] != nil }
+    public func isNative(_ name: String) -> Bool { commands[Self.legacyNames[name] ?? name] != nil }
 
-    /// `run(name, options)`: the native command, else the fallback.
+    /// `IJ.convert`: the old names of renamed commands, which `IJ.run` still accepts.
+    public static let legacyNames: [String: String] = [
+        "New...": "Image...", "Threshold": "Make Binary", "Display...": "Appearance...",
+        "Start Animation": "Start Animation [\\]", "Convert Images to Stack": "Images to Stack",
+        "Convert Stack to Images": "Stack to Images", "Convert Stack to RGB": "Stack to RGB",
+        "Convert to Composite": "Make Composite", "RGB Split": "Split Channels", "RGB Merge...": "Merge Channels...",
+        "Channels...": "Channels Tool...", "New... ": "Table...", "Arbitrarily...": "Rotate... ",
+        "Measurements...": "Results... ", "List Commands...": "Find Commands...", "Capture Screen ": "Capture Screen",
+        "Add to Manager ": "Add to Manager", "In": "In [+]", "Out": "Out [-]", "Enhance Contrast": "Enhance Contrast...",
+        "XY Coodinates... ": "XY Coordinates... ", "Statistics...": "Statistics", "Channels Tool... ": "Channels Tool...",
+        "Profile Plot Options...": "Plots...", "AuPbSn 40 (56K)": "AuPbSn 40",
+        "Bat Cochlea Volume (19K)": "Bat Cochlea Volume", "Bat Cochlea Renderings (449K)": "Bat Cochlea Renderings",
+        "Blobs (25K)": "Blobs", "Boats (356K)": "Boats", "Cardio (768K, RGB DICOM)": "Cardio (RGB DICOM)",
+        "Cell Colony (31K)": "Cell Colony", "Clown (14K)": "Clown", "Confocal Series (2.2MB)": "Confocal Series",
+        "CT (420K, 16-bit DICOM)": "CT (16-bit DICOM)", "Dot Blot (7K)": "Dot Blot", "Embryos (42K)": "Embryos",
+        "Fluorescent Cells (400K)": "Fluorescent Cells", "Fly Brain (1MB)": "Fly Brain", "Gel (105K)": "Gel",
+        "HeLa Cells (1.3M, 48-bit RGB)": "HeLa Cells (48-bit RGB)", "Leaf (36K)": "Leaf",
+        "Line Graph (21K)": "Line Graph", "Mitosis (26MB, 5D stack)": "Mitosis (5D stack)",
+        "MRI Stack (528K)": "MRI Stack", "M51 Galaxy (177K, 16-bits)": "M51 Galaxy (16-bits)",
+        "Neuron (1.6M, 5 channels)": "Neuron (5 channels)", "Nile Bend (1.9M)": "Nile Bend",
+        "Organ of Corti (2.8M, 4D stack)": "Organ of Corti (4D stack)", "Particles (75K)": "Particles",
+        "T1 Head (2.4M, 16-bits)": "T1 Head (16-bits)", "T1 Head Renderings (736K)": "T1 Head Renderings",
+        "TEM Filter (112K)": "TEM Filter", "Tree Rings (48K)": "Tree Rings",
+    ]
+
+    /// `run(name, options)`: the native command, else the fallback, under
+    /// the command's current name (`IJ.convert`).
     public func run(_ name: String, options: MacroOptions = MacroOptions(""), in context: inout CommandContext)
         throws(CommandError)
     {
+        let name = Self.legacyNames[name] ?? name
         if let command = commands[name] {
             do {
                 try command.run(&context, options)

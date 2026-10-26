@@ -27,8 +27,9 @@ extension Roi {
         case .polygon(let polygon):
             return Self.polygonLength(polygon, pw, ph)
         case .line(let line):
-            let dx = line.x2 - line.x1, dy = line.y2 - line.y1
-            return (dx * dx * pw * pw + dy * dy * ph * ph).squareRoot()
+            // Line.getLength: sqr((x2-x1)*pw) + sqr((y2-y1)*ph).
+            let dx = (line.x2 - line.x1) * pw, dy = (line.y2 - line.y1) * ph
+            return (dx * dx + dy * dy).squareRoot()
         case .points, .opaque:
             return 0
         }
@@ -201,7 +202,24 @@ extension Roi {
             }
             return FloatPolygon(xs: xs, ys: ys)
         case .line(let line):
-            return FloatPolygon(xs: [Float(line.x1), Float(line.x2)], ys: [Float(line.y1), Float(line.y2)])
+            guard strokeWidth > 1 else {
+                return FloatPolygon(xs: [Float(line.x1), Float(line.x2)], ys: [Float(line.y1), Float(line.y2)])
+            }
+            // Line.getFloatPolygon(strokeWidth): the wide line's rectangle, on pixel corners.
+            let w = Double(strokeWidth)
+            var dx = line.x2 - line.x1, dy = line.y2 - line.y1
+            let length = (dx * dx + dy * dy).squareRoot()
+            dx *= 0.5 / length
+            dy *= 0.5 / length
+            let xs = [
+                line.x1 + 0.5 - dx + dy * w, line.x1 + 0.5 - dx - dy * w, line.x2 + 0.5 + dx - dy * w,
+                line.x2 + 0.5 + dx + dy * w,
+            ]
+            let ys = [
+                line.y1 + 0.5 - dy - dx * w, line.y1 + 0.5 - dy + dx * w, line.y2 + 0.5 + dy + dx * w,
+                line.y2 + 0.5 + dy - dx * w,
+            ]
+            return FloatPolygon(xs: xs.map { Float($0) }, ys: ys.map { Float($0) })
         case .points(let points):
             let p = points.state.floatPolygon
             return FloatPolygon(xs: p.xs, ys: p.ys)
