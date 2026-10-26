@@ -3,13 +3,14 @@ import CoreGraphics
 import Foundation
 import MancoraBridge
 import MancoraCore
+import MancoraIO
 import MancoraMacro
 import SwiftUI
 
 // `Mancora --screenshots <folder>`: opens real windows, puts the app in each
 // state a design review wants to see (the welcome window, no image, the inspector, a threshold,
 // selections, a hyperstack, the ROI Manager, Results, plots, the macro editor, the recorder,
-// a command dialog, Find Command, Update Sites, the Image menu), saves a PNG
+// command dialogs, Find Command, Update Sites, the Image menu), saves a PNG
 // of the window in light and in dark mode, writes `index.md`, and exits.
 //
 // How windows are opened: the first window's (the welcome window's) SwiftUI scene hands its
@@ -18,11 +19,18 @@ import SwiftUI
 // `openWindow(id:)` for the tool windows, `PlotWindows.open` for plots,
 // and the same `ViewerModel` and `AppSession` calls the commands make.
 //
-// How they are captured: `cacheDisplay` of the window's frame view
-// (`contentView.superview`, so the title bar and toolbar are in the picture),
-// which needs no screen-recording permission. If that picture is blank, or
-// fails, `/usr/sbin/screencapture -l <window number> -o` takes it instead.
-// A sheet (the command dialog, Find Command) is drawn over its window.
+// What the image windows show: images made in memory (`SampleImages`: a
+// 512×512 fluorescence-like micrograph and a three-channel 16-bit composite
+// stack) and saved as TIFFs in a temporary folder, because windows open files.
+// The small test fixtures are only the fallback when that fails.
+//
+// How they are captured: `/usr/sbin/screencapture -l <window number> -o`,
+// which shows the pixels as the window server draws them, with the title bar
+// and toolbar in the picture. A sheet (a command dialog, Find Command) is a
+// window of its own, captured the same way and laid over its parent. If
+// screencapture fails (it needs screen-recording permission on some
+// setups), `cacheDisplay` of the window's frame view takes the picture in
+// process instead; it smooths pixels, so the index says which was used.
 
 enum Screenshots {
     /// Where the PNGs and `index.md` go; set when the app was launched with `--screenshots`.
@@ -120,18 +128,25 @@ final class ScreenshotRun {
         let note: String?
     }
 
+    /// The sample images as files (windows open files).
+    struct SampleFiles {
+        let gray: URL
+        let composite: URL
+        /// Files for the welcome window's list of recent images, newest first.
+        let recents: [URL]
+    }
+
     private let directory: URL
     private let bridge: AppBridge
     private let openWindow: OpenWindowAction
     private let startedAt = Date()
     private var fixtures: URL?
+    private var samples: SampleFiles?
     private var shots: [Shot] = []
     private var problems: [Problem] = []
     private var running: String?
     private var gray: Opened?
     private var screencaptureFailures = 0
-    /// Also save screencapture's picture of each window, to compare with the in-process one.
-    private let comparesWithScreencapture = ProcessInfo.processInfo.environment["MANCORA_SCREENSHOTS_COMPARE"] != nil
 
     init(directory: URL, bridge: AppBridge, openWindow: OpenWindowAction) {
         self.directory = directory
@@ -152,7 +167,9 @@ final class ScreenshotRun {
         NSWindow.allowsAutomaticWindowTabbing = false
         NSApplication.shared.activate()
         setAppearance(dark: false)
+        samples = Self.makeSamples()
         fixtures = Self.findFixtures()
+        Screenshots.report("screenshots: sample images \(samples == nil ? "could not be made" : "made in memory")")
         Screenshots.report("screenshots: fixtures at \(fixtures?.path ?? "(not found)")")
         await runStates()
         // Find Command starts the Java helper; don't leave it running.
@@ -166,6 +183,11 @@ final class ScreenshotRun {
     // MARK: States
 
     private func runStates() async {
+        // What the windows list as recent: images (the welcome window) and commands (Find Command).
+        // Neither is stored, so the run leaves the user's own lists alone.
+        if let samples { RecentFiles.shared.show(samples.recents) }
+        RecentCommands.preset = ["Gaussian Blur...", "Measure", "Find Edges", "Invert"]
+
         // The window the app opens at launch.
         await state("00", "welcome") {
             guard let window = await poll(timeout: 30, { Self.window(titled: "Welcome to Mancora") }) else {
@@ -190,7 +212,7 @@ final class ScreenshotRun {
         }
 
         await state("02", "inspector") {
-            let url = try fixture("tiff/tf-gray8-none-le.tif")
+            let url = try grayscaleURL()
             let opened = try await open(url)
             gray = opened
             opened.model.showsInspector = true
@@ -200,11 +222,14 @@ final class ScreenshotRun {
         await state("03", "threshold") {
             let g = try grayscale()
             g.model.showsThreshold = true
+            // Bright objects on a dark background. (Left set afterwards: the Threshold section
+            // thresholds again when this changes, which would put a threshold on the image again.)
+            g.model.thresholdDark = true
             g.model.autoThreshold()
             if g.model.threshold == nil {
                 // Auto failed (and said so in an alert, which doesn't belong in the picture): set levels by hand.
                 g.model.errorMessage = nil
-                g.model.setThresholdLevels(lower: 64, upper: 192)
+                g.model.setThresholdLevels(lower: 64, upper: 255)
             }
             defer {
                 g.model.resetThreshold()
@@ -217,7 +242,7 @@ final class ScreenshotRun {
         await state("04", "selection-rectangle") {
             let g = try grayscale()
             AppSession.shared.tool = .rectangle
-            g.model.setSelection(Roi(.rectangle(.integer(x: 5, y: 4, width: 18, height: 11))))
+            g.model.setSelection(Roi(.rectangle(layout.rect(layout.rectangleBox))))
             await settle(0.5)
             await shoot("04", "selection-rectangle", "A rectangle selection drawn on the image", g.window)
         }
@@ -225,20 +250,22 @@ final class ScreenshotRun {
         await state("04", "selection-oval") {
             let g = try grayscale()
             AppSession.shared.tool = .oval
-            g.model.setSelection(Roi(.oval(.integer(x: 14, y: 3, width: 20, height: 16))))
+            g.model.setSelection(Roi(.oval(layout.rect(layout.ovalBox))))
             await settle(0.5)
             await shoot("04", "selection-oval", "An oval selection drawn on the image", g.window)
         }
 
         await state("05", "hyperstack") {
-            let url = try fixture("tiff/ij-hyperstack-16bit.tif")
+            let url = try hyperstackURL()
             let opened = try await open(url)
-            opened.model.channel = 1
-            opened.model.slice = 1
-            opened.model.frame = 2
+            guard let dimensions = opened.model.image?.dimensions else { throw Failure("the hyperstack is gone") }
+            opened.model.channel = min(1, dimensions.channels - 1)
+            opened.model.slice = min(2, dimensions.slices - 1)
+            opened.model.frame = min(2, dimensions.frames - 1)
             opened.model.positionChanged()
             await settle(1.0)
-            await shoot("05", "hyperstack", "A hyperstack (2 channels, 3 slices, 4 frames) with its C/Z/T sliders", opened.window)
+            let kind = "\(dimensions.channels) channel(s), \(dimensions.slices) slice(s), \(dimensions.frames) frame(s)"
+            await shoot("05", "hyperstack", "A hyperstack (\(kind)) with its C/Z/T sliders", opened.window)
         }
 
         await state("06", "roi-manager") {
@@ -246,7 +273,7 @@ final class ScreenshotRun {
             guard let image = g.model.image else { throw Failure("the grayscale image is gone") }
             let session = AppSession.shared
             session.roiManager = RoiManagerList()
-            for roi in Self.sampleRois {
+            for roi in layout.rois {
                 let label = AppSession.managerLabel(roi, image: image, sliceNumber: 1)
                 var named = roi
                 named.name = label
@@ -274,7 +301,7 @@ final class ScreenshotRun {
 
         await state("08", "plot-profile") {
             let g = try grayscale()
-            g.model.setSelection(Roi(.line(.init(x1: 1, y1: 2, x2: 35, y2: 20))))
+            g.model.setSelection(Roi(.line(layout.line)))
             let window = try await openPlot("Plot Profile", titlePrefix: "Plot of", viewer: g.model)
             await settle(1.0)
             await shoot("08", "plot-profile", "A Plot Profile window", window)
@@ -289,11 +316,12 @@ final class ScreenshotRun {
         }
 
         await state("09", "macro-editor") {
+            let macro = sampleMacro
             let (window, text) = try await openEditor()
-            text.show(Self.sampleMacro)
+            text.show(macro)
             // The caret on the Measure line, so the status bar has a position to show.
-            if let measure = Self.sampleMacro.range(of: "Measure") {
-                text.setSelectedRange(NSRange(measure.lowerBound..<measure.lowerBound, in: Self.sampleMacro))
+            if let measure = macro.range(of: "Measure") {
+                text.setSelectedRange(NSRange(measure.lowerBound..<measure.lowerBound, in: macro))
             }
             await settle(1.0)
             await shoot("09", "macro-editor", "The macro editor with a short macro", window)
@@ -302,32 +330,28 @@ final class ScreenshotRun {
         await state("09b", "recorder") {
             let window = try await openTool("recorder", title: "Recorder")
             let recorder = AppRecorder.shared
+            let oval = layout.ovalBox
             recorder.clear()
             recorder.isRecording = true
-            recorder.recordLine("open(\"tf-gray8-none-le.tif\");")
+            recorder.recordLine("open(\"\(grayscaleTitle)\");")
             recorder.record("Gaussian Blur...", options: "sigma=2")
             recorder.recordLine("setAutoThreshold(\"Default dark\");")
-            recorder.recordLine("makeOval(14, 3, 20, 16);")
+            recorder.recordLine("makeOval(\(oval.x), \(oval.y), \(oval.width), \(oval.height));")
             recorder.record("Measure", options: "")
             await settle(1.0)
             await shoot("09b", "recorder", "The Recorder window with a recorded macro", window)
         }
 
         await state("10", "command-dialog") {
-            let g = try grayscale()
-            let dialogs: BridgeDialogs
-            do {
-                dialogs = try JSONDecoder().decode(BridgeDialogs.self, from: Data(Self.gaussianBlurDialog.utf8))
-            } catch {
-                throw Failure("the hand-made dialog description does not decode: \(error)")
-            }
-            g.model.pendingDialog = PendingDialog(command: "Gaussian Blur...", dialogs: dialogs, stackSize: 5)
-            defer { g.model.pendingDialog = nil }
-            guard await waitUntil(10, { g.window.attachedSheet != nil }) else { throw Failure("the dialog sheet never appeared") }
-            await settle(1.0)
-            await shoot("10", "command-dialog", "Gaussian Blur…, in the native command dialog (a hand-made description)", g.window)
-            g.model.pendingDialog = nil
-            await waitUntil(5, { g.window.attachedSheet == nil })
+            try await shootDialog(
+                "10", "command-dialog", command: "Gaussian Blur...", description: Self.gaussianBlurDialog, stackSize: 5,
+                detail: "Gaussian Blur…, in the native command dialog (a hand-made description)")
+        }
+
+        await state("10b", "command-dialog-scale") {
+            try await shootDialog(
+                "10b", "command-dialog-scale", command: "Set Scale...", description: Self.setScaleDialog, stackSize: 1,
+                detail: "Set Scale…, a dialog with text, number and checkbox fields (a hand-made description)")
         }
 
         await state("11", "find-command") {
@@ -338,7 +362,23 @@ final class ScreenshotRun {
             // The finder starts the Java bridge for ImageJ's commands; show it once that has settled.
             await waitUntil(40, { bridgeHasSettled })
             await settle(1.0)
-            await shoot("11", "find-command", "Find Command (⌘L)", g.window)
+            await shoot("11", "find-command", "Find Command (⌘L) with nothing typed: recent commands first", g.window)
+            g.model.showsCommandFinder = false
+            await waitUntil(5, { g.window.attachedSheet == nil })
+        }
+
+        await state("11b", "find-command-search") {
+            let g = try grayscale()
+            CommandFinder.presetQuery = "blur"
+            defer {
+                CommandFinder.presetQuery = nil
+                g.model.showsCommandFinder = false
+            }
+            g.model.showsCommandFinder = true
+            guard await waitUntil(10, { g.window.attachedSheet != nil }) else { throw Failure("the Find Command sheet never appeared") }
+            await waitUntil(40, { bridgeHasSettled })
+            await settle(1.0)
+            await shoot("11b", "find-command-search", "Find Command with “blur” typed: menu paths and shortcuts", g.window)
             g.model.showsCommandFinder = false
             await waitUntil(5, { g.window.attachedSheet == nil })
         }
@@ -436,6 +476,26 @@ final class ScreenshotRun {
         return nil
     }
 
+    /// A command's dialog on the grayscale image, from a hand-made description, shot as a sheet.
+    private func shootDialog(
+        _ code: String, _ name: String, command: String, description: String, stackSize: Int, detail: String
+    ) async throws {
+        let g = try grayscale()
+        let dialogs: BridgeDialogs
+        do {
+            dialogs = try JSONDecoder().decode(BridgeDialogs.self, from: Data(description.utf8))
+        } catch {
+            throw Failure("the hand-made dialog description does not decode: \(error)")
+        }
+        g.model.pendingDialog = PendingDialog(command: command, dialogs: dialogs, stackSize: stackSize)
+        defer { g.model.pendingDialog = nil }
+        guard await waitUntil(10, { g.window.attachedSheet != nil }) else { throw Failure("the dialog sheet never appeared") }
+        await settle(1.0)
+        await shoot(code, name, detail, g.window)
+        g.model.pendingDialog = nil
+        await waitUntil(5, { g.window.attachedSheet == nil })
+    }
+
     /// The grayscale image window, in front.
     private func grayscale() throws -> Opened {
         guard let gray else { throw Failure("the grayscale image did not open (see 02-inspector)") }
@@ -450,7 +510,38 @@ final class ScreenshotRun {
         }
     }
 
-    // MARK: Fixtures and samples
+    // MARK: Sample images
+
+    /// Makes the sample images in memory and saves them (windows open files) in a temporary
+    /// folder, in a few folders of a lab's microscopy so the welcome window's recent list reads
+    /// naturally. `nil` if that failed; the states then use the fixtures.
+    private static func makeSamples() -> SampleFiles? {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mancora-screenshot-samples-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        func save(_ image: Hyperstack?, in folder: String) -> URL? {
+            guard let image else { return nil }
+            let directory = root.appendingPathComponent(folder, isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let url = directory.appendingPathComponent(image.title)
+                try TIFFExporter.write(image, to: url.path)
+                return url
+            } catch {
+                Screenshots.report("screenshots: cannot save \(image.title): \(error)")
+                return nil
+            }
+        }
+        guard
+            let gray = save(SampleImages.fluorescence(title: "nuclei-DAPI.tif", seed: 11), in: "Microscopy/Confocal"),
+            let composite = save(SampleImages.composite(title: "composite-3ch.tif", seed: 5), in: "Microscopy/Confocal")
+        else { return nil }
+        // More images for the recent list: other days' files, other folders.
+        let others = [
+            save(SampleImages.fluorescence(title: "neurons-GFP.tif", seed: 23), in: "Microscopy/Neurons"),
+            save(SampleImages.fluorescence(title: "colony-plate-04.tif", seed: 42), in: "Documents/Plates"),
+        ].compactMap { $0 }
+        return SampleFiles(gray: gray, composite: composite, recents: [composite, gray] + others)
+    }
 
     /// `Tests/Fixtures`: from `MANCORA_FIXTURES`, else next to the sources the app was built from
     /// (as the bridge finds its resources), else under the current folder.
@@ -476,33 +567,84 @@ final class ScreenshotRun {
         return url
     }
 
-    /// Four selections for the ROI Manager, inside the 37 × 23 grayscale fixture.
-    private static let sampleRois: [Roi] = {
-        let triangle = Roi.Polygon(
-            .polygon,
-            .integer([
-                Roi.IntPoint(x: 3, y: 17), Roi.IntPoint(x: 11, y: 12), Roi.IntPoint(x: 17, y: 20), Roi.IntPoint(x: 9, y: 22),
-            ]))
-        return [
-            Roi(.rectangle(.integer(x: 5, y: 4, width: 18, height: 11))),
-            Roi(.oval(.integer(x: 14, y: 3, width: 20, height: 16))),
-            Roi(.polygon(triangle)),
-            Roi(.rectangle(.integer(x: 24, y: 12, width: 10, height: 8))),
-        ]
-    }()
+    /// The grayscale image to open: the fluorescence-like sample, else the small fixture.
+    private func grayscaleURL() throws -> URL {
+        if let samples { return samples.gray }
+        return try fixture("tiff/tf-gray8-none-le.tif")
+    }
+
+    /// The hyperstack to open: the composite sample, else the fixture (2 channels, 3 slices, 4 frames).
+    private func hyperstackURL() throws -> URL {
+        if let samples { return samples.composite }
+        return try fixture("tiff/ij-hyperstack-16bit.tif")
+    }
+
+    private var grayscaleTitle: String {
+        gray?.model.image?.title ?? "image.tif"
+    }
+
+    /// Where the selections go, in the grayscale image whatever its size.
+    private var layout: SelectionLayout {
+        SelectionLayout(width: gray?.model.image?.width ?? 37, height: gray?.model.image?.height ?? 23)
+    }
+
+    /// Selections as fractions of the image, so they sit well on the 512 × 512 sample and stay
+    /// inside the 37 × 23 fixture.
+    struct SelectionLayout {
+        typealias Box = (x: Int, y: Int, width: Int, height: Int)
+
+        let width: Int
+        let height: Int
+
+        func box(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> Box {
+            (Int(Double(width) * x), Int(Double(height) * y), Int(Double(width) * w), Int(Double(height) * h))
+        }
+
+        func rect(_ box: Box) -> Roi.Rect {
+            .integer(x: Int32(box.x), y: Int32(box.y), width: Int32(box.width), height: Int32(box.height))
+        }
+
+        func point(_ x: Double, _ y: Double) -> Roi.IntPoint {
+            Roi.IntPoint(x: Int32(Double(width) * x), y: Int32(Double(height) * y))
+        }
+
+        var rectangleBox: Box { box(0.12, 0.16, 0.30, 0.22) }
+        var ovalBox: Box { box(0.50, 0.10, 0.30, 0.28) }
+        var lowerBox: Box { box(0.62, 0.60, 0.24, 0.22) }
+
+        /// The Plot Profile line, across several blobs.
+        var line: Roi.Line {
+            Roi.Line(x1: Double(width) * 0.05, y1: Double(height) * 0.10, x2: Double(width) * 0.95, y2: Double(height) * 0.82)
+        }
+
+        /// Four selections for the ROI Manager.
+        var rois: [Roi] {
+            let triangle = Roi.Polygon(
+                .polygon, .integer([point(0.08, 0.72), point(0.22, 0.58), point(0.34, 0.80), point(0.17, 0.90)]))
+            return [
+                Roi(.rectangle(rect(rectangleBox))),
+                Roi(.oval(rect(ovalBox))),
+                Roi(.polygon(triangle)),
+                Roi(.rectangle(rect(lowerBox))),
+            ]
+        }
+    }
 
     /// A short macro that uses what the editor colors: a comment, a keyword, functions, strings and numbers.
-    private static let sampleMacro = """
-        // Blur, threshold and measure three ovals
-        open("tf-gray8-none-le.tif");
-        run("Gaussian Blur...", "sigma=2");
-        setAutoThreshold("Default dark");
-        for (i = 0; i < 3; i++) {
-            makeOval(14 + i, 3, 20, 16);
-            run("Measure");
-        }
-        print("Measured " + nResults + " ovals");
-        """
+    private var sampleMacro: String {
+        let oval = layout.ovalBox
+        return """
+            // Blur, threshold and measure three ovals
+            open("\(grayscaleTitle)");
+            run("Gaussian Blur...", "sigma=2");
+            setAutoThreshold("Default dark");
+            for (i = 0; i < 3; i++) {
+                makeOval(\(oval.x) + i * 8, \(oval.y), \(oval.width), \(oval.height));
+                run("Measure");
+            }
+            print("Measured " + nResults + " ovals");
+            """
+    }
 
     /// What the bridge would describe for Gaussian Blur…, written by hand so the dialog
     /// can be shown without Java.
@@ -517,6 +659,28 @@ final class ScreenshotRun {
               "fields": [
                 {"kind": "number", "key": "sigma", "label": "Sigma (Radius)", "value": "2.00", "units": "pixels"},
                 {"kind": "checkbox", "key": "scaled", "label": "Scaled Units (µm)", "value": "false"}
+              ]
+            }
+          ]
+        }
+        """
+
+    /// Set Scale…'s dialog as ImageJ lays it out: numbers, a text field, a checkbox and a message.
+    private static let setScaleDialog = """
+        {
+          "asksForStack": false,
+          "supportsPreview": false,
+          "dialogs": [
+            {
+              "title": "Set Scale",
+              "hasPreview": false,
+              "fields": [
+                {"kind": "number", "key": "distance", "label": "Distance in pixels", "value": "100"},
+                {"kind": "number", "key": "known", "label": "Known distance", "value": "16.00"},
+                {"kind": "number", "key": "pixel", "label": "Pixel aspect ratio", "value": "1.0"},
+                {"kind": "string", "key": "unit", "label": "Unit of length", "value": "µm"},
+                {"kind": "checkbox", "key": "global", "label": "Global", "value": "false"},
+                {"kind": "message", "label": "Scale: 6.25 pixels/µm"}
               ]
             }
           ]
@@ -579,13 +743,6 @@ final class ScreenshotRun {
             do {
                 let taken = try await capture(window, to: url)
                 add(file: file, detail: "\(detail), \(mode) mode", taken: taken)
-                if comparesWithScreencapture, taken.method != "screencapture" {
-                    let other = url.deletingPathExtension().appendingPathExtension("screencapture.png")
-                    if let size = await screencapture(window, to: other) {
-                        let copy = Taken(method: "screencapture", size: size, note: "the same window, to compare with \(file)")
-                        add(file: other.lastPathComponent, detail: "\(detail), \(mode) mode", taken: copy)
-                    }
-                }
             } catch {
                 problems.append(Problem(state: file, reason: "\(error)"))
             }
@@ -598,39 +755,62 @@ final class ScreenshotRun {
         writeIndex()
     }
 
-    /// The window's picture: in-process, or from screencapture when that is blank or fails.
+    /// The window's picture: screencapture's, which shows the pixels as they are drawn; if that
+    /// fails, the in-process one (`cacheDisplay`, which smooths them).
     private func capture(_ window: NSWindow, to url: URL) async throws -> Taken {
         window.displayIfNeeded()
-        let image = Self.snapshot(of: window)
-        if let image, Self.hasContent(window) {
-            try Self.writePNG(image, to: url)
-            return Taken(method: "in-process", size: "\(image.width)×\(image.height)", note: nil)
+        if let taken = await captureWithScreencapture(window, to: url) { return taken }
+        guard let image = Self.snapshot(of: window) else {
+            throw Failure("screencapture failed, and cacheDisplay gave no picture")
         }
-        let reason = image == nil ? "cacheDisplay gave no picture" : "the in-process picture was blank"
-        if let size = await screencapture(window, to: url) {
-            return Taken(method: "screencapture", size: size, note: reason)
-        }
-        if let image {
-            try Self.writePNG(image, to: url)
-            return Taken(method: "in-process", size: "\(image.width)×\(image.height)", note: "\(reason), and screencapture failed too")
-        }
-        throw Failure("\(reason), and screencapture failed too")
+        try Self.writePNG(image, to: url)
+        let note =
+            Self.hasContent(window)
+            ? "screencapture failed, so this is cacheDisplay's picture, which smooths pixels"
+            : "screencapture failed, and the in-process picture looks blank"
+        return Taken(method: "in-process", size: "\(image.width)×\(image.height)", note: note)
     }
 
-    /// `screencapture -l <window number> -o`: the pixel size of its picture, or `nil`.
-    private func screencapture(_ window: NSWindow, to url: URL) async -> String? {
+    /// `screencapture -l` of the window, and of each sheet on it laid over it (a sheet is a window
+    /// of its own, and whether the parent's picture includes it is not something to rely on).
+    private func captureWithScreencapture(_ window: NSWindow, to url: URL) async -> Taken? {
+        guard var picture = await screencapture(window, to: url) else { return nil }
+        var note: String?
+        var layers: [(sheet: NSWindow, picture: CGImage)] = []
+        for sheet in window.sheets {
+            let part = url.deletingPathExtension().appendingPathExtension("sheet.png")
+            if let image = await screencapture(sheet, to: part) { layers.append((sheet, image)) }
+            try? FileManager.default.removeItem(at: part)
+        }
+        if let combined = Self.composite(layers, over: picture, in: window) {
+            picture = combined
+            do {
+                try Self.writePNG(combined, to: url)
+                note = "the sheet is laid over its window"
+            } catch {
+                note = "the sheet could not be laid over its window: \(error)"
+            }
+        }
+        return Taken(method: "screencapture", size: "\(picture.width)×\(picture.height)", note: note)
+    }
+
+    /// `screencapture -l <window number> -o`, saved at `url`: its picture, or `nil` when the tool
+    /// failed or the picture is blank (no screen-recording permission, a window that is not on screen).
+    private func screencapture(_ window: NSWindow, to url: URL) async -> CGImage? {
         // Without screen-recording permission it fails every time (or waits for a prompt).
-        guard screencaptureFailures < 2 else { return nil }
+        guard screencaptureFailures < 2, window.windowNumber > 0 else { return nil }
         try? FileManager.default.removeItem(at: url)
         let arguments = ["-l", String(window.windowNumber), "-o", "-x", url.path]
         let finished = await Self.run("/usr/sbin/screencapture", arguments, timeout: 15)
-        guard finished, let data = try? Data(contentsOf: url), let rep = NSBitmapImageRep(data: data), rep.pixelsWide > 0 else {
+        guard finished, let data = try? Data(contentsOf: url), let rep = NSBitmapImageRep(data: data), rep.pixelsWide > 0,
+            let image = rep.cgImage, Self.distinctColors(in: image, upTo: 12) >= 6
+        else {
             screencaptureFailures += 1
             try? FileManager.default.removeItem(at: url)
             return nil
         }
         screencaptureFailures = 0
-        return "\(rep.pixelsWide)×\(rep.pixelsHigh)"
+        return image
     }
 
     /// A tool being run. `Process` isn't `Sendable`, and the task that ends the tool after its time
@@ -663,6 +843,26 @@ final class ScreenshotRun {
         }
         limit.cancel()
         return succeeded
+    }
+
+    /// `layers` drawn over `base`, each where its window sits on `window` (a window's own
+    /// coordinates start at its bottom left, like the context's).
+    private static func composite(_ layers: [(sheet: NSWindow, picture: CGImage)], over base: CGImage, in window: NSWindow) -> CGImage? {
+        guard !layers.isEmpty, window.frame.width > 0,
+            let space = CGColorSpace(name: CGColorSpace.sRGB),
+            let context = CGContext(
+                data: nil, width: base.width, height: base.height, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        // Pixels per point.
+        let scale = CGFloat(base.width) / window.frame.width
+        context.draw(base, in: CGRect(x: 0, y: 0, width: base.width, height: base.height))
+        for layer in layers {
+            let x = (layer.sheet.frame.minX - window.frame.minX) * scale
+            let y = (layer.sheet.frame.minY - window.frame.minY) * scale
+            context.draw(layer.picture, in: CGRect(x: x, y: y, width: CGFloat(layer.picture.width), height: CGFloat(layer.picture.height)))
+        }
+        return context.makeImage()
     }
 
     /// The window's frame view drawn into a bitmap, with its sheets drawn over it.
@@ -823,6 +1023,7 @@ final class ScreenshotRun {
             "- macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
             "- Screens: \(screens.joined(separator: ", "))",
             "- App active: \(NSApplication.shared.isActive)",
+            "- Sample images: \(samples == nil ? "could not be made, the fixtures were used" : "made in memory")",
             "- Fixtures: \(fixtures?.path ?? "not found")",
             "",
             "## Pictures",
@@ -840,13 +1041,250 @@ final class ScreenshotRun {
             "",
             "## Notes",
             "",
-            "- Pictures marked in-process are `cacheDisplay` of the window's frame view; those marked screencapture are `/usr/sbin/screencapture -l`, used when the in-process picture was blank.",
+            "- Pictures marked screencapture are `/usr/sbin/screencapture -l <window> -o`: the pixels as the window server draws them. A sheet is its own window, captured the same way and laid over its parent. Those marked in-process are `cacheDisplay`, used only when screencapture failed; it smooths pixels, so judge details on the others.",
+            "- State 00 is the welcome window as the app opens it at launch (its recent images are the sample files below); 01 is an empty image window, which a command that makes an image opens first.",
             "- State 09 is the macro editor (Plugins ▸ New ▸ Macro) with text put straight into its text view; 09b is the Recorder window.",
             "- State 13 is the Image menu as a pop-up (a rebuilt copy of the menu bar's menu), not hanging from the menu bar.",
-            "- State 10 uses a hand-made description of Gaussian Blur…'s dialog, so it needs no Java.",
-            "- The images are the small test fixtures in `Tests/Fixtures/tiff`: `tf-gray8-none-le.tif` (grayscale) and `ij-hyperstack-16bit.tif`.",
+            "- States 10 and 10b use hand-made descriptions of Gaussian Blur…'s and Set Scale…'s dialogs, so they need no Java. State 11 shows recent commands from a made-up list, 11b a search for “blur”.",
+            "- The images are made in memory (`SampleImages`) and saved as TIFFs in a temporary folder, because windows open files: `nuclei-DAPI.tif`, a 512×512 8-bit fluorescence-like image of soft blobs on a dark, noisy background, and `composite-3ch.tif`, a 256×256 16-bit composite of 3 channels (red, green, blue) and 5 slices. The small test fixtures in `Tests/Fixtures/tiff` are only the fallback.",
         ]
         let text = lines.joined(separator: "\n") + "\n"
         try? text.write(to: directory.appendingPathComponent("index.md"), atomically: true, encoding: .utf8)
+    }
+}
+
+// MARK: Sample images
+
+/// Images for the screenshots, made in memory: a fluorescence-like micrograph and a composite
+/// stack. The numbers come from a seeded generator, so every run draws the same pictures.
+enum SampleImages {
+    /// SplitMix64.
+    struct Generator {
+        private var state: UInt64
+
+        init(seed: UInt64) {
+            state = seed &* 0x9E37_79B9_7F4A_7C15 &+ 0x1234_5678_9ABC_DEF1
+        }
+
+        mutating func next() -> UInt64 {
+            state = state &+ 0x9E37_79B9_7F4A_7C15
+            var z = state
+            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+            return z ^ (z >> 31)
+        }
+
+        /// A number from 0 up to (not including) 1.
+        mutating func unit() -> Double {
+            Double(next() >> 11) / 9_007_199_254_740_992.0
+        }
+
+        mutating func range(_ low: Double, _ high: Double) -> Double {
+            low + (high - low) * unit()
+        }
+
+        /// A normally distributed number: mean 0, standard deviation 1.
+        mutating func gaussian() -> Double {
+            let a = max(unit(), 1e-12)
+            let b = unit()
+            return (-2 * log(a)).squareRoot() * cos(2 * Double.pi * b)
+        }
+    }
+
+    /// Adds a soft elliptical blob to `field` (a `size` × `size` image): a Gaussian with `sigma`
+    /// along the direction `angle` and `sigma * stretch` across it, `amplitude` high at its centre.
+    static func addBlob(
+        to field: inout [Float], size: Int, x: Double, y: Double, sigma: Double, stretch: Double = 1, angle: Double = 0,
+        amplitude: Double
+    ) {
+        let across = sigma * stretch
+        let reach = Int((3.5 * max(sigma, across)).rounded(.up))
+        let left = max(0, Int(x) - reach), right = min(size - 1, Int(x) + reach)
+        let top = max(0, Int(y) - reach), bottom = min(size - 1, Int(y) + reach)
+        guard left <= right, top <= bottom else { return }
+        let cosine = cos(angle), sine = sin(angle)
+        let alongFactor = -0.5 / (sigma * sigma), acrossFactor = -0.5 / (across * across)
+        for row in top...bottom {
+            let dy = Double(row) - y
+            for column in left...right {
+                let dx = Double(column) - x
+                let u = dx * cosine + dy * sine
+                let v = -dx * sine + dy * cosine
+                field[row * size + column] += Float(amplitude * exp(u * u * alongFactor + v * v * acrossFactor))
+            }
+        }
+    }
+
+    /// A 512 × 512 8-bit image like a fluorescence micrograph: soft, slightly elongated blobs of
+    /// varying brightness and a few dim specks on a dark, slightly noisy background, calibrated
+    /// in micrometres.
+    static func fluorescence(title: String, seed: UInt64) -> Hyperstack? {
+        let size = 512
+        var random = Generator(seed: seed)
+        var field = [Float](repeating: 0, count: size * size)
+        // Out-of-focus haze.
+        for _ in 0..<5 {
+            let x = random.range(0, 512), y = random.range(0, 512)
+            addBlob(to: &field, size: size, x: x, y: y, sigma: random.range(70, 120), amplitude: random.range(3, 8))
+        }
+        // The objects themselves.
+        for _ in 0..<44 {
+            let x = random.range(30, 482), y = random.range(30, 482)
+            let sigma = random.range(8, 17), stretch = random.range(0.6, 1), angle = random.range(0, Double.pi)
+            addBlob(
+                to: &field, size: size, x: x, y: y, sigma: sigma, stretch: stretch, angle: angle,
+                amplitude: random.range(80, 220))
+        }
+        // Dim specks.
+        for _ in 0..<70 {
+            let x = random.range(10, 502), y = random.range(10, 502)
+            addBlob(to: &field, size: size, x: x, y: y, sigma: random.range(2, 4), amplitude: random.range(20, 55))
+        }
+        var pixels = [UInt8](repeating: 0, count: size * size)
+        for i in pixels.indices {
+            var value = Double(field[i]) + 9 + 3.4 * random.gaussian()
+            // The brightest cores roll off instead of clipping flat.
+            if value > 185 { value = 185 + (value - 185) * 0.5 }
+            pixels[i] = UInt8(min(max(value.rounded(), 0), 255))
+        }
+        guard let stack = try? ImageStack(width: size, height: size, planes: [.gray8(pixels)]) else { return nil }
+        var calibration = Calibration()
+        calibration.pixelWidth = 0.16
+        calibration.pixelHeight = 0.16
+        calibration.unit = "µm"
+        return try? Hyperstack(title: title, stack: stack, calibration: calibration)
+    }
+
+    /// A 256 × 256 16-bit composite of 3 channels and 5 slices, like a confocal stack of cells:
+    /// channel 1 (red) has vesicles, channel 2 (green) the cytoplasm and fibres, channel 3 (blue)
+    /// the nuclei; each cell is in focus in a different slice.
+    static func composite(title: String, seed: UInt64) -> Hyperstack? {
+        let size = 256, slices = 5, channels = 3
+        var random = Generator(seed: seed)
+
+        struct Fibre {
+            let x: Double
+            let y: Double
+            let sigma: Double
+            let angle: Double
+            let amplitude: Double
+        }
+        struct Vesicle {
+            let x: Double
+            let y: Double
+            let sigma: Double
+            let amplitude: Double
+            /// The slice it is in focus in.
+            let focus: Double
+        }
+        struct Cell {
+            let x: Double
+            let y: Double
+            /// The slice it is in focus in.
+            let focus: Double
+            let nucleus: Double
+            let body: Double
+            let stretch: Double
+            let angle: Double
+            let brightness: Double
+            let fibres: [Fibre]
+            let vesicles: [Vesicle]
+        }
+        // A jittered grid of cells, so they do not pile up. Every cell's features are drawn once,
+        // so they stay put from slice to slice.
+        var cells: [Cell] = []
+        for row in 0..<3 {
+            for column in 0..<4 {
+                let x = (Double(column) + 0.5) * Double(size) / 4 + random.range(-14, 14)
+                let y = (Double(row) + 0.5) * Double(size) / 3 + random.range(-12, 12)
+                let focus = random.range(0.4, 3.6)
+                let nucleus = random.range(10, 15), body = random.range(20, 28)
+                let stretch = random.range(0.7, 1), angle = random.range(0, Double.pi)
+                // Fibres run outwards from the nucleus.
+                var fibres: [Fibre] = []
+                for _ in 0..<8 {
+                    let direction = random.range(0, 2 * Double.pi), reach = random.range(nucleus * 1.2, body)
+                    let tilt = random.range(-0.35, 0.35)
+                    fibres.append(
+                        Fibre(
+                            x: x + reach * cos(direction), y: y + reach * sin(direction), sigma: random.range(6, 11),
+                            angle: direction + tilt, amplitude: random.range(2500, 6000)))
+                }
+                // Vesicles around the nucleus, each at a depth of its own.
+                var vesicles: [Vesicle] = []
+                for _ in 0..<16 {
+                    let direction = random.range(0, 2 * Double.pi), reach = random.range(nucleus * 1.1, body * 0.9)
+                    let depthOffset = random.range(-0.9, 0.9)
+                    vesicles.append(
+                        Vesicle(
+                            x: x + reach * cos(direction), y: y + reach * sin(direction), sigma: random.range(1.6, 2.7),
+                            amplitude: random.range(20000, 46000), focus: focus + depthOffset))
+                }
+                cells.append(
+                    Cell(
+                        x: x, y: y, focus: focus, nucleus: nucleus, body: body, stretch: stretch, angle: angle,
+                        brightness: random.range(0.6, 1), fibres: fibres, vesicles: vesicles))
+            }
+        }
+        // How sharply a feature at depth `focus` shows in slice `z`.
+        func depth(_ z: Int, _ focus: Double, spread: Double) -> Double {
+            exp(-pow(Double(z) - focus, 2) / (2 * spread * spread))
+        }
+
+        var planes: [Plane] = []
+        var channelMaximum = [Float](repeating: 1, count: channels)
+        for z in 0..<slices {
+            var red = [Float](repeating: 0, count: size * size)
+            var green = red
+            var blue = red
+            for cell in cells {
+                // Nuclei.
+                addBlob(
+                    to: &blue, size: size, x: cell.x, y: cell.y, sigma: cell.nucleus, stretch: cell.stretch, angle: cell.angle,
+                    amplitude: 36000 * cell.brightness * depth(z, cell.focus, spread: 1.1))
+                // Cytoplasm, with a hole where the nucleus is, and its fibres.
+                let bodyDepth = depth(z, cell.focus, spread: 1.7)
+                addBlob(
+                    to: &green, size: size, x: cell.x, y: cell.y, sigma: cell.body, stretch: cell.stretch, angle: cell.angle,
+                    amplitude: 15000 * cell.brightness * bodyDepth)
+                addBlob(
+                    to: &green, size: size, x: cell.x, y: cell.y, sigma: cell.nucleus * 0.9,
+                    amplitude: -9000 * cell.brightness * bodyDepth)
+                for fibre in cell.fibres {
+                    addBlob(
+                        to: &green, size: size, x: fibre.x, y: fibre.y, sigma: fibre.sigma, stretch: 0.28, angle: fibre.angle,
+                        amplitude: fibre.amplitude * bodyDepth)
+                }
+                // Vesicles.
+                for vesicle in cell.vesicles {
+                    addBlob(
+                        to: &red, size: size, x: vesicle.x, y: vesicle.y, sigma: vesicle.sigma,
+                        amplitude: vesicle.amplitude * depth(z, vesicle.focus, spread: 0.7))
+                }
+            }
+            for (c, field) in [red, green, blue].enumerated() {
+                var pixels = [UInt16](repeating: 0, count: size * size)
+                for i in pixels.indices {
+                    let value = Double(field[i]) + 380 + 130 * random.gaussian()
+                    pixels[i] = UInt16(min(max(value.rounded(), 0), 65535))
+                    channelMaximum[c] = max(channelMaximum[c], Float(pixels[i]))
+                }
+                planes.append(.gray16(pixels))
+            }
+        }
+        // A channel's display range stops a little under its brightest pixel, as auto-contrast would leave it.
+        let luts = [LUT.red, LUT.green, LUT.blue]
+        let displays = (0..<channels).map { c in
+            ChannelDisplay(lut: luts[c], displayRange: 0...Double((channelMaximum[c] * 0.85).rounded()))
+        }
+        guard let stack = try? ImageStack(width: size, height: size, planes: planes) else { return nil }
+        var calibration = Calibration()
+        calibration.pixelWidth = 0.32
+        calibration.pixelHeight = 0.32
+        calibration.pixelDepth = 1
+        calibration.unit = "µm"
+        return try? Hyperstack(
+            title: title, stack: stack, dimensions: HyperstackDimensions(channels: channels, slices: slices, frames: 1),
+            calibration: calibration, channels: displays, compositeMode: .composite)
     }
 }
