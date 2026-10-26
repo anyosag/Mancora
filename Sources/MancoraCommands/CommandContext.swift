@@ -37,6 +37,9 @@ public struct CommandSettings: Sendable, Hashable {
     public var binaryIterations = 1
     public var binaryCount = 1
     public var padEdges = false
+    /// Process ▸ Binary ▸ Options ▸ EDM output: where Distance Map, Ultimate
+    /// Points and Voronoi put their result.
+    public var edmOutput = EDMOutput.overwrite
     /// Edit ▸ Options ▸ Conversions ▸ Scale when converting.
     public var scaleConversions = true
     /// Analyze ▸ Set Measurements ▸ Decimal places.
