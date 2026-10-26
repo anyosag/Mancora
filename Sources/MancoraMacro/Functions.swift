@@ -648,7 +648,17 @@ final class Functions {
 
     private func print() throws(MacroSignal) {
         interp.inPrint = true
-        var s = try getFirstString()
+        try interp.getLeftParen()
+        let first = try interp.getString()
+        var s = first ?? "null"
+        if first == nil && interp.nextToken() != ch(",") {
+            // A string function that returns nothing (String.append, runMacro without a
+            // return value): IJ.log(null) prints no line.
+            try interp.getRightParen()
+            if interp.evaluating { interp.evalOutput = nil }
+            interp.inPrint = false
+            return
+        }
         if interp.nextToken() == ch(",") {
             if javaStartsWith(s, "[") && javaEndsWith(s, "]") {
                 try printToWindow(s)

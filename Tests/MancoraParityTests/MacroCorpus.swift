@@ -303,6 +303,12 @@ enum MacroCorpus {
             }
             print(n, m);
             """#),
+        .init("printing a string function that returns nothing", #"""
+            print(String.append("x"));
+            print("a", String.append("y"));
+            print(String.resetBuffer);
+            print(String.buffer + "|");
+            """#),
         .init("deep recursion", #"""
             function depth(n) { if (n == 0) return 0; return 1 + depth(n - 1); }
             print(depth(600));
