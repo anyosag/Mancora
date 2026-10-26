@@ -168,15 +168,6 @@ enum ProcessCommands {
         }
         var create = options.flag(forLabel: "Create new window")
         let float = options.flag(forLabel: "32-bit (float) result")
-        if first.image.stack.count > 1, FilterCommands.targetPlanes(first, options).count == 1 {
-            throw CommandError.notNative(name)  // one slice of a stack: ImageJ can
-        }
-        let result: Hyperstack
-        do {
-            result = try ImageCalculator.calculate(first.image, operation, second.image, float32Result: float)
-        } catch {
-            throw CommandError.failed(command: name, detail: "\(error)")
-        }
         let signed = [first.image, second.image].contains { image in
             if case .straightLine(-32768, 1)? = image.calibration.valueFunction { return image.pixelType == .gray16 }
             return false
@@ -184,12 +175,44 @@ enum ProcessCommands {
         if (float || signed) && !(first.image.pixelType == .gray32Float && second.image.pixelType == .gray32Float) {
             create = true
         }
+        // doOperation: one image, or one slice of a stack (the current
+        // planes), unless a stack is processed whole (doStackOperation).
+        let onePlane = first.image.stack.count == 1 || FilterCommands.targetPlanes(first, options).count == 1
+        let result: Hyperstack
+        do {
+            result = onePlane
+                ? try ImageCalculator.calculate(currentPlane(first), operation, currentPlane(second), float32Result: float)
+                : try ImageCalculator.calculate(first.image, operation, second.image, float32Result: float)
+        } catch {
+            throw CommandError.failed(command: name, detail: "\(error)")
+        }
         if create {
             context.add(result)
-        } else {
-            try context.select(id: first.id)
-            try replaceCurrent(name, &context) { _ in result }
+            return
         }
+        try context.select(id: first.id)
+        guard first.image.stack.count > 1, onePlane else {
+            try replaceCurrent(name, &context) { _ in result }
+            return
+        }
+        // The result goes into the current slice, whose processor shows its range.
+        try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in
+            let index = open.image.dimensions.planeIndex(channel: open.channel, slice: open.slice, frame: open.frame)
+            do { try open.image.setPlane(result.stack[0], at: index) } catch { throw .failed(command: name, detail: "\(error)") }
+            var display = open.image.channels[open.channel]
+            display.displayRange = result.channels[0].displayRange
+            open.image.setDisplay(display, forChannel: open.channel)
+        }
+    }
+
+    /// `img.getProcessor()` as an image: the current plane, with the current
+    /// channel's LUT and display range and the image's calibration and title.
+    static func currentPlane(_ open: OpenImage) throws -> Hyperstack {
+        let image = open.image
+        if image.stack.count == 1 { return image }
+        let stack = try ImageStack(width: image.width, height: image.height, planes: [open.currentPlane])
+        return try Hyperstack(
+            title: image.title, stack: stack, calibration: image.calibration, channels: [image.channels[open.channel]])
     }
 
     // MARK: Image ▸ Stacks
@@ -267,10 +290,14 @@ enum ProcessCommands {
         let name = "Make Substack..."
         guard let open = context.current else { throw CommandError.noImage(name) }
         let dims = open.image.dimensions
-        guard !options.flag(forLabel: "Delete slices from original stack") else { throw CommandError.notNative(name) }
+        let hyperstack = dims.channels > 1 || (dims.slices > 1 && dims.frames > 1)
+        if !hyperstack, options.flag(forLabel: "Delete slices from original stack") || options.flag(forLabel: "Do_not create substack") {
+            try substackDeleting(name, &context, options)
+            return
+        }
         let result: Hyperstack
         do {
-            if dims.channels > 1 || (dims.slices > 1 && dims.frames > 1) {
+            if hyperstack {
                 var sub = try SubstackMaker.makeSubhyperstack(
                     open.image, channels: options.value(forLabel: "channels") ?? "1-\(dims.channels)",
                     slices: options.value(forLabel: "slices") ?? "1-\(dims.slices)",
@@ -289,6 +316,71 @@ enum ProcessCommands {
             throw CommandError.failed(command: name, detail: "\(error)")
         }
         context.add(result)
+    }
+
+    /// Make Substack with `delete` (or `do_not` create a substack, which
+    /// implies it): each listed slice, counted in the stack as it shrinks
+    /// (ImageJ subtracts the slices deleted so far), goes into the substack
+    /// and out of the original.
+    static func substackDeleting(_ name: String, _ context: inout CommandContext, _ options: MacroOptions) throws {
+        guard let open = context.current else { throw CommandError.noImage(name) }
+        guard let list = options.value(forLabel: "Slices:") else {
+            throw CommandError.invalidOption(command: name, detail: "no slices= given")
+        }
+        let create = !options.flag(forLabel: "Do_not create substack")
+        let image = open.image
+        // The 1-based numbers ImageJ walks: a range (with an increment) or a list.
+        let text = list.filter { !$0.isWhitespace }
+        var numbers: [Int] = []
+        if let dash = text.firstIndex(of: "-"), dash != text.startIndex {
+            let parts = text.split(separator: "-", omittingEmptySubsequences: false)
+            guard parts.count == 2 || parts.count == 3, let first = Int(parts[0]), let last = Int(parts[1]),
+                let step = parts.count == 3 ? Int(parts[2]) : 1, step > 0
+            else { throw CommandError.failed(command: name, detail: "Invalid input string: \"\(list)\"") }
+            numbers = Array(stride(from: first, through: last, by: step))
+        } else {
+            for part in text.split(separator: ",", omittingEmptySubsequences: false) {
+                guard let number = Int(part) else { throw CommandError.failed(command: name, detail: "Invalid input string: \"\(list)\"") }
+                numbers.append(number)
+            }
+        }
+        var remaining = Array(0..<image.stack.count)
+        var taken: [Int] = []
+        for (j, number) in numbers.enumerated() {
+            let current = number - j
+            guard (1...remaining.count).contains(current) else {
+                throw CommandError.failed(command: name, detail: "Invalid input string: \"\(list)\"")
+            }
+            taken.append(remaining.remove(at: current - 1))
+        }
+        var substack: Hyperstack?
+        if create {
+            do {
+                var made = try SubstackMaker.makeSubstack(image, taken.map { String($0 + 1) }.joined(separator: ","))
+                made.title = "Substack (\(list))"
+                substack = made
+            } catch {
+                throw CommandError.failed(command: name, detail: "\(error)")
+            }
+        }
+        guard !remaining.isEmpty else { throw CommandError.notNative(name) }  // every slice deleted: ImageJ
+        try replaceCurrent(name, &context) { open in
+            let image = open.image
+            let stack = try ImageStack(
+                width: image.width, height: image.height, planes: remaining.map { image.stack[$0] },
+                labels: remaining.map { image.stack.labels[$0] })
+            // A time series stays one.
+            let timeSeries = image.dimensions.frames == image.stack.count
+            var out = try Hyperstack(
+                title: image.title, stack: stack,
+                dimensions: timeSeries ? HyperstackDimensions(frames: stack.count) : HyperstackDimensions(slices: stack.count),
+                calibration: image.calibration, channels: [image.channels[0]], compositeMode: image.compositeMode,
+                info: image.info, properties: image.properties)
+            out.encodedROI = image.encodedROI
+            out.encodedOverlay = image.encodedOverlay
+            return out
+        }
+        if let substack { context.add(substack) }
     }
 
     /// `ij.plugin.HyperStackReducer`: `channels`, `slices`, `frames` keep a

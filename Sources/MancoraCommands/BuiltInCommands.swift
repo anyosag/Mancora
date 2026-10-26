@@ -5,7 +5,7 @@ import MancoraProcess
 /// Commands Mancora implements natively, named as in ImageJ's menus.
 enum BuiltInCommands {
     static var all: [CommandDefinition] {
-        lutCommands + [invertLUT, enhanceContrast, rename, close, closeAll, duplicate, properties, setScale]
+        lutCommands + [invertLUT, enhanceContrast, rename, close, closeAll, duplicate, duplicateImage, properties, setScale]
             + [setMeasurements, measure, clearResults, analyzeParticles] + FilterCommands.all + ProcessCommands.all + ThresholdCommands.all + EditCommands.all
             + CropCommands.all + TransformCommands.all
             + GeometryCommands.all + ExtraFilterCommands.all + AnalyzeCommands.all + SelectionDrawing.all
@@ -254,6 +254,17 @@ enum BuiltInCommands {
         }
     }
 
+    /// The image popup menu's Duplicate Image (`Executer.extraCommand`):
+    /// Duplicate with the selection ignored (kept on the copy) and no options.
+    static let duplicateImage = CommandDefinition("Duplicate Image...", menu: "Image") { context, _ in
+        guard let open = context.current else { throw CommandError.noImage("Duplicate Image...") }
+        let dims = open.image.dimensions
+        if dims.channels > 1 || (dims.slices > 1 && dims.frames > 1) {
+            throw CommandError.notNative("Duplicate Image...")  // ImageJ's hyperstack dialog
+        }
+        try duplicate.run(&context, MacroOptions("ignore"))
+    }
+
     /// `Tools.split(text, " -")`, each part cast to `int` as Java does
     /// (saturating), or `nil` for a part that isn't a number (NaN).
     static func splitRange(_ text: String) -> [Int?] {
@@ -290,6 +301,7 @@ enum BuiltInCommands {
     /// origin and Invert Y (a checkbox, so off unless named).
     static let properties = CommandDefinition("Properties...", menu: "Image") { context, options in
         let name = "Properties..."
+        guard !options.flag(forLabel: "Global") else { throw CommandError.notNative(name) }  // global calibration: ImageJ
         try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in
             var image = open.image
             let dims = image.dimensions
@@ -352,6 +364,7 @@ enum BuiltInCommands {
     /// `ij.plugin.filter.ScaleDialog`: `distance=` pixels are `known=` units
     /// (`unit=`), with `pixel=` the aspect ratio; anything incomplete resets to pixels.
     static let setScale = CommandDefinition("Set Scale...", menu: "Analyze") { context, options in
+        guard !options.flag(forLabel: "Global") else { throw CommandError.notNative("Set Scale...") }  // global calibration: ImageJ
         try context.withCurrent("Set Scale...") { (open: inout OpenImage) throws(CommandError) in
             var cal = open.image.calibration
             let measured = options.number(forLabel: "distance", default: 0)

@@ -69,6 +69,27 @@ struct SelectionCommandTests {
         #expect(changed > 0 && changed <= 20)
     }
 
+    /// The image popup's Duplicate Image (whose dialog ImageJ always shows,
+    /// so the bridge can't run it) copies the whole plane and keeps the selection.
+    @Test func duplicateImageIgnoresTheSelection() throws {
+        let oval = Roi(.oval(.integer(x: 1, y: 1, width: 7, height: 5)))
+        var context = try context(with: oval)
+        try CommandRegistry.standard.run("Duplicate Image...", in: &context)
+        let copy = try #require(context.current)
+        #expect(copy.title == "g-1.tif")
+        #expect(copy.image.width == Self.width && copy.image.height == Self.height)
+        #expect(copy.roi == oval)
+        #expect(try pixels(context) == pixels(try self.context(with: nil)))
+    }
+
+    /// Set Scale and Properties with Global set ImageJ's global calibration, which the bridge keeps.
+    @Test func globalCalibrationIsLeftToImageJ() throws {
+        var context = try context(with: nil)
+        #expect(throws: CommandError.notNative("Set Scale...")) {
+            try CommandRegistry.standard.run("Set Scale...", options: MacroOptions("distance=10 known=1 unit=um global"), in: &context)
+        }
+    }
+
     @Test func linesAndPointsCountAsNoSelection() throws {
         let before = try pixels(try context(with: nil))
         for roi in [Roi(.line(.init(x1: 1, y1: 1, x2: 6, y2: 4))), Roi(.points(.init(.integer([.init(x: 3, y: 3)]))))] {
