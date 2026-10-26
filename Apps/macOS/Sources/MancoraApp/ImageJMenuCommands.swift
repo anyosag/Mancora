@@ -42,6 +42,9 @@ struct ImageJMenuCommands: Commands {
         CommandGroup(before: .windowArrangement) {
             MenuEntries(entries: Self.menu("Window").entries, perform: perform)
             Divider()
+            Button("Results") { openWindow(id: "results") }
+            Button("Log") { openWindow(id: "log") }
+            Divider()
         }
         CommandGroup(replacing: .help) {
             MenuEntries(entries: Self.menu("Help").entries, perform: perform)
@@ -176,7 +179,7 @@ enum AppMenuActions {
             openWindow(id: "recorder")
         case "Find Commands...", "Commands...":
             viewer?.showsCommandFinder = true
-        case "Brightness/Contrast...":
+        case "Brightness/Contrast...", "Show Info...":
             viewer?.showsInspector = true
         case "Update...":
             openWindow(id: "update-sites")

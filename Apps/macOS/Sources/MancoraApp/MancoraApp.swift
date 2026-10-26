@@ -53,6 +53,14 @@ struct MancoraApp: App {
             RecorderView(recorder: AppRecorder.shared)
         }
         .defaultSize(width: 520, height: 280)
+        Window("Results", id: "results") {
+            ResultsWindow(session: AppSession.shared)
+        }
+        .defaultSize(width: 640, height: 320)
+        Window("Log", id: "log") {
+            LogWindow(session: AppSession.shared)
+        }
+        .defaultSize(width: 480, height: 300)
         Window("Update Sites", id: "update-sites") {
             UpdateSitesView(model: updateSites, bridge: bridge)
         }

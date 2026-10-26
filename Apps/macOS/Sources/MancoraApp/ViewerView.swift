@@ -37,6 +37,8 @@ struct ViewerWindow: View {
                     show(await model.perform(command, bridge: bridge))
                 }
             }
+            .onChange(of: AppSession.shared.resultsAdded) { openWindow(id: "results") }
+            .onChange(of: AppSession.shared.logAdded) { openWindow(id: "log") }
             .onOpenURL { url in
                 model.bridge = bridge
                 // Files opened from the Finder: fill this window if it's empty.

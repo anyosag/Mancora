@@ -120,6 +120,7 @@ final class ViewerModel {
     }
 
     func show(_ image: Hyperstack, from url: URL?) {
+        AppSession.shared.register(self)
         self.image = image
         fileURL = url
         channel = 0
@@ -178,7 +179,7 @@ final class ViewerModel {
             if !bridge.isReady { await bridge.start() }
             if bridge.isReady {
                 do {
-                    let dialogs = try await bridge.describeDialog(name, on: image)
+                    let dialogs = try await bridge.describeDialog(name, images: dialogImages(for: name))
                     if !dialogs.dialogs.isEmpty {
                         pendingDialog = PendingDialog(command: name, dialogs: dialogs, stackSize: image?.stack.count ?? 1)
                         return []
@@ -189,7 +190,23 @@ final class ViewerModel {
                 }
             }
         }
+        // Without a dialog these would wipe settings (distance 0 removes the scale).
+        if Self.needsAnswers.contains(name) {
+            errorMessage = "\(name) needs ImageJ for its dialog: install Java 11 or later, then try again."
+            return []
+        }
         return await runRecorded(name, options: "", bridge: bridge)
+    }
+
+    /// Commands whose default options undo what they set.
+    static let needsAnswers: Set<String> = ["Set Scale...", "Set Measurements...", "Properties...", "Calibrate..."]
+
+    /// The images a command's dialog chooses from: all of them for a command
+    /// that combines images (this one last), else this one.
+    private func dialogImages(for name: String) -> [Hyperstack] {
+        let others = AppSession.multiImageCommands.contains(name)
+            ? AppSession.shared.imageViewers.filter { $0 !== self }.compactMap(\.image) : []
+        return others + (image.map { [$0] } ?? [])
     }
 
     /// Runs a command and remembers it for Repeat Command.
@@ -218,12 +235,31 @@ final class ViewerModel {
         open(OpenRequest(url: fileURL))
     }
 
+    /// Runs a command on this window's image, natively (off the main thread,
+    /// with every open image available and the session's results and
+    /// settings) or in ImageJ; changed images update their windows, and
+    /// new ones come back to open in their own.
     func runCommand(_ name: String, options: String = "", bridge: AppBridge) async -> [URL] {
         let registry = CommandRegistry.standard
+        let session = AppSession.shared
+        session.register(self)
         if registry.isNative(name) {
             var context = CommandContext()
+            context.results = session.results
+            context.tables = session.tables
+            context.settings = session.settings
+            var owners: [Int: ViewerModel] = [:]
+            var originals: [Int: Hyperstack] = [:]
+            for viewer in session.imageViewers where viewer !== self {
+                guard let other = viewer.image else { continue }
+                let id = context.add(other)
+                owners[id] = viewer
+                originals[id] = other
+            }
             if let image {
-                context.add(image)
+                let id = context.add(image)
+                owners[id] = self
+                originals[id] = image
                 let (c, z, t) = (channel, slice, frame)
                 try? context.withCurrent(name) { (open: inout OpenImage) in
                     open.channel = c
@@ -231,48 +267,71 @@ final class ViewerModel {
                     open.frame = t
                 }
             }
-            do {
-                try registry.run(name, options: MacroOptions(options), in: &context)
-                AppRecorder.shared.record(name, options: options)
-                var created: [Hyperstack] = []
-                for open in context.images {
-                    if open.id == -1 { replace(with: open.image) } else { created.append(open.image) }
+            isBusy = true
+            let input = context
+            let outcome = await Task.detached(priority: .userInitiated) { () -> Result<CommandContext, CommandError> in
+                var working = input
+                do throws(CommandError) {
+                    try registry.run(name, options: MacroOptions(options), in: &working)
+                    return .success(working)
+                } catch {
+                    return .failure(error)
                 }
-                if !context.log.isEmpty { report = context.log.joined(separator: "\n") }
+            }.value
+            isBusy = false
+            switch outcome {
+            case .success(let done):
+                AppRecorder.shared.record(name, options: options)
+                session.absorb(done)
+                var created: [Hyperstack] = []
+                for open in done.images {
+                    if let owner = owners[open.id] {
+                        if open.image != originals[open.id] { owner.replace(with: open.image) }
+                    } else {
+                        created.append(open.image)
+                    }
+                }
                 return saveForNewWindows(created)
-            } catch CommandError.notNative {
+            case .failure(let error):
                 // Mancora has the command but not with these options: ImageJ does.
-            } catch {
-                errorMessage = "\(error)"
-                return []
+                guard case .notNative = error else {
+                    errorMessage = "\(error)"
+                    return []
+                }
             }
         }
         isBusy = true
         defer { isBusy = false }
+        // Commands that combine images get them all, this one last (and so active).
+        let others = AppSession.multiImageCommands.contains(name)
+            ? session.imageViewers.filter { $0 !== self }.compactMap(\.image) : []
+        let images = others + (image.map { [$0] } ?? [])
         do {
-            let result = try await bridge.run(name, options: options, on: image)
+            let result = try await bridge.run(name, options: options, images: images)
             AppRecorder.shared.record(name, options: options)
-            return handle(result)
+            return handle(result, inputCount: images.count, hasImage: image != nil)
         } catch {
             errorMessage = "\(error)"
             return []
         }
     }
 
-    /// Runs ImageJ macro code with this image open (Plugins ▸ Macros ▸ Run):
-    /// natively when Mancora has everything it uses, otherwise in ImageJ
-    /// through the bridge.
     func runMacro(_ code: String, bridge: AppBridge) async -> [URL] {
         isBusy = true
         defer { isBusy = false }
         if MacroSupport.unsupported(in: code, registry: .standard).isEmpty {
             let input = image
             let position = (channel, slice, frame)
-            // log, results, return value, error, the input as the macro left it, new images
+            let shared = AppSession.shared
+            let (startResults, startSettings) = (shared.results, shared.settings)
+            // what the macro left (results, settings, log), its return value and error,
+            // the input as the macro left it, and new images
             let outcome = await Task.detached(priority: .userInitiated) {
-                () -> (String, ResultsTable, String?, String?, Hyperstack?, [Hyperstack]) in
+                () -> (CommandContext, String?, String?, Hyperstack?, [Hyperstack]) in
                 let session = MacroSession()
                 session.batchMode = false
+                session.context.results = startResults
+                session.context.settings = startSettings
                 var inputID: Int?
                 if let input {
                     inputID = session.add(input)
@@ -292,29 +351,14 @@ final class ViewerModel {
                         created.append(open.image)
                     }
                 }
-                return (session.logText, session.context.results, value, failure, changed, created)
+                var left = session.context
+                left.log = session.logLines
+                return (left, value, failure, changed, created)
             }.value
-            let (log, results, value, failure, changed, created) = outcome
+            let (left, value, failure, changed, created) = outcome
             if let changed { replace(with: changed) }
-            var lines: [String] = []
-            if !log.isEmpty { lines.append(log) }
-            if !results.isEmpty {
-                let hasLabels = results.labels.contains { $0 != nil }
-                lines.append(((hasLabels ? ["Label"] : []) + results.columns).joined(separator: "\t"))
-                for row in 0..<results.count {
-                    var cells = hasLabels ? [results.labels[row] ?? ""] : []
-                    for column in results.columns {
-                        if case .text(let t)? = results.value(column, row: row) {
-                            cells.append(t)
-                        } else {
-                            cells.append(String(format: "%.4g", results.number(column, row: row)))
-                        }
-                    }
-                    lines.append(cells.joined(separator: "\t"))
-                }
-            }
-            if let value { lines.append("Returned: \(value)") }
-            if !lines.isEmpty { report = lines.joined(separator: "\n") }
+            shared.absorb(left)
+            if let value { report = "Returned: \(value)" }
             if let failure { errorMessage = "Macro Error: " + failure }
             return saveForNewWindows(created)
         }
@@ -326,33 +370,28 @@ final class ViewerModel {
         }
     }
 
-    private func handle(_ result: BridgeRunResult) -> [URL] {
+    /// What ImageJ gave back: results and log lines go to the session, a
+    /// changed current image (the last input) updates this window, new
+    /// images open in their own.
+    private func handle(_ result: BridgeRunResult, inputCount: Int = 1, hasImage: Bool = true) -> [URL] {
+        AppSession.shared.absorb(result)
         var created: [Hyperstack] = []
         for output in result.images {
-            if output.replacesInput == 0 { replace(with: output.image) } else { created.append(output.image) }
-        }
-        var lines: [String] = []
-        if !result.log.isEmpty { lines.append(result.log) }
-        if !result.results.isEmpty {
-            lines.append(result.results.columns.joined(separator: "\t"))
-            for row in result.results.rows {
-                lines.append(row.map { cell -> String in
-                    switch cell {
-                    case .number(let v): String(format: "%.4g", v)
-                    case .text(let t): t
-                    case .empty: ""
-                    }
-                }.joined(separator: "\t"))
+            if let replaced = output.replacesInput {
+                if hasImage, replaced == inputCount - 1 { replace(with: output.image) }
+            } else {
+                created.append(output.image)
             }
         }
-        if let value = result.value { lines.append("Returned: \(value)") }
-        if !lines.isEmpty { report = lines.joined(separator: "\n") }
+        if let error = result.macroError {
+            errorMessage = "Macro Error: " + error + (result.macroErrorLine.map { " in line \($0)" } ?? "")
+        } else if let value = result.value {
+            report = "Returned: \(value)"
+        }
         return saveForNewWindows(created)
     }
 
-    /// Keeps the position (within the new dimensions) when a command changes
-    /// the image in place.
-    private func replace(with changed: Hyperstack) {
+    func replace(with changed: Hyperstack) {
         let dims = changed.dimensions
         if let previous = image {
             undoManager?.registerUndo(withTarget: self) { model in
