@@ -30,8 +30,9 @@ struct MancoraApp: App {
                 exit(1)
             }
         }
-        // `Mancora --screenshots dir` opens each window in each state, saves a
-        // PNG of it in light and dark mode, and exits (see Screenshots.swift).
+        // `Mancora --screenshots dir` opens each window in each state (the welcome
+        // window first), saves a PNG of it in light and dark mode, and exits (see
+        // Screenshots.swift).
         if let i = args.firstIndex(of: "--screenshots"), i + 1 < args.count {
             Screenshots.configure(path: args[i + 1])
         }
@@ -41,15 +42,26 @@ struct MancoraApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Mancora", id: "viewer", for: OpenRequest.self) { $request in
-            ViewerWindow(request: $request, bridge: bridge)
+        // The first scene is the one the system opens at launch: the welcome window, not an
+        // empty image window. Image windows open for files (File ▸ Open, the welcome window,
+        // the Finder) and for commands that make images; the welcome window gives way to them.
+        Window("Welcome to Mancora", id: "welcome") {
+            WelcomeView(bridge: bridge)
                 .task { if !Screenshots.isActive { updater.checkAtLaunch() } }
                 .screenshotDriver(bridge: bridge)
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        WindowGroup("Mancora", id: "viewer", for: OpenRequest.self) { $request in
+            ViewerWindow(request: $request, bridge: bridge)
+                .modifier(ImageWindowOpening(request: request))
+                .task { if !Screenshots.isActive { updater.checkAtLaunch() } }
         }
         .commands {
             ImageJMenuCommands(bridge: bridge)
             PluginCommands(bridge: bridge)
             MacroEditorCommands()
+            WelcomeCommands()
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") {
                     Task { await updater.check(userInitiated: true) }
