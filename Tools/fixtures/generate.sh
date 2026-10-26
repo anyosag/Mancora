@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regenerates Tests/Fixtures with writers independent of Mancora:
-#   - ImageJ 1.54p (LUT goldens and ImageJ-written TIFFs)
+#   - ImageJ 1.54p (LUT goldens, ImageJ-written TIFFs, ROI files and masks)
 #   - tifffile + imagecodecs and ImageMagick (the TIFF matrix)
 #
 # Requires: Java 11+, python3 with venv, ImageMagick's `convert`, network
@@ -27,4 +27,5 @@ if [[ ! -x "$cache/venv/bin/python" ]]; then
 fi
 
 java -Djava.awt.headless=true -cp "$ij_jar" "$root/Tools/fixtures/ImageJFixtures.java" "$root"
+java -Djava.awt.headless=true -cp "$ij_jar" "$root/Tools/fixtures/RoiFixtures.java" "$root"
 "$cache/venv/bin/python" -I "$root/Tools/fixtures/make_tiffs.py" "$root"
