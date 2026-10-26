@@ -5,9 +5,11 @@
 //   mancora lut <file.lut>                 describe a LUT file
 //   mancora luts                           list the built-in LUTs
 //   mancora update [--download <dir>]      check for a newer release
+//   mancora bridge <setup|info|commands|run|macro> …   ImageJ and its plugins in a Java helper
 //   mancora --version
 
 import Foundation
+import MancoraBridge
 import MancoraCore
 import MancoraIO
 import MancoraSupport
@@ -19,6 +21,10 @@ let usage = """
            mancora lut <file.lut>
            mancora luts
            mancora update [--download <directory>]
+           mancora bridge setup                       install ImageJ for the Java bridge
+           mancora bridge info | commands [--plugins]
+           mancora bridge run "<command>" "<options>" <in.tif> [<out.tif>]
+           mancora bridge macro <macro.ijm> [<in.tif> …]
            mancora --version
     """
 
@@ -94,6 +100,8 @@ case ("convert", 3), ("convert", 4):
 case ("update", 1), ("update", 3):
     guard args.count == 1 || args[1] == "--download" else { fail(usage) }
     await checkForUpdate(downloadTo: args.count == 3 ? args[2] : nil)
+case ("bridge", 2...):
+    await bridgeCommand(Array(args.dropFirst()))
 case ("luts", 1):
     for lut in LUT.builtIn { print(lut.name) }
 case ("--version", 1), ("version", 1):
@@ -132,4 +140,95 @@ func checkForUpdate(downloadTo directory: String?) async {
     } catch {
         fail("mancora: update check failed: \(error)")
     }
+}
+
+// MARK: Java bridge
+
+/// `Resources/Bridge` next to the executable (installed layouts) or in the
+/// source tree (development builds).
+func bridgeResources() -> URL? {
+    let exe = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
+    var candidates = [exe.appendingPathComponent("Bridge"), exe.appendingPathComponent("../share/mancora/Bridge")]
+    var dir = exe
+    for _ in 0..<6 {
+        candidates.append(dir.appendingPathComponent("Resources/Bridge"))
+        dir = dir.deletingLastPathComponent()
+    }
+    return candidates.first { FileManager.default.fileExists(atPath: $0.appendingPathComponent("MancoraBridgeHelper.java").path) }
+}
+
+func bridgeCommand(_ args: [String]) async {
+    guard let resources = bridgeResources() else { fail("mancora: can't find the bridge helper (Resources/Bridge)") }
+    let configuration: Bridge.Configuration
+    do {
+        configuration = try Bridge.Configuration.standard(resources: resources)
+    } catch {
+        fail("mancora: \(error)")
+    }
+    if args.first == "setup" {
+        do {
+            try await configuration.home.installImageJ(client: URLSessionHTTPClient(userAgent: "mancora/\(MancoraVersion.number)"))
+            print("ImageJ \(BridgeHome.imageJVersion) is installed in \(configuration.home.root.path)")
+            print("Java \(configuration.java.majorVersion): \(configuration.java.executable.path)")
+        } catch {
+            fail("mancora: \(error)")
+        }
+        return
+    }
+    let bridge = Bridge(configuration: configuration)
+    do {
+        switch (args.first, args.count) {
+        case ("info", 1):
+            let hello = try await bridge.start()
+            print("ImageJ \(hello.imagej) on Java \(hello.java) (helper pid \(hello.pid))")
+            print("home: \(configuration.home.root.path)")
+        case ("commands", 1), ("commands", 2):
+            let pluginsOnly = args.count == 2 && args[1] == "--plugins"
+            for command in try await bridge.commands() where !pluginsOnly || command.isPlugin {
+                print("\(command.name)\t\(command.className)")
+            }
+        case ("run", 4), ("run", 5):
+            let input = try TIFFImporter.read(path: args[3])
+            let result = try await bridge.run(args[1], options: args[2], images: [input])
+            printBridgeResult(result)
+            if args.count == 5 {
+                guard let first = result.images.first else { fail("mancora: the command produced no image") }
+                try TIFFExporter.write(first.image, to: args[4])
+                print("saved \(first.title) to \(args[4])")
+            }
+        case ("macro", 2...):
+            let code = try String(contentsOfFile: args[1], encoding: .utf8)
+            let images = try args.dropFirst(2).map { path throws(MancoraIOError) in try TIFFImporter.read(path: path) }
+            let result = try await bridge.runMacro(code, images: images)
+            printBridgeResult(result)
+            for (k, image) in result.images.enumerated() {
+                let path = "macro-output-\(k + 1).tif"
+                try TIFFExporter.write(image.image, to: path)
+                print("saved \(image.title) to \(path)")
+            }
+        default:
+            fail(usage)
+        }
+    } catch {
+        await bridge.stop()
+        fail("mancora: \(error)")
+    }
+    await bridge.stop()
+}
+
+func printBridgeResult(_ result: BridgeRunResult) {
+    if !result.log.isEmpty { print(result.log, terminator: result.log.hasSuffix("\n") ? "" : "\n") }
+    if !result.results.isEmpty {
+        print(result.results.columns.joined(separator: "\t"))
+        for row in result.results.rows {
+            print(row.map { cell in
+                switch cell {
+                case .number(let v): v == v.rounded() && abs(v) < 1e15 ? String(Int(v)) : String(v)
+                case .text(let t): t
+                case .empty: ""
+                }
+            }.joined(separator: "\t"))
+        }
+    }
+    if let value = result.value { print("macro returned: \(value)") }
 }

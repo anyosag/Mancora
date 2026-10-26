@@ -36,6 +36,7 @@ cp "$root"/Resources/Branding/AppIcon.appiconset/icon_*.png "$work/AppIcon.icons
 iconutil -c icns "$work/AppIcon.iconset" -o "$app/Contents/Resources/AppIcon.icns"
 
 cp -R "$root/Resources/LUTs" "$app/Contents/Resources/LUTs"
+cp -R "$root/Resources/Bridge" "$app/Contents/Resources/Bridge"
 cp "$root/LICENSE.txt" "$root/THIRD_PARTY_NOTICES.md" "$app/Contents/Resources/"
 
 echo "==> Signing ($identity)"

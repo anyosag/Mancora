@@ -1,0 +1,417 @@
+# ImageJ 1.54p command table: name<TAB>class("arg")
+16-bit	ij.plugin.Converter("16-bit")
+3-3-2 RGB	ij.plugin.LutLoader("3-3-2 RGB")
+32-bit	ij.plugin.Converter("32-bit")
+3D Project...	ij.plugin.Projector
+8-bit	ij.plugin.Converter("8-bit")
+8-bit Color	ij.plugin.Converter("8-bit Color")
+AND...	ij.plugin.filter.ImageMath("and")
+AVI...	ij.plugin.AVI_Reader
+AVI... 	ij.plugin.filter.AVI_Writer
+About ImageJ...	ij.plugin.AboutBox
+About This Submenu...	ij.plugin.SimpleCommands("about")
+Abs	ij.plugin.filter.ImageMath("abs")
+Add Image...	ij.plugin.OverlayCommands("image")
+Add Noise	ij.plugin.filter.Filters("add")
+Add Selection...	ij.plugin.OverlayCommands("add")
+Add Shortcut by Name... 	ij.plugin.Hotkeys("install2")
+Add Shortcut... 	ij.plugin.Hotkeys("install")
+Add Slice	ij.plugin.StackEditor("add")
+Add Specified Noise...	ij.plugin.filter.Filters("noise")
+Add to Manager	ij.plugin.Selection("add")
+Add...	ij.plugin.filter.ImageMath("add")
+Analyze Line Graph	ij.plugin.filter.LineGraphAnalyzer
+Analyze Particles...	ij.plugin.filter.ParticleAnalyzer
+Animation Options...	ij.plugin.Animator("options")
+Appearance...	ij.plugin.AppearanceOptions
+Apply LUT	ij.plugin.filter.LutApplier
+Area to Line	ij.plugin.Selection("toline")
+Arrange Channels...	ij.plugin.ChannelArranger
+Arrow Tool...	ij.plugin.ArrowToolOptions
+AuPbSn 40	ij.plugin.URLOpener("AuPbSn40.jpg")
+BMP...	ij.plugin.filter.Writer("bmp")
+Bandpass Filter...	ij.plugin.filter.FFTFilter
+Bat Cochlea Renderings	ij.plugin.URLOpener("bat-cochlea-renderings.zip")
+Bat Cochlea Volume	ij.plugin.URLOpener("bat-cochlea-volume.zip")
+Benchmark	ij.plugin.Benchmark
+Bin...	ij.plugin.Binner
+Blobs	ij.plugin.URLOpener("blobs.gif")
+Blue	ij.plugin.LutLoader("blue")
+Boats	ij.plugin.URLOpener("boats.gif")
+Bridge (174K)	ij.plugin.URLOpener("bridge.gif")
+Brightness/Contrast...	ij.plugin.frame.ContrastAdjuster
+CT (16-bit DICOM)	ij.plugin.URLOpener("ct.dcm.zip")
+Cache Sample Images 	ij.plugin.URLOpener("cache")
+Calibrate...	ij.plugin.filter.Calibrator
+Calibration Bar...	ij.plugin.CalibrationBar
+Canvas Size...	ij.plugin.CanvasResizer
+Capture Delayed...	ij.plugin.ScreenGrabber("delay")
+Capture Image	ij.plugin.ScreenGrabber("image")
+Capture Screen	ij.plugin.ScreenGrabber
+Cardio (RGB DICOM)	ij.plugin.URLOpener("cardio.dcm.zip")
+Cascade	ij.plugin.WindowOrganizer("cascade")
+Cell Colony	ij.plugin.URLOpener("Cell_Colony.jpg")
+Channels Tool...	ij.plugin.frame.Channels
+Clear	ij.plugin.filter.Filler("clear")
+Clear Outside	ij.plugin.filter.Filler("outside")
+Clear Results	ij.plugin.filter.Analyzer("clear")
+Close	ij.plugin.Commands("close")
+Close All	ij.plugin.Commands("close-all")
+Close-	ij.plugin.filter.Binary("close")
+Clown	ij.plugin.URLOpener("clown.jpg")
+Color Balance...	ij.plugin.frame.ContrastAdjuster("balance")
+Color Picker...	ij.plugin.frame.ColorPicker
+Color Threshold...	ij.plugin.frame.ColorThresholder
+Colors...	ij.plugin.Colors
+Combine...	ij.plugin.StackCombiner
+Commands...	ij.plugin.frame.Commands
+Compile and Run...	ij.plugin.Compiler
+Compiler...	ij.plugin.Compiler("options")
+Concatenate...	ij.plugin.Concatenator
+Confocal Series	ij.plugin.URLOpener("confocal-series.zip")
+Control Panel...	ij.plugin.ControlPanel
+Conversions...	ij.plugin.Options("conv")
+Convert to Mask	ij.plugin.Thresholder("mask")
+Convert...	ij.plugin.BatchConverter
+Convex Hull	ij.plugin.Selection("hull")
+Convolve...	ij.plugin.filter.Convolver
+Coordinates...	ij.plugin.Coordinates
+Copy	ij.plugin.Clipboard("copy")
+Copy to System	ij.plugin.Clipboard("scopy")
+Create Mask	ij.plugin.Selection("mask")
+Create Selection	ij.plugin.Selection("from")
+Crop	ij.plugin.Resizer("crop")
+Curve Fitting...	ij.plugin.frame.Fitter
+Custom Filter...	ij.plugin.filter.FFTCustomFilter
+Cut	ij.plugin.Clipboard("cut")
+Cyan	ij.plugin.LutLoader("cyan")
+DICOM...	ij.plugin.Options("dicom")
+Delete Slice	ij.plugin.StackEditor("delete")
+Despeckle	ij.plugin.filter.RankFilters("despeckle")
+Dev. Resources...	ij.plugin.BrowserLauncher("http://imagej.net/ij/developer/index.html")
+Dilate	ij.plugin.filter.Binary("dilate")
+Display LUTs	ij.plugin.SimpleCommands("display")
+Distance Map	ij.plugin.filter.EDM("edm")
+Distribution...	ij.plugin.Distribution
+Divide...	ij.plugin.filter.ImageMath("div")
+Dot Blot	ij.plugin.URLOpener("Dot_Blot.jpg")
+Draw	ij.plugin.filter.Filler("draw")
+Duplicate...	ij.plugin.Duplicator
+East	ij.plugin.filter.Shadows("east")
+Edit LUT...	ij.plugin.LUT_Editor
+Edit...	ij.plugin.Compiler("edit")
+Embryos	ij.plugin.URLOpener("embryos.jpg")
+Enhance Contrast...	ij.plugin.ContrastEnhancer
+Enlarge...	ij.plugin.RoiEnlarger
+Erode	ij.plugin.filter.Binary("erode")
+Exp	ij.plugin.filter.ImageMath("exp")
+FD Math...	ij.plugin.FFTMath
+FFT	ij.plugin.FFT("fft")
+FFT Options...	ij.plugin.FFT("options")
+FITS...	ij.plugin.filter.Writer("fits")
+Fill	ij.plugin.filter.Filler("fill")
+Fill Holes	ij.plugin.filter.Binary("fill")
+Find Commands...	ij.plugin.CommandFinder
+Find Edges	ij.plugin.filter.Filters("edge")
+Find Maxima...	ij.plugin.filter.MaximumFinder
+Fire	ij.plugin.LutLoader("fire")
+Fit Circle	ij.plugin.Selection("circle")
+Fit Ellipse	ij.plugin.Selection("ellipse")
+Fit Rectangle	ij.plugin.Selection("rect")
+Fit Spline	ij.plugin.Selection("spline")
+Flatten	ij.plugin.OverlayCommands("flatten")
+Flip Horizontally	ij.plugin.filter.Transformer("fliph")
+Flip Vertically	ij.plugin.filter.Transformer("flipv")
+Flip Z	ij.plugin.StackReverser
+Fluorescent Cells	ij.plugin.URLOpener("FluorescentCells.zip")
+Fly Brain	ij.plugin.URLOpener("flybrain.zip")
+Fonts...	ij.plugin.SimpleCommands("fonts")
+Fractal Box Count...	ij.plugin.filter.FractalBoxCounter
+Fresh Start	ij.plugin.Options("fresh-start")
+From ROI Manager	ij.plugin.OverlayCommands("from")
+Gamma...	ij.plugin.filter.ImageMath("gamma")
+Gaussian Blur 3D...	ij.plugin.GaussianBlur3D
+Gaussian Blur...	ij.plugin.filter.GaussianBlur
+Gel	ij.plugin.URLOpener("gel.gif")
+Gel Analyzer Options...	ij.plugin.GelAnalyzer("options")
+Gif...	ij.plugin.filter.Writer("gif")
+Grays	ij.plugin.LutLoader("grays")
+Green	ij.plugin.LutLoader("green")
+Grid...	ij.plugin.Grid
+Grouped Z Project...	ij.plugin.GroupedZProjector
+HSB (32-bit)	ij.plugin.Converter("HSB (32-bit)")
+HSB Stack	ij.plugin.Converter("HSB Stack")
+HeLa Cells (48-bit RGB)	ij.plugin.URLOpener("hela-cells.zip")
+Hide Overlay	ij.plugin.OverlayCommands("hide")
+Histogram	ij.plugin.Histogram
+Home	ij.plugin.SimpleCommands("showdirHome")
+Hyperstack to Stack	ij.plugin.HyperStackConverter("hstostack")
+Hyperstack...	ij.plugin.HyperStackMaker
+Ice	ij.plugin.LutLoader("ice")
+Image	ij.plugin.SimpleCommands("showdirImage")
+Image Calculator...	ij.plugin.ImageCalculator
+Image Sequence...	ij.plugin.FolderOpener
+Image Sequence... 	ij.plugin.StackWriter
+Image to Results	ij.plugin.SimpleCommands("itor")
+Image to Selection...	ij.plugin.OverlayCommands("image-roi")
+Image with Overlay	ij.plugin.URLOpener("ImageWithOverlay.zip")
+Image...	ij.plugin.Commands("new")
+ImageJ	ij.plugin.SimpleCommands("showdirImageJ")
+ImageJ Properties	ij.plugin.JavaProperties
+ImageJ Website...	ij.plugin.BrowserLauncher
+Images to Stack	ij.plugin.ImagesToStack
+In [+]	ij.plugin.Zoom("in")
+Input/Output...	ij.plugin.Options("io")
+Insert...	ij.plugin.StackInserter
+Install...	ij.plugin.MacroInstaller
+Install... 	ij.plugin.PluginInstaller
+Interactive Interpreter...	ij.plugin.SimpleCommands("interactive")
+Internal Clipboard	ij.plugin.Clipboard("show")
+Interpolate	ij.plugin.Selection("interpolate")
+Inverse FFT	ij.plugin.FFT("inverse")
+Invert	ij.plugin.filter.Filters("invert")
+Invert LUT	ij.plugin.LutLoader("invert")
+Invert LUTs	ij.plugin.SimpleCommands("invert")
+JavaScript	ij.plugin.NewPlugin("javascript")
+Jpeg...	ij.plugin.filter.Writer("jpeg")
+LUT...	ij.plugin.filter.Writer("lut")
+LUT... 	ij.plugin.LutLoader
+LUTs	ij.plugin.SimpleCommands("showdirLuts")
+Lab Stack	ij.plugin.Converter("Lab Stack")
+Label	ij.plugin.filter.Filler("label")
+Label Peaks	ij.plugin.GelAnalyzer("label")
+Label...	ij.plugin.filter.StackLabeler
+Labels...	ij.plugin.OverlayLabels
+Leaf	ij.plugin.URLOpener("leaf.jpg")
+Lena (68K)	ij.plugin.URLOpener("lena-std.tif")
+Line Graph	ij.plugin.URLOpener("LineGraph.jpg")
+Line Width...	ij.plugin.Options("line")
+Line Width... 	ij.plugin.frame.LineWidthAdjuster
+Line to Area	ij.plugin.Selection("toarea")
+List Commands	ij.plugin.Hotkeys("list")
+List Elements	ij.plugin.OverlayCommands("list")
+List Shortcuts	ij.plugin.CommandLister("shortcuts")
+Log	ij.plugin.filter.ImageMath("log")
+M51 Galaxy (16-bits)	ij.plugin.URLOpener("m51.zip")
+MRI Stack	ij.plugin.URLOpener("mri-stack.zip")
+Macro	ij.plugin.NewPlugin("macro")
+Macro Functions...	ij.plugin.BrowserLauncher("https://wsr.imagej.net/developer/macro/functions.html")
+Macro Tool	ij.plugin.NewPlugin("macro-tool")
+Macro...	ij.plugin.filter.ImageMath("macro")
+Macro... 	ij.plugin.BatchProcessor
+Macros	ij.plugin.SimpleCommands("showdirMacros")
+Magenta	ij.plugin.LutLoader("magenta")
+Magic Montage Tools	ij.plugin.SimpleCommands("magic")
+Main Window [return]	ij.plugin.WindowOrganizer("imagej")
+Make Band...	ij.plugin.Selection("band")
+Make Binary	ij.plugin.Thresholder
+Make Circular Selection...	ij.plugin.CircularRoiMaker
+Make Composite	ij.plugin.CompositeConverter
+Make Inverse	ij.plugin.Selection("inverse")
+Make Montage...	ij.plugin.MontageMaker
+Make Subset...	ij.plugin.SubstackMaker
+Make Substack...	ij.plugin.SubstackMaker
+Max...	ij.plugin.filter.ImageMath("max")
+Maximize	ij.plugin.Zoom("max")
+Maximum 3D...	ij.plugin.Filters3D("max")
+Maximum...	ij.plugin.filter.RankFilters("max")
+Mean 3D...	ij.plugin.Filters3D("mean")
+Mean...	ij.plugin.filter.RankFilters("mean")
+Measure	ij.plugin.filter.Analyzer
+Measure Overlay	ij.plugin.OverlayCommands("measure")
+Measure Stack...	ij.plugin.SimpleCommands("measure")
+Measure...	ij.plugin.BatchMeasure
+Median	ij.plugin.filter.Binary("median")
+Median 3D...	ij.plugin.Filters3D("median")
+Median...	ij.plugin.filter.RankFilters("median")
+Memory & Threads...	ij.plugin.Memory
+Merge Channels...	ij.plugin.RGBStackMerge
+Min...	ij.plugin.filter.ImageMath("min")
+Minimum 3D...	ij.plugin.Filters3D("min")
+Minimum...	ij.plugin.filter.RankFilters("min")
+Misc...	ij.plugin.Options("misc")
+Mitosis (5D stack)	ij.plugin.URLOpener("Spindly-GFP.zip")
+Monitor Events...	ij.plugin.EventListener
+Monitor Memory...	ij.plugin.frame.MemoryMonitor
+Montage to Stack...	ij.plugin.StackMaker
+Multiply...	ij.plugin.filter.ImageMath("mul")
+NaN Background	ij.plugin.filter.ImageMath("nan")
+Neuron (5 channels)	ij.plugin.URLOpener("Rat_Hippocampal_Neuron.zip")
+New Hyperstack...	ij.plugin.HyperStackMaker
+Next Slice [>]	ij.plugin.Animator("next")
+Nile Bend	ij.plugin.URLOpener("NileBend.jpg")
+North	ij.plugin.filter.Shadows("north")
+Northeast	ij.plugin.filter.Shadows("northeast")
+Northwest	ij.plugin.filter.Shadows("northwest")
+OR...	ij.plugin.filter.ImageMath("or")
+Open	ij.plugin.filter.Binary("open")
+Open Next	ij.plugin.NextImageOpener
+Open as Panel	ij.plugin.SimpleCommands("opencp")
+Open...	ij.plugin.Commands("open")
+Options...	ij.plugin.filter.Binary("options")
+Organ of Corti (4D stack)	ij.plugin.URLOpener("organ-of-corti.zip")
+Original Scale	ij.plugin.Zoom("orig")
+Orthogonal Views	ij.plugin.Orthogonal_Views
+Out [-]	ij.plugin.Zoom("out")
+Outline	ij.plugin.filter.Binary("outline")
+Overlay Options...	ij.plugin.OverlayCommands("options")
+PGM...	ij.plugin.filter.Writer("pgm")
+PNG...	ij.plugin.filter.Writer("png")
+Page Setup...	ij.plugin.filter.Printer("setup")
+Particles	ij.plugin.URLOpener("particles.gif")
+Paste	ij.plugin.Clipboard("paste")
+Paste Control...	ij.plugin.frame.PasteController
+Plot Lanes	ij.plugin.GelAnalyzer("plot")
+Plot Profile	ij.plugin.Profiler("plot")
+Plot XY Profile	ij.plugin.StackPlotter
+Plot Z-axis Profile	ij.plugin.ZAxisProfiler
+Plots...	ij.plugin.Profiler("set")
+Plugin	ij.plugin.NewPlugin("plugin")
+Plugin Filter	ij.plugin.NewPlugin("filter")
+Plugin Frame	ij.plugin.NewPlugin("frame")
+Plugin Tool	ij.plugin.NewPlugin("plugin-tool")
+Plugins	ij.plugin.SimpleCommands("showdirPlugins")
+Point Tool...	ij.plugin.PointToolOptions
+Previous Slice [<]	ij.plugin.Animator("previous")
+Print...	ij.plugin.filter.Printer("print")
+Properties...	ij.plugin.filter.ImageProperties
+Properties... 	ij.plugin.Selection("properties")
+Proxy Settings...	ij.plugin.ProxySettings
+Put Behind [tab]	ij.plugin.Commands("tab")
+Quit	ij.plugin.Commands("quit")
+RGB Color	ij.plugin.Converter("RGB Color")
+RGB Stack	ij.plugin.Converter("RGB Stack")
+ROI Manager...	ij.plugin.frame.RoiManager
+Raw Data...	ij.plugin.filter.Writer("raw")
+Raw...	ij.plugin.Raw
+Re-plot Lanes	ij.plugin.GelAnalyzer("replot")
+Reciprocal	ij.plugin.filter.ImageMath("reciprocal")
+Record...	ij.plugin.frame.Recorder
+Red	ij.plugin.LutLoader("red")
+Red/Green	ij.plugin.LutLoader("redgreen")
+Redisplay Power Spectrum	ij.plugin.FFT("redisplay")
+Reduce Dimensionality...	ij.plugin.HyperStackReducer
+Reduce...	ij.plugin.StackReducer
+Refresh Menus	ij.plugin.ImageJ_Updater("menus")
+Release Notes...	ij.plugin.BrowserLauncher("https://wsr.imagej.net/notes.html")
+Remove NaNs...	ij.plugin.filter.RankFilters("nan")
+Remove Outliers...	ij.plugin.filter.RankFilters("outliers")
+Remove Overlay	ij.plugin.OverlayCommands("remove")
+Remove Shortcut...	ij.plugin.Hotkeys("remove")
+Remove Slice Labels	ij.plugin.SimpleCommands("remove")
+Rename...	ij.plugin.SimpleCommands("rename")
+Reset	ij.plugin.GelAnalyzer("reset")
+Reset...	ij.plugin.SimpleCommands("reset")
+Reset... 	ij.plugin.Options("reset")
+Reslice [/]...	ij.plugin.Slicer
+Restore Selection	ij.plugin.Selection("restore")
+Results to Image	ij.plugin.SimpleCommands("rtoi")
+Results...	ij.plugin.MeasurementsWriter
+Results... 	ij.plugin.SimpleCommands("import")
+Reverse	ij.plugin.StackReverser
+Revert	ij.plugin.Commands("revert")
+Roi Defaults...	ij.gui.RoiDefaultsDialog
+Rotate 90 Degrees Left	ij.plugin.filter.Transformer("left")
+Rotate 90 Degrees Right	ij.plugin.filter.Transformer("right")
+Rotate...	ij.plugin.Selection("rotate")
+Rotate... 	ij.plugin.filter.Rotator
+Rounded Rect Tool...	ij.plugin.RectToolOptions
+Run...	ij.plugin.Macro_Runner
+Salt and Pepper	ij.plugin.filter.SaltAndPepper
+Save	ij.plugin.Commands("save")
+Save XY Coordinates...	ij.plugin.XYCoordinates
+Scale Bar...	ij.plugin.ScaleBar
+Scale to Fit	ij.plugin.Zoom("scale")
+Scale...	ij.plugin.Scaler
+Scale... 	ij.plugin.RoiScaler
+Search...	ij.plugin.SimpleCommands("search")
+Select All	ij.plugin.Selection("all")
+Select First Lane	ij.plugin.GelAnalyzer("first")
+Select Next Lane	ij.plugin.GelAnalyzer("next")
+Select None	ij.plugin.Selection("none")
+Selection...	ij.plugin.filter.RoiWriter
+Set Label...	ij.plugin.SimpleCommands("set")
+Set Measurements...	ij.plugin.filter.Analyzer("set")
+Set Scale...	ij.plugin.filter.ScaleDialog
+Set Slice...	ij.plugin.Animator("set")
+Set...	ij.plugin.filter.ImageMath("set")
+Set... 	ij.plugin.Zoom("set")
+Shadows Demo	ij.plugin.filter.Shadows("demo")
+Sharpen	ij.plugin.filter.Filters("sharpen")
+Show All	ij.plugin.WindowOrganizer("show")
+Show Circular Masks...	ij.plugin.filter.RankFilters("masks")
+Show Info...	ij.plugin.ImageInfo
+Show LUT	ij.plugin.filter.LutViewer
+Show Overlay	ij.plugin.OverlayCommands("show")
+Size...	ij.plugin.Resizer
+Skeletonize	ij.plugin.filter.Binary("skel")
+Smooth	ij.plugin.filter.Filters("smooth")
+South	ij.plugin.filter.Shadows("south")
+Southeast	ij.plugin.filter.Shadows("southeast")
+Southwest	ij.plugin.filter.Shadows("southwest")
+Specify...	ij.plugin.SpecifyROI
+Spectrum	ij.plugin.LutLoader("spectrum")
+Split Channels	ij.plugin.ChannelSplitter
+Square	ij.plugin.filter.ImageMath("sqr")
+Square Root	ij.plugin.filter.ImageMath("sqrt")
+Stack From List...	ij.plugin.ListVirtualStack
+Stack to Hyperstack...	ij.plugin.HyperStackConverter("stacktohs")
+Stack to Images	ij.plugin.StackEditor("toimages")
+Stack to RGB	ij.plugin.RGBStackConverter
+Start Animation [\]	ij.plugin.Animator("start")
+Startup Macros...	ij.plugin.Commands("startup")
+Startup...	ij.plugin.Startup
+Statistics	ij.plugin.Stack_Statistics
+Stop Animation	ij.plugin.Animator("stop")
+Straighten...	ij.plugin.Straightener
+Subtract Background...	ij.plugin.filter.BackgroundSubtracter
+Subtract...	ij.plugin.filter.ImageMath("sub")
+Summarize	ij.plugin.filter.Analyzer("sum")
+Surface Plot...	ij.plugin.SurfacePlotter
+Swap Quadrants	ij.plugin.FFT("swap")
+Synchronize Windows	ij.plugin.frame.SyncWindows
+System Clipboard	ij.plugin.Clipboard("showsys")
+T1 Head (16-bits)	ij.plugin.URLOpener("t1-head.zip")
+T1 Head Renderings	ij.plugin.URLOpener("t1-rendering.zip")
+TEM Filter	ij.plugin.URLOpener("TEM_filter_sample.jpg")
+TIFF Virtual Stack...	ij.plugin.FileInfoVirtualStack
+Table... 	ij.plugin.SimpleCommands("table")
+Text File... 	ij.plugin.TextFileReader
+Text Image...	ij.plugin.filter.Writer("text")
+Text Image... 	ij.plugin.TextReader
+Text Window	ij.plugin.NewPlugin("text")
+Text Window...	ij.plugin.NewPlugin("text+dialog")
+Text...	ij.plugin.TextWriter
+Threads	ij.plugin.ThreadLister
+Threshold...	ij.plugin.frame.ThresholdAdjuster
+Tiff...	ij.plugin.filter.Writer("tiff")
+Tile	ij.plugin.WindowOrganizer("tile")
+To Bounding Box	ij.plugin.Selection("tobox")
+To ROI Manager	ij.plugin.OverlayCommands("to")
+To Selection	ij.plugin.Zoom("to")
+Toggle Overlay	ij.plugin.OverlayCommands("toggle")
+Top Hat...	ij.plugin.filter.RankFilters("tophat")
+Translate...	ij.plugin.filter.Translator
+Translate... 	ij.plugin.Selection("translate")
+Tree Rings	ij.plugin.URLOpener("Tree_Rings.jpg")
+URL...	ij.plugin.URLOpener
+Ultimate Points	ij.plugin.filter.EDM("points")
+Undo	ij.plugin.Commands("undo")
+Unsharp Mask...	ij.plugin.filter.UnsharpMask
+Update ImageJ...	ij.plugin.ImageJ_Updater
+Variance 3D...	ij.plugin.Filters3D("var")
+Variance...	ij.plugin.filter.RankFilters("variance")
+View 100%	ij.plugin.Zoom("100%")
+Virtual Stack...	ij.plugin.BatchProcessor("stack")
+Voronoi	ij.plugin.filter.EDM("voronoi")
+Wand Tool...	ij.plugin.WandToolOptions
+Watershed	ij.plugin.filter.EDM("watershed")
+West	ij.plugin.filter.Shadows("west")
+Window/Level...	ij.plugin.frame.ContrastAdjuster("wl")
+XOR...	ij.plugin.filter.ImageMath("xor")
+XY Coordinates...	ij.plugin.filter.XYWriter
+XY Coordinates... 	ij.plugin.XY_Reader
+Yellow	ij.plugin.LutLoader("yellow")
+Z Project...	ij.plugin.ZProjector
+ZIP...	ij.plugin.filter.Writer("zip")
+temp	ij.plugin.SimpleCommands("showdirTemp")

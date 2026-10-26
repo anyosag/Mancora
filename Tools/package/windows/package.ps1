@@ -67,6 +67,7 @@ Write-Host "C++ runtime: $($crt.FullName)"
 Copy-Item (Join-Path $crt.FullName '*.dll') $stage
 
 Copy-Item -Recurse (Join-Path $root 'Resources\LUTs') (Join-Path $stage 'LUTs')
+Copy-Item -Recurse (Join-Path $root 'Resources\Bridge') (Join-Path $stage 'Bridge')
 Copy-Item (Join-Path $root 'LICENSE.txt'), (Join-Path $root 'THIRD_PARTY_NOTICES.md') $stage
 
 Write-Host "==> Checking that the staged files run without the toolchain"

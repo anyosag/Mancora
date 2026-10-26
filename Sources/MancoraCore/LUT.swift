@@ -68,6 +68,10 @@ public struct LUT: Sendable, Hashable {
 
     /// Whether entry 0 is brighter than entry 255, which ImageJ treats as
     /// an inverting LUT.
+    /// Every entry is a shade of gray (ImageJ's `!isColorLut()`); an
+    /// inverted gray LUT counts.
+    public var isGray: Bool { reds == greens && greens == blues }
+
     public var isInverted: Bool {
         Int(reds[0]) + Int(greens[0]) + Int(blues[0]) > Int(reds[255]) + Int(greens[255]) + Int(blues[255])
     }

@@ -1,5 +1,7 @@
 import AppKit
 import CoreGraphics
+import MancoraBridge
+import MancoraCommands
 import MancoraCore
 import MancoraIO
 import Observation
@@ -31,6 +33,11 @@ final class ViewerModel {
     var zoom = Zoom.fit
     /// The pixel under the pointer, as ImageJ's status bar shows it.
     private(set) var pointerText: String?
+
+    /// Find Command (⌘L) is showing.
+    var showsCommandFinder = false
+    /// What the last ImageJ command or macro logged or measured.
+    var report: String?
 
     @ObservationIgnored private var autoState = BrightnessContrast.AutoState()
     @ObservationIgnored private var renderTask: Task<Void, Never>?
@@ -111,7 +118,111 @@ final class ViewerModel {
             } else {
                 self.image?.title = url.lastPathComponent
                 fileURL = url
+                AppRecorder.shared.recordSave(url)
             }
+        }
+    }
+
+    // MARK: Commands and the Java bridge
+
+    /// Runs an ImageJ command on this image: natively when Mancora has it,
+    /// otherwise in ImageJ through the bridge. Returns files for the new
+    /// images it made, for the caller to open in new windows.
+    func runCommand(_ name: String, options: String = "", bridge: AppBridge) async -> [URL] {
+        let registry = CommandRegistry.standard
+        if registry.isNative(name) {
+            var context = CommandContext()
+            if let image {
+                context.add(image)
+                let (c, z, t) = (channel, slice, frame)
+                try? context.withCurrent(name) { (open: inout OpenImage) in
+                    open.channel = c
+                    open.slice = z
+                    open.frame = t
+                }
+            }
+            do {
+                try registry.run(name, options: MacroOptions(options), in: &context)
+                AppRecorder.shared.record(name, options: options)
+                var created: [Hyperstack] = []
+                for open in context.images {
+                    if open.id == -1 { replace(with: open.image) } else { created.append(open.image) }
+                }
+                if !context.log.isEmpty { report = context.log.joined(separator: "\n") }
+                return saveForNewWindows(created)
+            } catch CommandError.notNative {
+                // Mancora has the command but not with these options: ImageJ does.
+            } catch {
+                errorMessage = "\(error)"
+                return []
+            }
+        }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let result = try await bridge.run(name, options: options, on: image)
+            AppRecorder.shared.record(name, options: options)
+            return handle(result)
+        } catch {
+            errorMessage = "\(error)"
+            return []
+        }
+    }
+
+    /// Runs ImageJ macro code with this image open (Plugins ▸ Macros ▸ Run).
+    func runMacro(_ code: String, bridge: AppBridge) async -> [URL] {
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            return handle(try await bridge.runMacro(code, on: image))
+        } catch {
+            errorMessage = "\(error)"
+            return []
+        }
+    }
+
+    private func handle(_ result: BridgeRunResult) -> [URL] {
+        var created: [Hyperstack] = []
+        for output in result.images {
+            if output.replacesInput == 0 { replace(with: output.image) } else { created.append(output.image) }
+        }
+        var lines: [String] = []
+        if !result.log.isEmpty { lines.append(result.log) }
+        if !result.results.isEmpty {
+            lines.append(result.results.columns.joined(separator: "\t"))
+            for row in result.results.rows {
+                lines.append(row.map { cell -> String in
+                    switch cell {
+                    case .number(let v): String(format: "%.4g", v)
+                    case .text(let t): t
+                    case .empty: ""
+                    }
+                }.joined(separator: "\t"))
+            }
+        }
+        if let value = result.value { lines.append("Returned: \(value)") }
+        if !lines.isEmpty { report = lines.joined(separator: "\n") }
+        return saveForNewWindows(created)
+    }
+
+    /// Keeps the position (within the new dimensions) when a command changes
+    /// the image in place.
+    private func replace(with changed: Hyperstack) {
+        let dims = changed.dimensions
+        image = changed
+        channel = min(channel, dims.channels - 1)
+        slice = min(slice, dims.slices - 1)
+        frame = min(frame, dims.frames - 1)
+        render()
+    }
+
+    /// New images go to new windows, which open files; write them to temporary TIFFs.
+    private func saveForNewWindows(_ images: [Hyperstack]) -> [URL] {
+        images.compactMap { image in
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Mancora-\(UUID().uuidString)")
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let url = folder.appendingPathComponent(BridgeFileName.safe(image.title))
+            return (try? TIFFExporter.write(image, to: url.path)) != nil ? url : nil
         }
     }
 

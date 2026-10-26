@@ -1,9 +1,12 @@
 import AppKit
+import MancoraBridge
 import SwiftUI
+import UniformTypeIdentifiers
 
 @main
 struct MancoraApp: App {
     @State private var updater = AppUpdater()
+    @State private var bridge = AppBridge()
 
     init() {
         let args = CommandLine.arguments
@@ -32,11 +35,12 @@ struct MancoraApp: App {
 
     var body: some Scene {
         WindowGroup("Mancora", id: "viewer", for: OpenRequest.self) { $request in
-            ViewerWindow(request: $request)
+            ViewerWindow(request: $request, bridge: bridge)
                 .task { updater.checkAtLaunch() }
         }
         .commands {
             ViewerCommands()
+            PluginCommands(bridge: bridge)
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") {
                     Task { await updater.check(userInitiated: true) }
@@ -44,6 +48,10 @@ struct MancoraApp: App {
                 .disabled(updater.isBusy)
             }
         }
+        Window("Recorder", id: "recorder") {
+            RecorderView(recorder: AppRecorder.shared)
+        }
+        .defaultSize(width: 520, height: 280)
         Settings {
             SettingsView(updater: updater)
         }
@@ -89,6 +97,7 @@ struct ViewerCommands: Commands {
         let panelOwner = viewer ?? ViewerModel()
         guard let url = panelOwner.presentOpenPanel(virtual: virtual) else { return }
         let request = OpenRequest(url: url, virtual: virtual)
+        AppRecorder.shared.recordOpen(url, virtual: virtual)
         if let viewer, !viewer.hasImage {
             viewer.open(request)
         } else {
@@ -104,6 +113,63 @@ struct ViewerCommands: Commands {
         case .fit: current = 1
         }
         viewer.zoom = .scale(min(max(current * factor, 1.0 / 32), 64))
+    }
+}
+
+/// The Plugins menu: Find Command, macros, ImageJ through the bridge, and
+/// the commands of installed plugin jars.
+struct PluginCommands: Commands {
+    let bridge: AppBridge
+    @FocusedValue(\.viewer) private var viewer
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandMenu("Plugins") {
+            Button("Find Command…") { viewer?.showsCommandFinder = true }
+                .keyboardShortcut("l")
+            Menu("Macros") {
+                Button("Record…") { openWindow(id: "recorder") }
+                Button("Run…") { runMacroFile() }
+            }
+            Divider()
+            switch bridge.state {
+            case .idle, .failed:
+                Button("Start ImageJ") { Task { await bridge.start() } }
+            case .starting:
+                Text("Starting ImageJ…")
+            case .ready(let imagej, let java):
+                Text("ImageJ \(imagej) · Java \(java)")
+            }
+            if !bridge.pluginCommands.isEmpty {
+                Divider()
+                ForEach(bridge.pluginCommands, id: \.name) { command in
+                    Button(command.name) { run(command.name) }
+                }
+            }
+        }
+    }
+
+    private func run(_ name: String) {
+        guard let viewer else { return }
+        Task {
+            for url in await viewer.runCommand(name, bridge: bridge) {
+                openWindow(id: "viewer", value: OpenRequest(url: url))
+            }
+        }
+    }
+
+    private func runMacroFile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.init(filenameExtension: "ijm") ?? .plainText, .plainText]
+        guard panel.runModal() == .OK, let url = panel.url,
+            let code = try? String(contentsOf: url, encoding: .utf8)
+        else { return }
+        let target = viewer ?? ViewerModel()
+        Task {
+            for created in await target.runMacro(code, bridge: bridge) {
+                openWindow(id: "viewer", value: OpenRequest(url: created))
+            }
+        }
     }
 }
 
