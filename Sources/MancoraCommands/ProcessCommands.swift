@@ -93,14 +93,16 @@ enum ProcessCommands {
     }
 
     /// Applies `operation` to the planes `IJ.setupDialog` picks: the whole
-    /// image (with ImageMath's display-range rules) or one plane of a stack.
+    /// image (with ImageMath's display-range rules) or one plane of a stack,
+    /// within an area selection (restoring the pixels outside its mask).
     static func math(
         _ name: String, _ operation: ImageMath.Operation, _ context: inout CommandContext, _ options: MacroOptions
     ) throws {
         guard let open = context.current else { throw CommandError.noImage(name) }
+        let region = try FilterCommands.selectionRegion(name, open)
         let targets = FilterCommands.targetPlanes(open, options)
         if targets.count == open.image.stack.count {
-            try replaceCurrent(name, &context) { open in ImageMath.apply(operation, to: open.image) }
+            try replaceCurrent(name, &context) { open in ImageMath.apply(operation, to: open.image, region: region) }
             return
         }
         try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in
@@ -111,8 +113,12 @@ enum ProcessCommands {
             } else {
                 signed = false
             }
+            let width = open.image.width
             for index in targets {
-                let plane = ImageMath.apply(operation, to: open.image.stack[index], displayRange: display, signed16: signed)
+                let original = open.image.stack[index]
+                var plane = ImageMath.apply(
+                    operation, to: original, displayRange: display, signed16: signed, width: width, rect: region?.rect)
+                if let region { plane = region.restoringOutsideMask(plane, snapshot: original, width: width) }
                 do { try open.image.setPlane(plane, at: index) } catch { throw .failed(command: name, detail: "\(error)") }
             }
         }

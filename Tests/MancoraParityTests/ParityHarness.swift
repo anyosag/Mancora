@@ -178,6 +178,16 @@ enum ParityInput: String, Sendable {
     // Images with a selection, which ImageJ reads from the TIFF.
     case rectangleROI, roundedROI, ovalROI, polygonROI, subpixelPolygonROI, freehandROI, tracedROI, edgeROI, namedROI
     case binaryRectangleROI, binaryOvalROI
+    // "<input>+<selection>": an input above with a selection (see `withSelection`).
+    case gray8Rect = "gray8+rect", gray8Oval = "gray8+oval", gray8Polygon = "gray8+polygon"
+    case gray8NearEdge = "gray8+nearEdge", gray8Line = "gray8+line", gray8Point = "gray8+point"
+    case gray16Oval = "gray16+oval", gray16NearEdge = "gray16+nearEdge", gray16Polygon = "gray16+polygon"
+    case gray32Rect = "gray32+rect", gray32Oval = "gray32+oval", gray32NearEdge = "gray32+nearEdge"
+    case rgbRect = "rgb+rect", rgbOval = "rgb+oval", rgbPolygon = "rgb+polygon", rgbNearEdge = "rgb+nearEdge"
+    case stack8Oval = "stack8+oval", stack16Rect = "stack16+rect", stack32Polygon = "stack32+polygon"
+    case binaryPolygon = "binary+polygon", binaryNearEdge = "binary+nearEdge", binaryStackOval = "binaryStack+oval"
+    case calibratedOval = "calibrated+oval", calibratedRect = "calibrated+rect", hyperstackOval = "hyperstack+oval"
+    case gray16Freehand = "gray16+freehand", gray32Subpixel = "gray32+subpixel", rgbLine = "rgb+line"
     case fixtureHyperstack = "ij-hyperstack-16bit.tif"
     case fixtureFire = "ij-8bit-fire.tif"
 
@@ -222,6 +232,8 @@ enum ParityInput: String, Sendable {
             made = image
         case .fixtureHyperstack, .fixtureFire:
             return try TIFFImporter.read(path: Parity.url("Tests/Fixtures/tiff/" + rawValue).path)
+        default:
+            made = try withSelection()
         }
         return try Parity.roundTrip(made)
     }

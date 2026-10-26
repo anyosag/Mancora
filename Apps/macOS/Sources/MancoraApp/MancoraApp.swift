@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 @main
 struct MancoraApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var updater = AppUpdater()
     @State private var bridge = AppBridge()
     @State private var updateSites = AppUpdateSites()
@@ -40,7 +41,7 @@ struct MancoraApp: App {
                 .task { updater.checkAtLaunch() }
         }
         .commands {
-            ViewerCommands()
+            ImageJMenuCommands(bridge: bridge)
             PluginCommands(bridge: bridge)
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") {
@@ -53,6 +54,18 @@ struct MancoraApp: App {
             RecorderView(recorder: AppRecorder.shared)
         }
         .defaultSize(width: 520, height: 280)
+        Window("Results", id: "results") {
+            ResultsWindow(session: AppSession.shared)
+        }
+        .defaultSize(width: 640, height: 320)
+        Window("Log", id: "log") {
+            LogWindow(session: AppSession.shared)
+        }
+        .defaultSize(width: 480, height: 300)
+        Window("ROI Manager", id: "roi-manager") {
+            RoiManagerView(session: AppSession.shared)
+        }
+        .defaultSize(width: 340, height: 360)
         Window("Update Sites", id: "update-sites") {
             UpdateSitesView(model: updateSites, bridge: bridge)
         }
@@ -63,66 +76,9 @@ struct MancoraApp: App {
     }
 }
 
-/// File and View menu items for the key window's viewer.
-struct ViewerCommands: Commands {
-    @FocusedValue(\.viewer) private var viewer
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some Commands {
-        CommandGroup(after: .newItem) {
-            Button("Open…") { open(virtual: false) }
-                .keyboardShortcut("o")
-            Button("Open as Virtual Stack…") { open(virtual: true) }
-                .keyboardShortcut("o", modifiers: [.command, .shift])
-        }
-        CommandGroup(replacing: .saveItem) {
-            Button("Save As TIFF…") { viewer?.presentSavePanel() }
-                .keyboardShortcut("s", modifiers: [.command, .shift])
-                .disabled(!(viewer?.hasImage ?? false))
-        }
-        CommandGroup(after: .toolbar) {
-            Button("Zoom In") { zoom(by: 2) }
-                .keyboardShortcut("+")
-                .disabled(!(viewer?.hasImage ?? false))
-            Button("Zoom Out") { zoom(by: 0.5) }
-                .keyboardShortcut("-")
-                .disabled(!(viewer?.hasImage ?? false))
-            Button("Actual Size") { viewer?.zoom = .scale(1) }
-                .keyboardShortcut("0")
-                .disabled(!(viewer?.hasImage ?? false))
-            Button("Zoom to Fit") { viewer?.zoom = .fit }
-                .keyboardShortcut("9")
-                .disabled(!(viewer?.hasImage ?? false))
-            Divider()
-        }
-    }
-
-    /// Opens into the key window if it's empty, otherwise into a new one.
-    private func open(virtual: Bool) {
-        let panelOwner = viewer ?? ViewerModel()
-        guard let url = panelOwner.presentOpenPanel(virtual: virtual) else { return }
-        let request = OpenRequest(url: url, virtual: virtual)
-        AppRecorder.shared.recordOpen(url, virtual: virtual)
-        if let viewer, !viewer.hasImage {
-            viewer.open(request)
-        } else {
-            openWindow(id: "viewer", value: request)
-        }
-    }
-
-    private func zoom(by factor: Double) {
-        guard let viewer else { return }
-        let current: Double
-        switch viewer.zoom {
-        case .scale(let s): current = s
-        case .fit: current = 1
-        }
-        viewer.zoom = .scale(min(max(current * factor, 1.0 / 32), 64))
-    }
-}
-
-/// The Plugins menu: Find Command, macros, ImageJ through the bridge, and
-/// the commands of installed plugin jars.
+/// The Plugins menu: ImageJ's (Macros, Shortcuts, Utilities, New, …),
+/// Fiji's update sites, the bridge's state, and the commands of installed
+/// plugin jars.
 struct PluginCommands: Commands {
     let bridge: AppBridge
     @FocusedValue(\.viewer) private var viewer
@@ -130,14 +86,9 @@ struct PluginCommands: Commands {
 
     var body: some Commands {
         CommandMenu("Plugins") {
-            Button("Find Command…") { viewer?.showsCommandFinder = true }
-                .keyboardShortcut("l")
-            Menu("Macros") {
-                Button("Record…") { openWindow(id: "recorder") }
-                Button("Run…") { runMacroFile() }
-            }
-            Button("Manage Update Sites…") { openWindow(id: "update-sites") }
+            MenuEntries(entries: ImageJMenuCommands.menu("Plugins").entries, perform: perform)
             Divider()
+            Button("Manage Update Sites…") { openWindow(id: "update-sites") }
             switch bridge.state {
             case .idle, .failed:
                 Button("Start ImageJ") { Task { await bridge.start() } }
@@ -149,32 +100,17 @@ struct PluginCommands: Commands {
             if !bridge.pluginCommands.isEmpty {
                 Divider()
                 ForEach(bridge.pluginCommands, id: \.name) { command in
-                    Button(command.name) { run(command.name) }
+                    Button(command.name) { perform(command.name) }
                 }
             }
         }
     }
 
-    private func run(_ name: String) {
-        guard let viewer else { return }
-        Task {
-            for url in await viewer.runCommand(name, bridge: bridge) {
-                openWindow(id: "viewer", value: OpenRequest(url: url))
-            }
-        }
-    }
-
-    private func runMacroFile() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.init(filenameExtension: "ijm") ?? .plainText, .plainText]
-        guard panel.runModal() == .OK, let url = panel.url,
-            let code = try? String(contentsOf: url, encoding: .utf8)
-        else { return }
-        let target = viewer ?? ViewerModel()
-        Task {
-            for created in await target.runMacro(code, bridge: bridge) {
-                openWindow(id: "viewer", value: OpenRequest(url: created))
-            }
+    private func perform(_ name: String) {
+        if name == "Run..." {
+            AppMenuActions.runMacroFile(viewer: viewer, bridge: bridge, openWindow: openWindow)
+        } else {
+            AppMenuActions.perform(name, viewer: viewer, bridge: bridge, openWindow: openWindow)
         }
     }
 }

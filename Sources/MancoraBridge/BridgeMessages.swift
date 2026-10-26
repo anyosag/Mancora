@@ -143,3 +143,63 @@ struct ResponseHeader: Decodable {
 struct Response<Result: Decodable>: Decodable {
     let result: Result
 }
+
+struct DialogParams: Encodable {
+    let command: String
+    let inputs: [String]
+    let outputDir: String
+}
+
+/// The dialogs an ImageJ command shows, read by the helper so they can be
+/// shown natively: each field with its label, macro key and default value.
+public struct BridgeDialogs: Decodable, Sendable, Equatable {
+    public struct Dialog: Decodable, Sendable, Equatable {
+        public let title: String
+        public let fields: [Field]
+        public let hasPreview: Bool
+    }
+
+    public struct Field: Decodable, Sendable, Equatable, Identifiable {
+        public enum Kind: String, Decodable, Sendable {
+            case number, slider, string, path, text, checkbox, choice, radio, message
+        }
+
+        public let kind: Kind
+        /// The macro key: what ImageJ's recorder writes before `=`.
+        public let key: String?
+        public let label: String
+        public let value: String?
+        public let units: String?
+        public let items: [String]?
+        public let minimum: Double?
+        public let maximum: Double?
+
+        public var id: String { key ?? "message:" + label }
+    }
+
+    public let dialogs: [Dialog]
+    /// Whether the command is a filter that, on a stack, asks to process every slice.
+    public let asksForStack: Bool
+    /// Whether ImageJ's dialog has a Preview checkbox (an ExtendedPlugInFilter's).
+    public let supportsPreview: Bool
+
+    /// The options string ImageJ's recorder writes for these answers (by key),
+    /// in dialog order: `key=value` (bracketed when it has a space or is
+    /// empty) and bare keys for ticked checkboxes.
+    public func options(_ answers: [String: String], processStack: Bool = false) -> String {
+        var parts: [String] = []
+        for dialog in dialogs {
+            for field in dialog.fields {
+                guard let key = field.key, field.kind != .message else { continue }
+                let value = answers[key] ?? field.value ?? ""
+                if field.kind == .checkbox {
+                    if value == "true" { parts.append(key) }
+                } else {
+                    parts.append(key + "=" + (value.isEmpty || value.contains(" ") ? "[" + value + "]" : value))
+                }
+            }
+        }
+        if processStack && asksForStack { parts.append("stack") }
+        return parts.joined(separator: " ")
+    }
+}

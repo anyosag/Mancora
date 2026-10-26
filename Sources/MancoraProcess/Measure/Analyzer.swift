@@ -59,6 +59,7 @@ public enum Analyzer {
                 add("AR", isArea ? stats.major / stats.minor : 0)
                 add("Round", isArea ? 4.0 * stats.area / (Double.pi * stats.major * stats.major) : 0)
                 add("Solidity", isArea ? Double(stats.pixelCount) / convexArea : .nan)
+                if table.count == 1 { ["Circ.", "AR", "Round", "Solidity"].forEach { table.setDecimal($0) } }
             }
         }
         if options.contains(.boundingRectangle) {

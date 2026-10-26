@@ -274,11 +274,184 @@ enum MacroCorpus {
             print(s);
             eval("print('printed inside')");
             """#),
+        .init("regular expressions in replace", #"""
+            print(replace("abc", "", "-"), replace("", "", "x"), replace("aaa", "a*?", "-"));
+            print(replace("ab", "(a)b", "$10"), replace("abc", "(a)(b)", "$2$1$0"), replace("x-y", "(\\w)-(\\w)", "$2\\$$1"));
+            print(replace("ab", "(?<n>a)b", "${n}!"), replace("a1", "(?<first>[a-z])(?<second>\\d)", "${second}${first}"));
+            print(replace("ab", "(?:a)(b)", "<$1>"), replace("ab", "(x)?ab", "[$1]"), replace("no match", "xyz", "$"));
+            """#),
+        .init("a lone $ in a replacement", #"""
+            print(replace("ab", "ab", "$"));
+            """#),
+        .init("a backslash ending a replacement", #"""
+            print(replace("ab", "ab", "\\"));
+            """#),
+        .init("a replacement's missing group", #"""
+            print(replace("ab", "(a)b", "$2"));
+            """#),
+        .init("a replacement's group that isn't a number", #"""
+            print(replace("ab", "ab", "$x"));
+            """#),
+        .init("a replacement's missing named group", #"""
+            print(replace("ab", "(?<n>a)b", "${m}"));
+            """#),
+        .init("Math.toRadians and toDegrees", #"""
+            n = 0; m = 0;
+            for (i = 0; i < 1000; i++) {
+                if (Math.toRadians(i) == i / 180 * PI) n++;
+                if (Math.toDegrees(i) == i * 180 / PI) m++;
+            }
+            print(n, m);
+            """#),
+        .init("printing a string function that returns nothing", #"""
+            print(String.append("x"));
+            print("a", String.append("y"));
+            print(String.resetBuffer);
+            print(String.buffer + "|");
+            """#),
+        .init("deep recursion", #"""
+            function depth(n) { if (n == 0) return 0; return 1 + depth(n - 1); }
+            print(depth(600));
+            """#),
+        .init("recursion that fills the variable stack", #"""
+            function f(a, b, c, d) { return f(a, b, c, d); }
+            f(1, 2, 3, 4);
+            """#),
+        .init("results as strings and headings", #"""
+            setResult("A", 0, 1.5);
+            setResult("A", 1, 2);
+            setResult("B", 0, 3);
+            setResult("B", 1, 1e9);
+            setResult("C", 0, 2147483647);
+            setResult("C", 1, 4e9);
+            print(getResultString("A", 0), getResultString("A", 1), getResultString("B", 0), getResultString("B", 1));
+            print(getResultString("C", 0), getResultString("C", 1), Table.getString("A", 1), Table.getString("B", 1));
+            print(String.getResultsHeadings + "|");
+            print(Table.headings + "|");
+            setResult("Label", 0, "x");
+            print(Table.headings + "|");
+            """#),
+        .init("file names", #"""
+            print(File.getName("/a/b/"), File.getName("a//b"), File.getParent("a//b"), File.getDirectory("a//b//c"));
+            print(File.getName("//") + "|", File.getNameWithoutExtension("/a/b.c/"), File.getParent("/a"), File.getDirectory("/a"));
+            """#),
+        .init("File.openAsString of a missing file", #"""
+            s = File.openAsString("/nonexistent/file.txt");
+            """#),
+        .init("image.subtitle without an image", #"""
+            print(getInfo("image.subtitle"));
+            """#),
+        .init("String.format conversions and flags", #"""
+            print(String.format("%#.0f", 3), String.format("%#.0e", 2.5), String.format("%.1f %<.2f", 1.25), String.format("%2$.1f %1$.1f", 1, 2));
+            print(String.format("%h|%H|%.1h", 1.5, -1234567.891, NaN), String.format("%a %A %.2a %.0a", 1.5, -0.1, 0.1, -0.1));
+            print(String.format("%E|%G|%+.1f|%010.1f|%-8.1e|", NaN, NaN, NaN, NaN, 1/0), String.format("%.1b|%5%|%S", 1, NaN));
+            print(String.format("%0(10.1f|% (.1f|%010.3e|%.20a|%a", -1.5, -1.5, -1.5, -0.1, 1e-320));
+            """#),
+        .init("String.format: '-' with '0'", #"""
+            print(String.format("%-08.2f|", 1.5));
+            """#),
+        .init("String.format: ',' with %e", #"""
+            print(String.format("%,.3e", 1234.5));
+            """#),
+        .init("String.format: a missing argument", #"""
+            print(String.format("%.2f %.3f", 1));
+            """#),
+        .init("String.format: '<' without a previous argument", #"""
+            print(String.format("%<.1f", 1));
+            """#),
+        .init("String.format: '-' without a width", #"""
+            print(String.format("%-.2f", 1));
+            """#),
+        .init("String.format: a precision without digits", #"""
+            print(String.format("%.f", 1));
+            """#),
+        .init("String.format: no conversion", #"""
+            print(String.format("%5", 1));
+            """#),
+        .init("String.format: '#' with %g", #"""
+            print(String.format("%#g", 1));
+            """#),
+        .init("String.format: an unknown conversion after a good one", #"""
+            print(String.format("%.2f %q", 1));
+            """#),
+        .init("String.format: a repeated flag", #"""
+            print(String.format("%++.2f", 1));
+            """#),
+        .init("Table.get, Table.getString and Table.setColumn", #"""
+            Table.setColumn("v", newArray(1, 2.5, 3));
+            Table.setColumn("w", newArray("a", "b"));
+            print(Table.size, Table.getString("w", 2) + "|", Table.get("w", 2), Table.get("v"), Table.getString("v"));
+            Table.setColumn("x", newArray(7, 8, 9, 10, 11));
+            print(Table.size, Table.getString("v", 4) + "|", Table.get("v", 4), Table.getString("w", 3) + "|", Table.getString("x", 4));
+            print(Table.get("missing", 0), Table.getString("missing", 0));
+            setResult("Label", 0, "lbl");
+            print(Table.getString("Label", 0), Table.get("Label", 0), Table.get("x", 1));
+            """#),
     ]
 
     /// Images: the current image, pixels, selections, statistics,
     /// thresholds, display ranges, calibration and commands.
     static let images: [MacroParityCase] = [
+        .init("wand on every mode", #"""
+            function trace(x, y, tolerance, mode) {
+                if (mode == "") doWand(x, y); else doWand(x, y, tolerance, mode);
+                getSelectionCoordinates(xs, ys);
+                print(x, y, tolerance, mode, selectionType(), xs.length);
+                Array.print(xs);
+                Array.print(ys);
+            }
+            newImage("w", "8-bit black", 48, 32, 1);
+            setColor(200); makeOval(4, 4, 16, 13); fill();
+            setColor(120); makeRectangle(26, 6, 12, 16); fill();
+            setColor(0); makeRectangle(29, 10, 4, 5); fill();
+            setColor(121); makeRectangle(40, 6, 4, 4); fill();
+            for (i = 0; i < 20; i++) setPixel(2 + i, 28 - (i % 2), 90);
+            setPixel(30, 24, 90); setPixel(31, 25, 90); setPixel(32, 26, 90);
+            run("Select None");
+            trace(10, 10, 0, "");
+            trace(27, 7, 0, "");
+            trace(30, 11, 0, "");
+            trace(3, 28, 0, "");
+            trace(30, 24, 0, "");
+            trace(0, 0, 0, "");
+            trace(27, 7, 1, "Legacy");
+            trace(27, 7, 0, "4-connected");
+            trace(30, 24, 0, "8-connected");
+            trace(30, 24, 0, "4-connected");
+            trace(0, 0, 0, "8-connected");
+            trace(30, 11, 0, "8-connected");
+            trace(10, 10, 100, "8-connected");
+            setThreshold(100, 255);
+            trace(1, 10, 0, "");
+            trace(30, 11, 0, "");
+            trace(30, 11, 0, "4-connected");
+            trace(2, 30, 0, "");
+            resetThreshold();
+            makeRectangle(1, 1, 3, 3);
+            doWand(-5, 3);
+            print(selectionType());
+            """#),
+        .init("wand on 16-bit, float and RGB", #"""
+            newImage("a", "16-bit black", 30, 20, 1);
+            setColor(4000); makeOval(3, 3, 12, 10); fill();
+            setColor(4100); makeRectangle(18, 4, 8, 9); fill();
+            run("Select None");
+            doWand(8, 8); getSelectionCoordinates(xs, ys); Array.print(xs); Array.print(ys);
+            doWand(8, 8, 150, "8-connected"); getSelectionCoordinates(xs, ys); Array.print(xs); Array.print(ys);
+            newImage("b", "32-bit black", 30, 20, 1);
+            setColor(1.5); makeRectangle(4, 4, 9, 7); fill();
+            setPixel(6, 6, NaN);
+            run("Select None");
+            doWand(5, 5); getSelectionCoordinates(xs, ys); Array.print(xs); Array.print(ys);
+            makeRectangle(20, 2, 3, 3);
+            doWand(6, 6); print(selectionType()); getSelectionBounds(x, y, w, h); print(x, y, w, h);
+            newImage("c", "RGB black", 30, 20, 1);
+            setColor(255, 0, 0); makeRectangle(3, 3, 8, 8); fill();
+            setColor(0, 0, 255); makeRectangle(11, 3, 8, 8); fill();
+            run("Select None");
+            doWand(5, 5); getSelectionCoordinates(xs, ys); Array.print(xs); Array.print(ys);
+            doWand(5, 5, 1, "8-connected"); getSelectionCoordinates(xs, ys); Array.print(xs); Array.print(ys);
+            """#),
         .init("image basics", #"""
             print(getTitle(), getWidth(), getHeight(), nSlices, nImages, bitDepth(), getImageID() < 0);
             getDimensions(w, h, c, z, t);
@@ -355,6 +528,19 @@ enum MacroCorpus {
             for (i = 0; i < 256; i++) sum += counts2[i];
             print(sum);
             """#, on: .gray8),
+        .init("raw statistics' histogram of a 16-bit image", #"""
+            makeOval(3, 3, 20, 14);
+            getRawStatistics(n, mean, min, max, std, hist);
+            print(n, max, hist.length, hist[hist.length - 1]);
+            sum = 0;
+            for (i = 0; i < hist.length; i++) sum += hist[i];
+            print(sum);
+            getStatistics(area, mean, min, max, std, hist);
+            print(hist.length);
+            run("Select None");
+            getRawStatistics(n, mean, min, max, std, hist);
+            print(n, max, hist.length, hist[hist.length - 1]);
+            """#, on: .gray16),
         .init("thresholds", #"""
             setThreshold(50, 150);
             getThreshold(lower, upper);

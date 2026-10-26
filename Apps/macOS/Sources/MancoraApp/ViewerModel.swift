@@ -5,6 +5,7 @@ import MancoraCommands
 import MancoraCore
 import MancoraIO
 import MancoraMacro
+import MancoraProcess
 import Observation
 import UniformTypeIdentifiers
 
@@ -37,6 +38,40 @@ final class ViewerModel {
 
     /// Find Command (⌘L) is showing.
     var showsCommandFinder = false
+    /// The Brightness & Contrast and image inspector is showing.
+    var showsInspector = true
+    /// A command waiting for its dialog's answers.
+    var pendingDialog: PendingDialog?
+
+    /// The selection being drawn, shown instead of the image's.
+    var draft: Roi?
+    /// The vertices placed so far with the polygon, segmented line or angle tool.
+    var vertices: [Roi.IntPoint] = []
+    /// The pointer over the image, in pixels.
+    private(set) var pointer: CGPoint?
+    /// The size and position of the selection being drawn, for the status bar.
+    var selectionText: String?
+    @ObservationIgnored var gesture: SelectionGesture?
+
+    /// The image's threshold (raw values), shown in red; commands use it.
+    var threshold: ThresholdLevels?
+    /// The Threshold section is showing in the inspector.
+    var showsThreshold = false
+    var thresholdMethod = AutoThresholder.Method.default
+    var thresholdDark = false
+    var thresholdStack = false
+    /// The plane's 256-bin histogram over the display range, for the Threshold section.
+    private(set) var histogram: [Int] = []
+
+    struct LastCommand: Equatable {
+        let name: String
+        let options: String
+    }
+
+    /// For Process ▸ Repeat Command.
+    private(set) var lastCommand: LastCommand?
+    /// The window's undo manager: commands that change the image can be undone.
+    @ObservationIgnored weak var undoManager: UndoManager?
     /// What the last ImageJ command or macro logged or measured.
     var report: String?
 
@@ -44,6 +79,9 @@ final class ViewerModel {
     @ObservationIgnored private var renderTask: Task<Void, Never>?
 
     var hasImage: Bool { image != nil }
+    /// Unsaved changes (ImageJ's `ImagePlus.changes`): set when a command
+    /// changes the image, cleared when it's opened or saved.
+    var isChanged = false
 
     // MARK: Opening and saving
 
@@ -106,6 +144,7 @@ final class ViewerModel {
     }
 
     func show(_ image: Hyperstack, from url: URL?) {
+        AppSession.shared.register(self)
         self.image = image
         fileURL = url
         channel = 0
@@ -113,6 +152,8 @@ final class ViewerModel {
         frame = 0
         zoom = .fit
         autoState.reset()
+        threshold = nil
+        isChanged = false
         render()
     }
 
@@ -144,10 +185,37 @@ final class ViewerModel {
             if let error {
                 errorMessage = error.description
             } else {
-                self.image?.title = url.lastPathComponent
-                fileURL = url
-                AppRecorder.shared.recordSave(url)
+                didSave(to: url)
             }
+        }
+    }
+
+    /// Saves now, for the questions asked on close and quit; returns whether it saved.
+    func saveNow(to url: URL) -> Bool {
+        guard let image else { return false }
+        do throws(MancoraIOError) {
+            try TIFFExporter.write(image, to: url.path)
+        } catch {
+            errorMessage = error.description
+            return false
+        }
+        didSave(to: url)
+        return true
+    }
+
+    private func didSave(to url: URL) {
+        image?.title = url.lastPathComponent
+        fileURL = url
+        isChanged = false
+        AppRecorder.shared.recordSave(url)
+    }
+
+    /// File ▸ Save: over the TIFF the image came from, else Save As.
+    func saveInPlace() {
+        if let fileURL, ["tif", "tiff"].contains(fileURL.pathExtension.lowercased()) {
+            save(to: fileURL)
+        } else {
+            presentSavePanel()
         }
     }
 
@@ -156,61 +224,180 @@ final class ViewerModel {
     /// Runs an ImageJ command on this image: natively when Mancora has it,
     /// otherwise in ImageJ through the bridge. Returns files for the new
     /// images it made, for the caller to open in new windows.
+    /// Runs a menu command as ImageJ does: one with a dialog asks for its
+    /// options first (ImageJ's own dialog, read through the bridge and
+    /// shown natively), then runs natively or in ImageJ.
+    func perform(_ name: String, bridge: AppBridge) async -> [URL] {
+        if Self.mayHaveDialog(name) {
+            if !bridge.isReady { await bridge.start() }
+            if bridge.isReady {
+                do {
+                    let dialogs = try await bridge.describeDialog(name, images: dialogImages(for: name))
+                    if !dialogs.dialogs.isEmpty {
+                        pendingDialog = PendingDialog(command: name, dialogs: dialogs, stackSize: image?.stack.count ?? 1)
+                        return []
+                    }
+                } catch {
+                    errorMessage = "\(error)"
+                    return []
+                }
+            }
+        }
+        // Without a dialog these would wipe settings (distance 0 removes the scale).
+        if Self.needsAnswers.contains(name) {
+            errorMessage = "\(name) needs ImageJ for its dialog: install Java 11 or later, then try again."
+            return []
+        }
+        return await runRecorded(name, options: "", bridge: bridge)
+    }
+
+    /// Commands whose default options undo what they set.
+    static let needsAnswers: Set<String> = ["Set Scale...", "Set Measurements...", "Properties...", "Calibrate..."]
+
+    /// The images a command's dialog chooses from: all of them for a command
+    /// that combines images (this one last), else this one.
+    private func dialogImages(for name: String) -> [Hyperstack] {
+        let others = AppSession.multiImageCommands.contains(name)
+            ? AppSession.shared.imageViewers.filter { $0 !== self }.compactMap(\.image) : []
+        return others + (image.map { [$0] } ?? [])
+    }
+
+    /// Runs a command and remembers it for Repeat Command.
+    func runRecorded(_ name: String, options: String, bridge: AppBridge) async -> [URL] {
+        lastCommand = LastCommand(name: name, options: options)
+        return await runCommand(name, options: options, bridge: bridge)
+    }
+
+    /// ImageJ ends the names of commands that ask for something with "...".
+    static func mayHaveDialog(_ name: String) -> Bool {
+        name.trimmingCharacters(in: .whitespaces).hasSuffix("...")
+    }
+
+    func zoom(by factor: Double) {
+        let current: Double
+        switch zoom {
+        case .scale(let s): current = s
+        case .fit: current = 1
+        }
+        zoom = .scale(min(max(current * factor, 1.0 / 32), 64))
+    }
+
+    /// File ▸ Revert: the file as saved.
+    func revert() {
+        guard let fileURL else { return }
+        open(OpenRequest(url: fileURL))
+    }
+
+    /// Runs a command on this window's image, natively (off the main thread,
+    /// with every open image available and the session's results and
+    /// settings) or in ImageJ; changed images update their windows, and
+    /// new ones come back to open in their own.
     func runCommand(_ name: String, options: String = "", bridge: AppBridge) async -> [URL] {
         let registry = CommandRegistry.standard
+        let session = AppSession.shared
+        session.register(self)
         if registry.isNative(name) {
             var context = CommandContext()
+            context.results = session.results
+            context.tables = session.tables
+            context.settings = session.settings
+            var owners: [Int: ViewerModel] = [:]
+            var originals: [Int: Hyperstack] = [:]
+            for viewer in session.imageViewers where viewer !== self {
+                guard let other = viewer.image else { continue }
+                let id = context.add(other)
+                owners[id] = viewer
+                originals[id] = other
+                let levels = viewer.threshold
+                try? context.withCurrent(name) { (open: inout OpenImage) in open.threshold = levels }
+            }
             if let image {
-                context.add(image)
-                let (c, z, t) = (channel, slice, frame)
+                let id = context.add(image)
+                owners[id] = self
+                originals[id] = image
+                let (c, z, t, levels) = (channel, slice, frame, threshold)
                 try? context.withCurrent(name) { (open: inout OpenImage) in
                     open.channel = c
                     open.slice = z
                     open.frame = t
+                    open.threshold = levels
                 }
             }
-            do {
-                try registry.run(name, options: MacroOptions(options), in: &context)
-                AppRecorder.shared.record(name, options: options)
-                var created: [Hyperstack] = []
-                for open in context.images {
-                    if open.id == -1 { replace(with: open.image) } else { created.append(open.image) }
+            isBusy = true
+            let input = context
+            let outcome = await Task.detached(priority: .userInitiated) { () -> Result<CommandContext, CommandError> in
+                var working = input
+                do throws(CommandError) {
+                    try registry.run(name, options: MacroOptions(options), in: &working)
+                    return .success(working)
+                } catch {
+                    return .failure(error)
                 }
-                if !context.log.isEmpty { report = context.log.joined(separator: "\n") }
+            }.value
+            isBusy = false
+            switch outcome {
+            case .success(let done):
+                AppRecorder.shared.record(name, options: options)
+                session.absorb(done)
+                var created: [Hyperstack] = []
+                for open in done.images {
+                    if let owner = owners[open.id] {
+                        if open.image != originals[open.id] { owner.replace(with: open.image) }
+                        if open.threshold != owner.threshold { owner.setThreshold(open.threshold, render: true) }
+                    } else {
+                        created.append(open.image)
+                    }
+                }
                 return saveForNewWindows(created)
-            } catch CommandError.notNative {
+            case .failure(let error):
                 // Mancora has the command but not with these options: ImageJ does.
-            } catch {
-                errorMessage = "\(error)"
-                return []
+                guard case .notNative = error else {
+                    errorMessage = "\(error)"
+                    return []
+                }
             }
         }
         isBusy = true
         defer { isBusy = false }
+        // Commands that combine images get them all, this one last (and so active).
+        let others = AppSession.multiImageCommands.contains(name)
+            ? session.imageViewers.filter { $0 !== self }.compactMap(\.image) : []
+        let images = others + (image.map { [$0] } ?? [])
         do {
-            let result = try await bridge.run(name, options: options, on: image)
+            // ImageJ gets the threshold the way a macro sets it.
+            let result: BridgeRunResult
+            if let threshold, image != nil {
+                let code = "setThreshold(\(threshold.lower), \(threshold.upper), \"raw\");\n"
+                    + "run(\"\(MacroRecorder.escape(name))\", \"\(MacroRecorder.escape(options))\");\n"
+                result = try await bridge.runMacro(code, images: images)
+            } else {
+                result = try await bridge.run(name, options: options, images: images)
+            }
             AppRecorder.shared.record(name, options: options)
-            return handle(result)
+            return handle(result, inputCount: images.count, hasImage: image != nil)
         } catch {
             errorMessage = "\(error)"
             return []
         }
     }
 
-    /// Runs ImageJ macro code with this image open (Plugins ▸ Macros ▸ Run):
-    /// natively when Mancora has everything it uses, otherwise in ImageJ
-    /// through the bridge.
     func runMacro(_ code: String, bridge: AppBridge) async -> [URL] {
         isBusy = true
         defer { isBusy = false }
         if MacroSupport.unsupported(in: code, registry: .standard).isEmpty {
             let input = image
             let position = (channel, slice, frame)
-            // log, results, return value, error, the input as the macro left it, new images
+            let shared = AppSession.shared
+            let (startResults, startSettings, startManager) = (shared.results, shared.settings, shared.roiManager)
+            // what the macro left (results, settings, log, the ROI Manager), its return
+            // value and error, the input as the macro left it, and new images
             let outcome = await Task.detached(priority: .userInitiated) {
-                () -> (String, ResultsTable, String?, String?, Hyperstack?, [Hyperstack]) in
+                () -> (CommandContext, RoiManagerList, String?, String?, Hyperstack?, [Hyperstack]) in
                 let session = MacroSession()
                 session.batchMode = false
+                session.context.results = startResults
+                session.context.settings = startSettings
+                session.roiManager = startManager
                 var inputID: Int?
                 if let input {
                     inputID = session.add(input)
@@ -230,29 +417,15 @@ final class ViewerModel {
                         created.append(open.image)
                     }
                 }
-                return (session.logText, session.context.results, value, failure, changed, created)
+                var left = session.context
+                left.log = session.logLines
+                return (left, session.roiManager, value, failure, changed, created)
             }.value
-            let (log, results, value, failure, changed, created) = outcome
+            let (left, manager, value, failure, changed, created) = outcome
             if let changed { replace(with: changed) }
-            var lines: [String] = []
-            if !log.isEmpty { lines.append(log) }
-            if !results.isEmpty {
-                let hasLabels = results.labels.contains { $0 != nil }
-                lines.append(((hasLabels ? ["Label"] : []) + results.columns).joined(separator: "\t"))
-                for row in 0..<results.count {
-                    var cells = hasLabels ? [results.labels[row] ?? ""] : []
-                    for column in results.columns {
-                        if case .text(let t)? = results.value(column, row: row) {
-                            cells.append(t)
-                        } else {
-                            cells.append(String(format: "%.4g", results.number(column, row: row)))
-                        }
-                    }
-                    lines.append(cells.joined(separator: "\t"))
-                }
-            }
-            if let value { lines.append("Returned: \(value)") }
-            if !lines.isEmpty { report = lines.joined(separator: "\n") }
+            shared.absorb(left)
+            shared.roiManager = manager
+            if let value { report = "Returned: \(value)" }
             if let failure { errorMessage = "Macro Error: " + failure }
             return saveForNewWindows(created)
         }
@@ -264,35 +437,41 @@ final class ViewerModel {
         }
     }
 
-    private func handle(_ result: BridgeRunResult) -> [URL] {
+    /// What ImageJ gave back: results and log lines go to the session, a
+    /// changed current image (the last input) updates this window, new
+    /// images open in their own.
+    private func handle(_ result: BridgeRunResult, inputCount: Int = 1, hasImage: Bool = true) -> [URL] {
+        AppSession.shared.absorb(result)
         var created: [Hyperstack] = []
         for output in result.images {
-            if output.replacesInput == 0 { replace(with: output.image) } else { created.append(output.image) }
-        }
-        var lines: [String] = []
-        if !result.log.isEmpty { lines.append(result.log) }
-        if !result.results.isEmpty {
-            lines.append(result.results.columns.joined(separator: "\t"))
-            for row in result.results.rows {
-                lines.append(row.map { cell -> String in
-                    switch cell {
-                    case .number(let v): String(format: "%.4g", v)
-                    case .text(let t): t
-                    case .empty: ""
-                    }
-                }.joined(separator: "\t"))
+            if let replaced = output.replacesInput {
+                if hasImage, replaced == inputCount - 1 { replace(with: output.image) }
+            } else {
+                created.append(output.image)
             }
         }
-        if let value = result.value { lines.append("Returned: \(value)") }
-        if !lines.isEmpty { report = lines.joined(separator: "\n") }
+        if let error = result.macroError {
+            errorMessage = "Macro Error: " + error + (result.macroErrorLine.map { " in line \($0)" } ?? "")
+        } else if let value = result.value {
+            report = "Returned: \(value)"
+        }
         return saveForNewWindows(created)
     }
 
-    /// Keeps the position (within the new dimensions) when a command changes
-    /// the image in place.
-    private func replace(with changed: Hyperstack) {
+    /// Stores `roi` as the image's selection, without undo (ImageJ doesn't undo selections).
+    func storeSelection(_ roi: Roi?) {
+        image?.encodedROI = roi.map(RoiCodec.encode)
+    }
+
+    func replace(with changed: Hyperstack) {
         let dims = changed.dimensions
+        if let previous = image {
+            undoManager?.registerUndo(withTarget: self) { model in
+                MainActor.assumeIsolated { model.replace(with: previous) }
+            }
+        }
         image = changed
+        isChanged = true
         channel = min(channel, dims.channels - 1)
         slice = min(slice, dims.slices - 1)
         frame = min(frame, dims.frames - 1)
@@ -429,10 +608,14 @@ final class ViewerModel {
     func pointerMoved(to point: CGPoint?, displaySize: CGSize) {
         guard let image, let point, displaySize.width > 0, displaySize.height > 0 else {
             pointerText = nil
+            pointer = nil
             return
         }
-        let x = Int(point.x / displaySize.width * CGFloat(image.width))
-        let y = Int(point.y / displaySize.height * CGFloat(image.height))
+        let px = point.x / displaySize.width * CGFloat(image.width)
+        let py = point.y / displaySize.height * CGFloat(image.height)
+        if !vertices.isEmpty { pointer = CGPoint(x: px, y: py) }
+        let x = Int(px)
+        let y = Int(py)
         guard (0..<image.width).contains(x), (0..<image.height).contains(y), let plane = currentPlane else {
             pointerText = nil
             return
@@ -467,13 +650,21 @@ final class ViewerModel {
             rendered = nil
             return
         }
-        let (c, z, t) = (channel, slice, frame)
+        let (c, z, t, levels) = (channel, slice, frame, threshold)
+        let range = displayRange
+        let wantsHistogram = showsThreshold && image.pixelType != .rgb8
         renderTask = Task {
-            let pixels = await Task.detached(priority: .userInitiated) {
-                DisplayMapper.render(image, channel: c, slice: z, frame: t)
+            let (pixels, bins) = await Task.detached(priority: .userInitiated) { () -> ([UInt32], [Int]) in
+                var pixels = DisplayMapper.render(image, channel: c, slice: z, frame: t)
+                let plane = image.plane(channel: c, slice: z, frame: t)
+                if let levels, image.dimensions.channels == 1 || image.compositeMode != .composite {
+                    Self.paintThreshold(&pixels, plane: plane, levels: levels)
+                }
+                return (pixels, wantsHistogram ? Self.histogram(plane, range: range) : [])
             }.value
             guard !Task.isCancelled else { return }
             rendered = Self.makeCGImage(pixels, width: image.width, height: image.height)
+            histogram = bins
         }
     }
 

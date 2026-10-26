@@ -82,7 +82,41 @@ public final class MacroSession {
         let previousPath = macroPath
         if let path { macroPath = path }
         defer { macroPath = previousPath }
-        return try Interpreter(session: self).run(macro, argument: argument)
+        return try Self.withLargeStack { () throws(MacroError) -> String? in
+            try Interpreter(session: self).run(macro, argument: argument)
+        }
+    }
+
+    /// Each call of a macro function is a dozen Swift frames, so ImageJ's limit
+    /// on recursion ("Stack overflow" once its variable stack is full, after
+    /// about 1000 calls) needs more than a secondary thread's 512 KB stack.
+    static let stackSize = 512 << 20
+    private static let largeStackKey = "MancoraMacro.largeStack"
+
+    static func withLargeStack<T>(_ body: @escaping () throws(MacroError) -> T) throws(MacroError) -> T {
+        if Thread.current.threadDictionary[largeStackKey] != nil { return try body() }
+        let run = LargeStackRun(body)
+        let thread = Thread {
+            Thread.current.threadDictionary[largeStackKey] = true
+            run.run()
+        }
+        thread.stackSize = stackSize
+        thread.start()
+        run.finished.wait()
+        return try run.result!.get()
+    }
+
+    private final class LargeStackRun<T>: @unchecked Sendable {
+        let body: () throws(MacroError) -> T
+        var result: Result<T, MacroError>?
+        let finished = DispatchSemaphore(value: 0)
+
+        init(_ body: @escaping () throws(MacroError) -> T) { self.body = body }
+
+        func run() {
+            do throws(MacroError) { result = .success(try body()) } catch { result = .failure(error) }
+            finished.signal()
+        }
     }
 
     // MARK: - The Log window
@@ -195,6 +229,7 @@ public final class MacroSession {
         guard lo <= hi else { return }
         var table = ResultsTable()
         table.emptyCellsAreNaN = context.results.emptyCellsAreNaN
+        for column in context.results.decimalColumns { table.setDecimal(column) }
         for row in 0..<rows where row < lo || row > hi {
             let r = table.addRow(label: context.results.labels[row])
             for column in context.results.columns {

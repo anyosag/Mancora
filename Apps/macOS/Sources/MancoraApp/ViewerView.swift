@@ -1,3 +1,4 @@
+import AppKit
 import MancoraCore
 import SwiftUI
 
@@ -6,11 +7,12 @@ struct ViewerWindow: View {
     @Binding var request: OpenRequest?
     let bridge: AppBridge
     @State private var model = ViewerModel()
-    @State private var showsInspector = true
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.undoManager) private var undoManager
+    @Environment(\.controlActiveState) private var activeState
 
     var body: some View {
-        ViewerView(model: model, showsInspector: $showsInspector)
+        ViewerView(model: model, showsInspector: $model.showsInspector)
             .frame(minWidth: 720, minHeight: 520)
             .sheet(isPresented: $model.showsCommandFinder) {
                 CommandFinder(model: model, bridge: bridge) { urls in
@@ -22,11 +24,27 @@ struct ViewerWindow: View {
             ) {
                 ReportView(text: model.report ?? "")
             }
+            .sheet(item: $model.pendingDialog) { pending in
+                CommandDialogView(pending: pending) { options in
+                    Task { show(await model.runRecorded(pending.command, options: options, bridge: bridge)) }
+                }
+            }
             .focusedSceneValue(\.viewer, model)
+            .background(ChangeTracking(model: model))
+            .onChange(of: activeState, initial: true) {
+                if activeState == .key { AppSession.shared.activate(model) }
+            }
             .task(id: request) {
                 model.bridge = bridge
-                if let request { model.open(request) }
+                model.undoManager = undoManager
+                if let request {
+                    model.open(request)
+                } else if let command = CommandQueue.shared.take() {
+                    show(await model.perform(command, bridge: bridge))
+                }
             }
+            .onChange(of: AppSession.shared.resultsAdded) { openWindow(id: "results") }
+            .onChange(of: AppSession.shared.logAdded) { openWindow(id: "log") }
             .onOpenURL { url in
                 model.bridge = bridge
                 // Files opened from the Finder: fill this window if it's empty.
@@ -36,6 +54,15 @@ struct ViewerWindow: View {
                     model.open(OpenRequest(url: url))
                 }
             }
+    }
+}
+
+extension ViewerWindow {
+    /// New images: the first fills this window if it's empty, the others get their own.
+    func show(_ urls: [URL]) {
+        var rest = urls[...]
+        if !model.hasImage, let first = rest.popFirst() { model.open(OpenRequest(url: first)) }
+        for url in rest { openWindow(id: "viewer", value: OpenRequest(url: url)) }
     }
 }
 
@@ -70,6 +97,9 @@ struct ViewerView: View {
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
         }
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                ToolPicker(session: AppSession.shared)
+            }
             ToolbarItem {
                 Menu("LUT", systemImage: "paintpalette") {
                     ForEach(LUT.builtIn, id: \.name) { lut in
@@ -104,8 +134,8 @@ struct ViewerView: View {
     }
 }
 
-/// The image at the current zoom, with nearest-neighbour magnification and
-/// a pixel readout under the pointer.
+/// The image at the current zoom, with nearest-neighbour magnification, a
+/// pixel readout under the pointer, and the selection tools.
 struct ImageCanvas: View {
     @Bindable var model: ViewerModel
     let bitmap: CGImage
@@ -115,11 +145,31 @@ struct ImageCanvas: View {
         GeometryReader { geometry in
             let scale = displayScale(in: geometry.size)
             let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+            let tool = AppSession.shared.tool
             ScrollView([.horizontal, .vertical]) {
                 Image(decorative: bitmap, scale: 1)
                     .interpolation(scale >= 1 ? .none : .medium)
                     .resizable()
                     .frame(width: size.width, height: size.height)
+                    .overlay {
+                        SelectionOverlay(
+                            selection: model.selection, draft: model.draft, vertices: model.vertices,
+                            pointer: model.pointer, tool: tool, scale: scale, others: managerRois)
+                    }
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                model.drag(
+                                    from: pixel(value.startLocation, scale), to: pixel(value.location, scale), tool: tool,
+                                    shift: NSEvent.modifierFlags.contains(.shift))
+                            }
+                            .onEnded { value in
+                                model.endDrag(
+                                    at: pixel(value.location, scale), tool: tool, clicks: NSApp.currentEvent?.clickCount ?? 1,
+                                    option: NSEvent.modifierFlags.contains(.option))
+                            }
+                    )
                     .onContinuousHover { phase in
                         switch phase {
                         case .active(let point): model.pointerMoved(to: point, displaySize: size)
@@ -131,7 +181,31 @@ struct ImageCanvas: View {
                     )
             }
             .background(Color(nsColor: .underPageBackgroundColor))
+            .focusable()
+            .focusEffectDisabled()
+            .onKeyPress(.escape) {
+                guard !model.vertices.isEmpty else { return .ignored }
+                model.cancelVertices()
+                return .handled
+            }
+            .onKeyPress(.return) {
+                guard !model.vertices.isEmpty else { return .ignored }
+                model.finishVertices(tool)
+                return .handled
+            }
         }
+    }
+
+    /// The ROI Manager's ROIs for this plane, when Show All is on.
+    private var managerRois: [(index: Int, roi: Roi)] {
+        let session = AppSession.shared
+        guard session.showsAllRois, let image = model.image else { return [] }
+        return session.managerRois(on: image, channel: model.channel, slice: model.slice, frame: model.frame)
+    }
+
+    /// A point on the displayed image, in pixels.
+    private func pixel(_ point: CGPoint, _ scale: CGFloat) -> CGPoint {
+        CGPoint(x: point.x / scale, y: point.y / scale)
     }
 
     private func displayScale(in available: CGSize) -> CGFloat {
@@ -166,7 +240,7 @@ struct StatusBar: View {
                 PositionSlider(label: "t", value: $model.frame, count: dims.frames)
             }
             HStack {
-                Text(model.pointerText ?? summary)
+                Text(model.selectionText ?? model.pointerText ?? summary)
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -224,6 +298,9 @@ struct DisplayInspector: View {
             if let image = model.image {
                 if image.pixelType.usesLUT {
                     contrastSection(image)
+                }
+                if model.showsThreshold && image.pixelType != .rgb8 {
+                    ThresholdSection(model: model)
                 }
                 if image.dimensions.channels > 1 {
                     channelsSection(image)

@@ -176,6 +176,8 @@ public class MancoraBridgeHelper {
                 return runWithImages(method, params);
             case "open":
                 return openFile(params);
+            case "dialog":
+                return describeDialog(params);
             case "crash":
                 // For tests of the supervisor: die without answering.
                 Runtime.getRuntime().halt(3);
@@ -356,6 +358,256 @@ public class MancoraBridgeHelper {
         result.put("value", reader);
         closeAll();
         return result;
+    }
+
+    /**
+     * The dialogs a command shows, field by field, for Mancora to show
+     * natively. In a macro, ImageJ's GenericDialog builds every field but
+     * never appears: the command runs here with default options (on copies
+     * of the images, which are thrown away), and every dialog it creates is
+     * read: each field's label, macro key (from the dialog's own key table),
+     * kind and default value.
+     */
+    static Map<String, Object> describeDialog(Map<String, Object> params) throws Exception {
+        closeAll();
+        resetSettings();
+        takeLog();
+        String command = (String) params.get("command");
+        if (Menus.getCommands() == null) IJ.run("Close All");  // builds the table
+        Hashtable<?, ?> table = Menus.getCommands();
+        if (table != null && table.get(command) == null)
+            throw new IllegalArgumentException("Unrecognized command: \"" + command + "\"");
+        ImagePlus active = null;
+        if (params.get("inputs") != null) for (Object o : Json.array(params.get("inputs"))) {
+            ImagePlus imp = IJ.openImage((String) o);
+            if (imp == null) throw new IOException("ImageJ could not open " + o);
+            Interpreter.addBatchModeImage(imp);
+            WindowManager.setTempCurrentImage(imp);
+            active = imp;
+        }
+        Set<java.awt.Window> before = Collections.newSetFromMap(new IdentityHashMap<>());
+        before.addAll(Arrays.asList(java.awt.Window.getWindows()));
+        List<ij.gui.GenericDialog> dialogs = new ArrayList<>();
+        DialogWatchdog.reset();
+        final ImagePlus target = active;
+        Thread runner = new Thread(() -> {
+            try {
+                if (target != null) {
+                    WindowManager.setTempCurrentImage(target);
+                    IJ.run(target, command, " ");
+                } else {
+                    IJ.run(command, " ");
+                }
+            } catch (Throwable ignored) {
+                // Only the dialogs matter.
+            }
+        }, "Mancora dialog probe");
+        runner.setDaemon(true);
+        runner.start();
+        long deadline = System.currentTimeMillis() + 5000;
+        while (true) {
+            for (java.awt.Window w : java.awt.Window.getWindows())
+                if (w instanceof ij.gui.GenericDialog && !before.contains(w) && !dialogs.contains(w)) dialogs.add((ij.gui.GenericDialog) w);
+            if (!runner.isAlive() || System.currentTimeMillis() > deadline) break;
+            Thread.sleep(10);
+        }
+        if (runner.isAlive()) runner.join(25000);  // let a slow default run finish before the next request
+        for (java.awt.Window w : java.awt.Window.getWindows())
+            if (w instanceof ij.gui.GenericDialog && !before.contains(w) && !dialogs.contains(w)) dialogs.add((ij.gui.GenericDialog) w);
+        List<Object> described = new ArrayList<>();
+        for (ij.gui.GenericDialog gd : dialogs) described.add(DialogDescriber.describe(gd));
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("dialogs", described);
+        // Filters on a stack ask whether to process every slice ("stack" in a macro).
+        Object className = table == null ? null : table.get(command);
+        result.put("asksForStack", active != null && active.getStackSize() > 1 && implementing(className, ij.plugin.filter.PlugInFilter.class));
+        // In a macro ImageJ leaves the preview checkbox out; an ExtendedPlugInFilter has one.
+        result.put("supportsPreview", implementing(className, ij.plugin.filter.ExtendedPlugInFilter.class));
+        takeLog();
+        closeAll();
+        return result;
+    }
+
+    static boolean implementing(Object className, Class<?> type) {
+        if (className == null) return false;
+        String name = String.valueOf(className);
+        int paren = name.indexOf('(');
+        if (paren >= 0) name = name.substring(0, paren);
+        Class<?> c = findClass(name.trim());
+        return c != null && type.isAssignableFrom(c);
+    }
+
+    /** Reads a GenericDialog's fields in the order they're laid out. */
+    static final class DialogDescriber {
+        static Map<String, Object> describe(ij.gui.GenericDialog gd) {
+            Map<String, Object> d = new LinkedHashMap<>();
+            d.put("title", gd.getTitle());
+            List<Object> fields = new ArrayList<>();
+            Map<Object, String> keys = privateField(gd, "labels");
+            List<Integer> sliderIndexes = privateField(gd, "sliderIndexes");
+            List<Double> sliderScales = privateField(gd, "sliderScales");
+            Vector<?> numbers = gd.getNumericFields(), strings = gd.getStringFields(), boxes = gd.getCheckboxes(),
+                choices = gd.getChoices(), sliders = gd.getSliders(), radios = gd.getRadioButtonGroups();
+            Object preview = gd.getPreviewCheckbox();
+            String[] pendingLabel = { null };
+            walk(gd, gd, fields, keys == null ? new HashMap<>() : keys, pendingLabel, numbers, strings, boxes, choices, sliders,
+                radios, sliderIndexes, sliderScales, preview);
+            d.put("fields", fields);
+            d.put("hasPreview", preview != null);
+            return d;
+        }
+
+        @SuppressWarnings("unchecked")
+        static <T> T privateField(Object o, String name) {
+            try {
+                java.lang.reflect.Field f = ij.gui.GenericDialog.class.getDeclaredField(name);
+                f.setAccessible(true);
+                return (T) f.get(o);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        static boolean has(Vector<?> v, Object o) {
+            if (v == null) return false;
+            for (Object x : v) if (x == o) return true;
+            return false;
+        }
+
+        static void flushMessage(List<Object> fields, String[] pending) {
+            if (pending[0] == null) return;
+            String text = pending[0].trim();
+            pending[0] = null;
+            if (text.isEmpty()) return;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("kind", "message");
+            m.put("label", text);
+            fields.add(m);
+        }
+
+        static void walk(ij.gui.GenericDialog gd, java.awt.Container container, List<Object> fields, Map<Object, String> keys,
+            String[] pending, Vector<?> numbers, Vector<?> strings, Vector<?> boxes, Vector<?> choices, Vector<?> sliders,
+            Vector<?> radios, List<Integer> sliderIndexes, List<Double> sliderScales, Object preview) {
+            for (java.awt.Component k : container.getComponents()) {
+                if (k instanceof java.awt.Button) continue;
+                if (k instanceof java.awt.Label) {
+                    String text = ((java.awt.Label) k).getText();
+                    // A label right after a field in its panel is the field's units.
+                    if (container != gd && !fields.isEmpty()) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> last = (Map<String, Object>) fields.get(fields.size() - 1);
+                        if ("number".equals(last.get("kind")) && last.get("units") == null && pending[0] == null) {
+                            last.put("units", text.trim());
+                            continue;
+                        }
+                    }
+                    flushMessage(fields, pending);
+                    pending[0] = text;
+                    continue;
+                }
+                if (k instanceof ij.gui.MultiLineLabel) {
+                    flushMessage(fields, pending);
+                    pending[0] = multiLineText((ij.gui.MultiLineLabel) k);
+                    flushMessage(fields, pending);
+                    continue;
+                }
+                Map<String, Object> f = new LinkedHashMap<>();
+                if (k instanceof java.awt.TextField && has(numbers, k)) {
+                    int index = numbers.indexOf(k);
+                    boolean slider = sliderIndexes != null && sliderIndexes.contains(index);
+                    f.put("kind", slider ? "slider" : "number");
+                    f.put("key", keys.get(k));
+                    f.put("label", label(pending));
+                    f.put("value", ((java.awt.TextField) k).getText());
+                    if (slider && sliders != null) {
+                        int s = sliderIndexes.indexOf(index);
+                        java.awt.Scrollbar bar = (java.awt.Scrollbar) sliders.get(s);
+                        double scale = sliderScales == null ? 1 : sliderScales.get(s);
+                        f.put("minimum", bar.getMinimum() / scale);
+                        f.put("maximum", (bar.getMaximum() - bar.getVisibleAmount()) / scale);
+                    }
+                } else if (k instanceof java.awt.TextField && has(strings, k)) {
+                    String key = keys.get(k);
+                    String kind = "string";
+                    if (key == null && container != gd) {
+                        key = keys.get(container);  // directory and file fields key their panel
+                        kind = "path";
+                    }
+                    f.put("kind", kind);
+                    f.put("key", key);
+                    f.put("label", label(pending));
+                    f.put("value", ((java.awt.TextField) k).getText());
+                } else if (k instanceof java.awt.TextArea) {
+                    f.put("kind", "text");
+                    f.put("key", keys.get(k));
+                    f.put("label", label(pending));
+                    f.put("value", ((java.awt.TextArea) k).getText());
+                } else if (k instanceof java.awt.Checkbox && ((java.awt.Checkbox) k).getCheckboxGroup() == null) {
+                    if (k == preview) continue;
+                    if (!has(boxes, k)) continue;
+                    flushMessage(fields, pending);
+                    f.put("kind", "checkbox");
+                    f.put("key", keys.get(k));
+                    f.put("label", ((java.awt.Checkbox) k).getLabel());
+                    f.put("value", ((java.awt.Checkbox) k).getState() ? "true" : "false");
+                } else if (k instanceof java.awt.Choice && has(choices, k)) {
+                    java.awt.Choice c = (java.awt.Choice) k;
+                    List<Object> items = new ArrayList<>();
+                    for (int i = 0; i < c.getItemCount(); i++) items.add(c.getItem(i));
+                    f.put("kind", "choice");
+                    f.put("key", keys.get(k));
+                    f.put("label", label(pending));
+                    f.put("items", items);
+                    f.put("value", c.getSelectedItem());
+                } else if (k instanceof java.awt.Container && radioGroup((java.awt.Container) k, radios) != null) {
+                    java.awt.CheckboxGroup group = radioGroup((java.awt.Container) k, radios);
+                    List<Object> items = new ArrayList<>();
+                    for (java.awt.Component b : ((java.awt.Container) k).getComponents())
+                        if (b instanceof java.awt.Checkbox) items.add(((java.awt.Checkbox) b).getLabel());
+                    f.put("kind", "radio");
+                    f.put("key", keys.get(group));
+                    f.put("label", label(pending));
+                    f.put("items", items);
+                    java.awt.Checkbox selected = group.getSelectedCheckbox();
+                    f.put("value", selected == null ? "" : selected.getLabel());
+                } else if (k instanceof java.awt.Container) {
+                    walk(gd, (java.awt.Container) k, fields, keys, pending, numbers, strings, boxes, choices, sliders, radios,
+                        sliderIndexes, sliderScales, preview);
+                    continue;
+                } else {
+                    continue;
+                }
+                if (f.get("key") != null) fields.add(f);
+            }
+            if (container == gd) flushMessage(fields, pending);
+        }
+
+        static String multiLineText(ij.gui.MultiLineLabel label) {
+            try {
+                java.lang.reflect.Field f = ij.gui.MultiLineLabel.class.getDeclaredField("lines");
+                f.setAccessible(true);
+                return String.join("\n", (String[]) f.get(label)).trim();
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
+        static java.awt.CheckboxGroup radioGroup(java.awt.Container panel, Vector<?> radios) {
+            if (radios == null) return null;
+            for (java.awt.Component b : panel.getComponents())
+                if (b instanceof java.awt.Checkbox) {
+                    java.awt.CheckboxGroup g = ((java.awt.Checkbox) b).getCheckboxGroup();
+                    if (g != null && has(radios, g)) return g;
+                }
+            return null;
+        }
+
+        static String label(String[] pending) {
+            String text = pending[0] == null ? "" : pending[0].trim();
+            pending[0] = null;
+            if (text.endsWith(":")) text = text.substring(0, text.length() - 1);
+            return text;
+        }
     }
 
     /** A class from ImageJ's class path or its plugins folder, or null. */
