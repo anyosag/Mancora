@@ -67,6 +67,29 @@ public enum ImageMath {
     ///   - signed16: The plane holds signed 16-bit data (stored `+32768`).
     ///   - fullRange16BitInversions: ImageJ's "Full range 16-bit inversions"
     ///     conversion option.
+    ///   - width: The plane's width; needed with `rect`.
+    ///   - rect: A selection's bounds, within the plane: only these pixels
+    ///     change (ImageJ's processors work on their rectangle). The values
+    ///     the operation scales by (pixel and display ranges) are still the
+    ///     whole plane's, as in ImageJ.
+    public static func apply(
+        _ operation: Operation,
+        to plane: Plane,
+        displayRange: ClosedRange<Double>,
+        signed16: Bool = false,
+        fullRange16BitInversions: Bool = false,
+        width: Int,
+        rect: RoiBounds?
+    ) -> Plane {
+        let result = apply(
+            operation, to: plane, displayRange: displayRange, signed16: signed16,
+            fullRange16BitInversions: fullRange16BitInversions)
+        guard let rect, !rect.covers(width: width, height: plane.count / max(width, 1)) else { return result }
+        return result.merged(into: plane, width: width, within: rect)
+    }
+
+    /// Applies `operation` to one plane; see
+    /// ``apply(_:to:displayRange:signed16:fullRange16BitInversions:width:rect:)``.
     public static func apply(
         _ operation: Operation,
         to plane: Plane,
@@ -107,32 +130,63 @@ public enum ImageMath {
     /// ImageJ runs a stack through one processor whose min and max are the
     /// current channel's display range; Mancora uses each channel's own
     /// range, which is the same for single-channel images.
+    ///
+    /// With `region` (a selection), each plane changes within its rectangle
+    /// and then gets the pixels outside the mask back (`reset(mask)`). A
+    /// single image's display range is reset before that, as ImageJ resets
+    /// it within the filter's run.
+    /// Whether ImageJ resets the processor's display range to its new pixel
+    /// range after `operation`: ImageMath's Min, Max (16- and 32-bit) and
+    /// Abs, NaN Background, and a full-range 16-bit inversion. Run on one
+    /// plane of a stack, this is the image's display range.
+    public static func resetsDisplayRange(
+        _ operation: Operation, type: PixelType, signed16: Bool, fullRange16BitInversions: Bool = false
+    ) -> Bool {
+        switch operation {
+        case .min, .max: type == .gray16 || type == .gray32Float
+        case .abs: type == .gray32Float || signed16
+        case .nanBackground: type == .gray32Float
+        case .invert: type == .gray16 && fullRange16BitInversions
+        default: false
+        }
+    }
+
+    /// The display range ImageJ resets to: the plane's range of values.
+    public static func resetRange(_ plane: Plane) -> ClosedRange<Double> { ImageJRules.resetRange(plane) }
+
     public static func apply(
         _ operation: Operation,
         to image: Hyperstack,
-        fullRange16BitInversions: Bool = false
+        fullRange16BitInversions: Bool = false,
+        region: FilterRegion? = nil
     ) -> Hyperstack {
         let type = image.pixelType
         let signed = type == .gray16 && ImageJRules.isSigned16(image.calibration)
         let c = image.dimensions.channels
-        let planes = image.stack.planes.enumerated().map { k, plane in
+        let width = image.width
+        let originals = image.stack.planes
+        var planes = originals.enumerated().map { k, plane in
             apply(
                 operation, to: plane, displayRange: image.channels[k % c].displayRange, signed16: signed,
-                fullRange16BitInversions: fullRange16BitInversions)
+                fullRange16BitInversions: fullRange16BitInversions, width: width, rect: region?.rect)
+        }
+        func restoreOutsideMask() {
+            guard let region else { return }
+            for k in planes.indices {
+                planes[k] = region.restoringOutsideMask(planes[k], snapshot: originals[k], width: width)
+            }
         }
         var channels = image.channels
         if planes.count == 1 {
-            let reset: Bool
-            switch operation {
-            case .min, .max: reset = type == .gray16 || type == .gray32Float
-            case .abs: reset = type == .gray32Float || signed
-            case .nanBackground: reset = type == .gray32Float
-            case .invert: reset = type == .gray16 && fullRange16BitInversions
-            default: reset = false
+            if resetsDisplayRange(operation, type: type, signed16: signed, fullRange16BitInversions: fullRange16BitInversions) {
+                channels[0].displayRange = ImageJRules.resetRange(planes[0])
             }
-            if reset { channels[0].displayRange = ImageJRules.resetRange(planes[0]) }
+            restoreOutsideMask()
         } else if operation == .invert, type == .gray16 {
+            restoreOutsideMask()
             channels[0].displayRange = ImageJRules.resetRange(planes[0])
+        } else {
+            restoreOutsideMask()
         }
         return ImageJRules.image(
             like: image, planes: planes, labels: image.stack.labels, dimensions: image.dimensions,

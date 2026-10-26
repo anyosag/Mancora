@@ -1,5 +1,6 @@
 import AppKit
 import MancoraCommands
+import MancoraCore
 import Observation
 import SwiftUI
 import UniformTypeIdentifiers
@@ -29,6 +30,54 @@ final class AppRecorder {
     func recordSave(_ url: URL) {
         guard isRecording else { return }
         recorder.recordLine("saveAs(\"Tiff\", \"\(MacroRecorder.escape(url.path))\");")
+    }
+
+    func recordLine(_ line: String) {
+        guard isRecording else { return }
+        recorder.recordLine(line)
+    }
+
+    /// A selection made with a tool, as ImageJ's Recorder writes it.
+    func recordSelection(_ roi: Roi?) {
+        guard isRecording else { return }
+        guard let roi else {
+            recorder.record("Select None", options: MacroOptions(""))
+            return
+        }
+        func ints(_ points: [Roi.FloatPoint]) -> String {
+            points.map { "\(Int($0.x)),\(Int($0.y))" }.joined(separator: ",")
+        }
+        switch roi.shape {
+        case .rectangle(let r, let corner):
+            guard case .integer(let x, let y, let w, let h) = r else { return }
+            recorder.recordLine("makeRectangle(\(x), \(y), \(w), \(h)" + (corner > 0 ? ", \(corner));" : ");"))
+        case .oval(let r):
+            guard case .integer(let x, let y, let w, let h) = r else { return }
+            recorder.recordLine("makeOval(\(x), \(y), \(w), \(h));")
+        case .line(let l):
+            recorder.recordLine("makeLine(\(Int(l.x1)), \(Int(l.y1)), \(Int(l.x2)), \(Int(l.y2)));")
+        case .polygon(let p):
+            let points = p.vertices.floatPoints
+            switch p.kind {
+            case .angle:
+                let xs = points.map { String(Int($0.x)) }.joined(separator: ",")
+                let ys = points.map { String(Int($0.y)) }.joined(separator: ",")
+                recorder.recordLine("makeSelection(\"angle\",newArray(\(xs)),newArray(\(ys)));")
+            case .polyline, .freeline: recorder.recordLine("makeLine(\(ints(points)));")
+            default: recorder.recordLine("makePolygon(\(ints(points)));")
+            }
+        case .points(let p):
+            let points = p.vertices.floatPoints
+            if points.count == 1, let only = points.first {
+                recorder.recordLine("makePoint(\(Int(only.x)), \(Int(only.y)));")
+            } else {
+                let xs = points.map { String(Int($0.x)) }.joined(separator: ",")
+                let ys = points.map { String(Int($0.y)) }.joined(separator: ",")
+                recorder.recordLine("makeSelection(\"point\",newArray(\(xs)),newArray(\(ys)));")
+            }
+        case .opaque:
+            break
+        }
     }
 
     func clear() { recorder = MacroRecorder() }

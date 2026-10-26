@@ -13,7 +13,26 @@ public struct OpenImage: Sendable {
     public var frame = 0
     /// The threshold set on the image (ImageJ's `getMinThreshold()` and
     /// `getMaxThreshold()`, in raw values), or `nil`.
-    public var threshold: ThresholdLevels?
+    public var threshold: ThresholdLevels? {
+        didSet { thresholdIsBinary = false }
+    }
+    /// Whether ``threshold`` is the invisible one (`NO_LUT_UPDATE`) that
+    /// Convert to Mask, Make Binary and the binary commands leave, which the
+    /// next filter run on the image clears (`resetBinaryThreshold`).
+    public private(set) var thresholdIsBinary = false
+
+    /// `ImageProcessor.setThreshold(level, level, NO_LUT_UPDATE)`, as a binary
+    /// image's processor gets it.
+    public mutating func setBinaryThreshold(_ level: Double) {
+        threshold = ThresholdLevels(lower: level, upper: level)
+        thresholdIsBinary = true
+    }
+
+    /// `ImageProcessor.resetBinaryThreshold()`: removes an invisible
+    /// one-level threshold, which PlugInFilters do after changing an image.
+    public mutating func resetBinaryThreshold() {
+        if thresholdIsBinary, let t = threshold, t.lower == t.upper { threshold = nil }
+    }
 
     public var title: String { image.title }
 

@@ -23,6 +23,9 @@ final class HelperConnection: @unchecked Sendable {
     private let process = Process()
     private let input: FileHandle
     private let lock = NSLock()
+    /// Held while a request is written: a line longer than the pipe holds goes
+    /// in pieces, and another request's pieces mustn't come between them.
+    private let writeLock = NSLock()
     // Guarded by `lock`.
     private var waiting: [Int: CheckedContinuation<Data, any Error>] = [:]
     private var exitStatus: Int32?
@@ -89,6 +92,8 @@ final class HelperConnection: @unchecked Sendable {
             waiting[id] = continuation
             lock.unlock()
             do {
+                writeLock.lock()
+                defer { writeLock.unlock() }
                 try input.write(contentsOf: line + Data([0x0A]))
             } catch {
                 fail(id: id, with: BridgeError.helperExited(status: -1))

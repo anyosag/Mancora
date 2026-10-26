@@ -220,22 +220,6 @@ struct BridgeIntegrationTests {
         }
     }
 
-    /// A request that times out stops its helper, so the next one doesn't
-    /// wait behind it.
-    @Test func aTimedOutRequestRestartsTheHelper() async throws {
-        let first = try BridgeFixtures.bridge()
-        var config = await first.configuration
-        config.timeoutSeconds = 3
-        let bridge = Bridge(configuration: config)
-        await #expect(throws: BridgeError.timedOut(seconds: 3)) {
-            try await bridge.runMacro("wait(60000);", images: [])
-        }
-        let result = try await bridge.runMacro("return \"back\";", images: [])
-        #expect(result.value == "back")
-        #expect(await bridge.launchCount == 2)
-        await bridge.stop()
-    }
-
     @Test func recoversWhenTheHelperIsKilled() async throws {
         let bridge = try BridgeFixtures.bridge()
         try await bridge.start()
@@ -254,6 +238,92 @@ struct BridgeIntegrationTests {
         let commands = try await bridge.commands()
         #expect(!commands.isEmpty)
         #expect(await bridge.launchCount == 3)
+        await bridge.stop()
+    }
+
+    /// A request that times out leaves its helper busy with it; the helper is
+    /// stopped, so the next request gets a new one instead of queueing behind it.
+    @Test func aTimedOutRequestDoesNotHoldUpTheNext() async throws {
+        var config = try await BridgeFixtures.bridge().configuration
+        config.timeoutSeconds = 5
+        let bridge = Bridge(configuration: config)
+        try await bridge.start()
+        await #expect(throws: BridgeError.timedOut(seconds: 5)) { try await bridge.runMacro("wait(15000);") }
+        #expect(try await !bridge.commands().isEmpty)
+        #expect(await bridge.launchCount == 2)
+        await bridge.stop()
+    }
+
+    /// Requests waiting on a helper that dies are all retried on one new helper.
+    @Test func concurrentRequestsRetryOnOneNewHelper() async throws {
+        let bridge = try BridgeFixtures.bridge()
+        try await bridge.start()
+        let pid = try #require(await bridge.helperProcessIdentifier)
+        async let a = bridge.runMacro("wait(2000); return \"a\";")
+        async let b = bridge.runMacro("wait(2000); return \"b\";")
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        #if !os(Windows)
+        kill(pid, SIGKILL)
+        #endif
+        let values = try await [a, b].map(\.value)
+        #expect(values == ["a", "b"])
+        #expect(await bridge.launchCount == 2)
+        await bridge.stop()
+    }
+
+    /// Requests sent at once reach the helper whole, however long they are.
+    @Test func concurrentLargeRequestsStayWhole() async throws {
+        let bridge = try BridgeFixtures.bridge()
+        try await bridge.start()
+        let comment = "// " + String(repeating: "x", count: 200_000) + "\n"
+        async let busy = bridge.runMacro("wait(1500); return \"busy\";")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        async let b = bridge.runMacro(comment + "return \"b\";")
+        async let c = bridge.runMacro(comment + "return \"c\";")
+        async let d = bridge.runMacro(comment + "return \"d\";")
+        let values = try await [busy, b, c, d].map(\.value)
+        #expect(values == ["busy", "b", "c", "d"])
+        await bridge.stop()
+    }
+
+    /// Titles and paths outside ASCII reach Java intact even when Mancora runs
+    /// in a locale that isn't UTF-8 (where Java's file names would be ASCII).
+    @Test func unicodeTitlesAndPathsInAnyLocale() async throws {
+        var config = try await BridgeFixtures.bridge().configuration
+        config.environment["LC_ALL"] = "C"
+        let bridge = Bridge(configuration: config)
+        var image = fixture
+        image.title = "größe ü 😀.tif"
+        let result = try await bridge.runMacro("print(getTitle()); run(\"Invert\", \"stack\");", images: [image])
+        #expect(result.log.contains("größe ü 😀.tif"))
+        let output = try #require(result.images.first)
+        #expect(output.title == "größe ü 😀.tif")
+        #expect(output.replacesInput == 0)
+
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("mancora open é \(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let pgm = folder.appendingPathComponent("rämp ü.pgm")
+        try Data(Array("P5\n2 1\n255\n".utf8) + [10, 20]).write(to: pgm)
+        let opened = try await bridge.open(pgm.path)
+        #expect(opened.images.first?.title == "rämp ü.pgm")
+        #expect(opened.images.first?.image.stack[0] == .gray8([10, 20]))
+        await bridge.stop()
+    }
+
+    /// Titles reach ImageJ, and come back, as they are, including ones no
+    /// file name can hold.
+    @Test func titlesNoFileNameCanHold() async throws {
+        let bridge = try BridgeFixtures.bridge()
+        for title in ["cells: a/b?", "..", String(repeating: "長", count: 100) + ".tif"] {
+            var image = fixture
+            image.title = title
+            let result = try await bridge.runMacro("print(\"title=\" + getTitle()); run(\"Invert\", \"stack\");", images: [image])
+            #expect(result.log.contains("title=" + title), "\(result.log)")
+            let output = try #require(result.images.first)
+            #expect(output.title == title)
+            #expect(output.replacesInput == 0)
+        }
         await bridge.stop()
     }
 
@@ -303,6 +373,36 @@ struct BridgeIntegrationTests {
         } catch let error as BridgeError {
             #expect(error.description.contains("Bio-Formats isn't installed"), "\(error)")
         }
+        await bridge.stop()
+    }
+
+    @Test(.enabled(if: hasDisplay)) func dialogsAreDescribedForNativeForms() async throws {
+        let bridge = try BridgeFixtures.bridge()
+        // Gaussian Blur on a calibrated stack: sigma, scaled units, a preview, and the stack question.
+        let blur = try await bridge.describeDialog("Gaussian Blur...", images: [fixture])
+        let dialog = try #require(blur.dialogs.first, "no dialog")
+        #expect(dialog.title == "Gaussian Blur...")
+        #expect(blur.supportsPreview)
+        let sigma = try #require(dialog.fields.first { $0.key == "sigma" }, "\(dialog.fields)")
+        #expect(sigma.kind == .number)
+        #expect(sigma.label.hasPrefix("Sigma"))
+        #expect(Double(sigma.value ?? "") != nil)
+        #expect(dialog.fields.contains { $0.key == "scaled" && $0.kind == .checkbox })
+        #expect(blur.asksForStack)
+        #expect(blur.options(["sigma": "3.5", "scaled": "false"], processStack: true) == "sigma=3.5 stack")
+
+        // Analyze Particles: text fields, a choice, checkboxes, keys as ImageJ's recorder writes them.
+        let mask = try Hyperstack(
+            title: "mask.tif", stack: ImageStack(width: 8, height: 8, planes: [.gray8((0..<64).map { $0 % 9 == 0 ? 255 : 0 })]))
+        let particles = try await bridge.describeDialog("Analyze Particles...", images: [mask])
+        let fields = try #require(particles.dialogs.first?.fields)
+        #expect(fields.first { $0.key == "size" }?.kind == .string)
+        #expect(fields.first { $0.key == "show" }?.items?.contains("Outlines") == true)
+        #expect(fields.contains { $0.key == "summarize" && $0.kind == .checkbox })
+        #expect(!particles.asksForStack)
+
+        // A command without a dialog.
+        #expect(try await bridge.describeDialog("Invert", images: [mask]).dialogs.isEmpty)
         await bridge.stop()
     }
 

@@ -323,9 +323,17 @@ public final class PluginCollection {
 
     static func join(_ files: [PluginFile]) -> String { files.map(\.filename).joined(separator: ", ") }
 
-    /// The download URL of a file's current version.
+    /// The download URL of a file's current version: the site's URL, the file
+    /// name and `-<timestamp>`. The name is percent-encoded where a URL path
+    /// needs it (spaces become `%20`, as in the updater's `getURL`), so a `#`,
+    /// `?` or `%` in it doesn't start a fragment, a query or an escape.
     public func url(of file: PluginFile) -> String? {
         guard let name = file.updateSite, let site = site(named: name, evenDisabled: false) else { return nil }
-        return site.url + file.filename.replacingOccurrences(of: " ", with: "%20") + "-\(file.timestamp)"
+        let path = file.filename.addingPercentEncoding(withAllowedCharacters: Self.urlPathCharacters) ?? file.filename
+        return site.url + path + "-\(file.timestamp)"
     }
+
+    /// What RFC 3986 lets a path hold unencoded: unreserved and sub-delimiter characters, `:`, `@` and `/`.
+    static let urlPathCharacters = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~!$&'()*+,;=:@/")
 }

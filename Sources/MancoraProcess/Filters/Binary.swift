@@ -40,12 +40,27 @@ public struct BinaryOptions: Sendable, Hashable {
     /// eroding, so objects don't erode from the image edge. Dilation always
     /// treats them as background.
     public var padEdges: Bool
+    /// For Outline only: the image is shown with an inverted LUT, which
+    /// `BinaryProcessor.outline` takes as a background of 0. (Outline uses
+    /// `blackBackground` as ImageJ's setting, without swapping it.)
+    public var invertedLUT: Bool
+    /// For Outline with Black background only: ImageJ inverts the plane,
+    /// outlines it and inverts it back, but the outline reads the plane as
+    /// it was before the first inversion when ImageJ holds a snapshot of it
+    /// (snapshot copy mode): for a single image, and for a stack plane with
+    /// a non-rectangular selection.
+    public var outlineReadsSnapshot: Bool
 
-    public init(blackBackground: Bool, iterations: Int = 1, count: Int = 1, padEdges: Bool = false) {
+    public init(
+        blackBackground: Bool, iterations: Int = 1, count: Int = 1, padEdges: Bool = false, invertedLUT: Bool = false,
+        outlineReadsSnapshot: Bool = false
+    ) {
         self.blackBackground = blackBackground
         self.iterations = iterations
         self.count = count
         self.padEdges = padEdges
+        self.invertedLUT = invertedLUT
+        self.outlineReadsSnapshot = outlineReadsSnapshot
     }
 
     var foreground: UInt8 { blackBackground ? 255 : 0 }
@@ -60,29 +75,41 @@ extension Plane {
     /// other values follow ImageJ's processors, which compare pixels with the
     /// foreground and background values.
     ///
+    /// With `rect` (a selection's bounds, within the plane), erode, dilate,
+    /// open, close and outline change only the pixels ImageJ writes for the
+    /// rectangle (see `Plane.smoothed(width:rect:)`; Outline leaves the
+    /// image edge alone), reading the pixels around it. Fill Holes and
+    /// Skeletonize always work on the whole plane, as in ImageJ.
+    ///
     /// - Throws: ``FilterError/unsupportedPixelType(_:expected:)`` unless
     ///   the plane is 8-bit grayscale.
-    public func binary(_ operation: BinaryOperation, options: BinaryOptions, width: Int) throws(FilterError) -> Plane {
+    public func binary(
+        _ operation: BinaryOperation, options: BinaryOptions, width: Int, rect: RoiBounds? = nil
+    ) throws(FilterError) -> Plane {
         guard case .gray8(let pixels) = self else {
             throw .unsupportedPixelType(pixelType, expected: .gray8)
         }
         let height = filterHeight(width: width)
         guard count > 0 else { return self }
+        let rect = rect ?? .whole(width: width, height: height)
         var mask = BinaryMask(pixels: pixels, width: width, height: height)
+        let area = rect.covers(width: width, height: height) ? nil : ByteFilterArea(rect: rect, width: width, height: height)
         let fg = options.foreground, bg = options.background
         switch operation {
         case .erode:
-            mask.iterate(.erode, options)
+            mask.iterate(.erode, options, area)
         case .dilate:
-            mask.iterate(.dilate, options)
+            mask.iterate(.dilate, options, area)
         case .open:
-            mask.iterate(.erode, options)
-            mask.iterate(.dilate, options)
+            mask.iterate(.erode, options, area)
+            mask.iterate(.dilate, options, area)
         case .close:
-            mask.iterate(.dilate, options)
-            mask.iterate(.erode, options)
+            mask.iterate(.dilate, options, area)
+            mask.iterate(.erode, options, area)
         case .outline:
-            mask.outline(background: bg)
+            mask.outline(
+                rect: rect, blackBackground: options.blackBackground, invertedLUT: options.invertedLUT,
+                readsSnapshot: options.outlineReadsSnapshot)
         case .fillHoles:
             mask.fillHoles(foreground: fg, background: bg)
         case .skeletonize:
@@ -117,18 +144,19 @@ struct BinaryMask {
 
     enum Morphology { case erode, dilate }
 
-    mutating func iterate(_ op: Morphology, _ options: BinaryOptions) {
+    mutating func iterate(_ op: Morphology, _ options: BinaryOptions, _ area: ByteFilterArea? = nil) {
         var i = 0
         while i < options.iterations {
-            morph(op, count: options.count, background: options.background, padEdges: options.padEdges)
+            morph(op, count: options.count, background: options.background, padEdges: options.padEdges, area: area)
             i += 1
         }
     }
 
-    /// `ByteProcessor.filter(ERODE or DILATE)` with `binaryCount = count`.
-    /// Out-of-image pixels are background, or foreground when padding
-    /// erosion (`getEdgePixel0` and `getEdgePixel1`).
-    mutating func morph(_ op: Morphology, count: Int, background bg: UInt8, padEdges: Bool) {
+    /// `ByteProcessor.filter(ERODE or DILATE)` with `binaryCount = count`,
+    /// on the pixels of `area` (every pixel for `nil`). Out-of-image pixels
+    /// are background, or foreground when padding erosion (`getEdgePixel0`
+    /// and `getEdgePixel1`).
+    mutating func morph(_ op: Morphology, count: Int, background bg: UInt8, padEdges: Bool, area: ByteFilterArea? = nil) {
         let fg = 255 - bg
         let pad = op == .erode && padEdges ? fg : bg
         let pw = width + 2
@@ -144,6 +172,7 @@ struct BinaryMask {
             pixels.withUnsafeMutableBufferPointer { out in
                 for y in 0..<height {
                     for x in 0..<width {
+                        if let area, !area.contains(x, y) { continue }
                         let t = y * pw + x, m = t + pw, b = m + pw
                         if src[m + 1] == keep {
                             out[y * width + x] = keep
@@ -165,22 +194,40 @@ struct BinaryMask {
         }
     }
 
-    /// `BinaryProcessor.outline` on the inner pixels (with a black
-    /// background, Binary inverts around it, which comes to the same).
-    mutating func outline(background bg: UInt8) {
-        guard width > 2, height > 2 else { return }
-        let src = pixels
-        for y in 1..<(height - 1) {
-            for x in 1..<(width - 1) {
-                let p = y * width + x
-                guard src[p] != bg else { continue }
-                if src[p - width - 1] != bg && src[p - width] != bg && src[p - width + 1] != bg
-                    && src[p - 1] != bg && src[p + 1] != bg
-                    && src[p + width - 1] != bg && src[p + width] != bg && src[p + width + 1] != bg
-                {
-                    pixels[p] = bg
+    /// `Binary.outline`: with Black background, `ip.invert()` on `rect`,
+    /// then `BinaryProcessor.outline` on the rectangle's inner part (off the
+    /// image edge), whose background is 255 (0 under an inverted LUT), then
+    /// `ip.invert()` again. The outline reads `getPixelsCopy()`: the
+    /// snapshot taken before the first inversion when `readsSnapshot`, the
+    /// pixels as they are otherwise.
+    mutating func outline(rect: RoiBounds, blackBackground: Bool, invertedLUT: Bool, readsSnapshot: Bool) {
+        let original = pixels
+        if blackBackground { invert(rect) }
+        let src = readsSnapshot ? original : pixels
+        let bg: UInt8 = invertedLUT ? 0 : 255
+        let area = ByteFilterArea(rect: rect, width: width, height: height)
+        if area.xMin <= area.xMax && area.yMin <= area.yMax {
+            for y in area.yMin...area.yMax {
+                for x in area.xMin...area.xMax {
+                    let p = y * width + x
+                    var v = src[p]
+                    if v != bg && src[p - width - 1] != bg && src[p - width] != bg && src[p - width + 1] != bg
+                        && src[p - 1] != bg && src[p + 1] != bg
+                        && src[p + width - 1] != bg && src[p + width] != bg && src[p + width + 1] != bg
+                    {
+                        v = bg
+                    }
+                    pixels[p] = v
                 }
             }
+        }
+        if blackBackground { invert(rect) }
+    }
+
+    /// `ByteProcessor.invert()` on a rectangle: `255 - v`.
+    mutating func invert(_ rect: RoiBounds) {
+        for y in rect.y..<(rect.y + rect.height) {
+            for x in rect.x..<(rect.x + rect.width) { pixels[y * width + x] = 255 - pixels[y * width + x] }
         }
     }
 

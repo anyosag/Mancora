@@ -24,15 +24,30 @@ extension Plane {
     ///     `nil` uses ImageJ's defaults: 0.002 for 8-bit and RGB, 0.0002 for
     ///     16 and 32-bit.
     ///   - width: The plane's width in pixels.
-    public func gaussianBlurred(sigmaX: Double, sigmaY: Double, accuracy: Double? = nil, width: Int) -> Plane {
+    ///   - rect: A selection's bounds, within the plane, or `nil` for the
+    ///     whole plane. Only the rectangle changes; ImageJ blurs rows above
+    ///     and below it in x too (5 sigmas of them) for the y pass to read,
+    ///     then puts them back (`resetOutOfRoi`), and reads the pixels around
+    ///     it as they are.
+    public func gaussianBlurred(
+        sigmaX: Double, sigmaY: Double, accuracy: Double? = nil, width: Int, rect: RoiBounds? = nil
+    ) -> Plane {
         let height = filterHeight(width: width)
         guard count > 0, sigmaX > 0 || sigmaY > 0 else { return self }
+        let r = rect ?? .whole(width: width, height: height)
+        guard !r.isEmpty else { return self }
         let accuracy = accuracy ?? (pixelType == .gray8 || pixelType == .rgb8 ? 0.002 : 0.0002)
+        let extraLines = Int(JavaNumerics.int32((5 * sigmaY).rounded(.up)))
+        let hasRoi = r.height != height && sigmaX > 0 && sigmaY > 0
         var channels = FloatChannels.split(self)
         for c in channels.indices {
+            let original = hasRoi ? channels[c] : []
             if sigmaX > 0 {
+                let lineFrom = max(r.y - extraLines, 0), lineTo = min(r.y + r.height + extraLines, height)
                 channels[c].withUnsafeMutableBufferPointer { pixels in
-                    GaussianBlur.blurRows(pixels, width: width, height: height, sigma: sigmaX, accuracy: accuracy)
+                    GaussianBlur.blurLines(
+                        pixels, length: width, lines: lineFrom..<max(lineTo, lineFrom), write: r.x..<(r.x + r.width),
+                        sigma: sigmaX, accuracy: accuracy)
                 }
             }
             if sigmaY > 0 {
@@ -40,9 +55,17 @@ extension Plane {
                 // the same arithmetic as ImageJ's column pass, cache-friendly.
                 var columns = GaussianBlur.transposed(channels[c], width: width, height: height)
                 columns.withUnsafeMutableBufferPointer { pixels in
-                    GaussianBlur.blurRows(pixels, width: height, height: width, sigma: sigmaY, accuracy: accuracy)
+                    GaussianBlur.blurLines(
+                        pixels, length: height, lines: r.x..<(r.x + r.width), write: r.y..<(r.y + r.height),
+                        sigma: sigmaY, accuracy: accuracy)
                 }
                 channels[c] = GaussianBlur.transposed(columns, width: height, height: width)
+            }
+            if hasRoi {  // resetOutOfRoi: the rows above and below that the x pass blurred
+                let rows = Array(max(r.y - extraLines, 0)..<r.y) + Array((r.y + r.height)..<min(r.y + r.height + extraLines, height))
+                for y in rows {
+                    for x in r.x..<(r.x + r.width) { channels[c][y * width + x] = original[y * width + x] }
+                }
             }
         }
         return FloatChannels.merge(channels, as: pixelType)
@@ -63,20 +86,22 @@ extension ImageStack {
     }
 }
 
-/// A port of ImageJ 1.54p's `ij.plugin.filter.GaussianBlur`, for whole
-/// planes. Float arithmetic follows the Java code operation by operation, so
+/// A port of ImageJ 1.54p's `ij.plugin.filter.GaussianBlur`, for a plane
+/// or a rectangle of it. Float arithmetic follows the Java code operation by operation, so
 /// results are bit-identical.
 enum GaussianBlur {
     static let upscaleKernelRadius = 2
     static let minDownscaledSigma = 4.0
 
-    /// `blur1Direction(ip, sigma, accuracy, xDirection: true, 0)` for the
-    /// whole image: blurs every row in place.
-    static func blurRows(
-        _ pixels: UnsafeMutableBufferPointer<Float>, width: Int, height: Int, sigma: Double, accuracy: Double
+    /// `blur1Direction(ip, sigma, accuracy, xDirection: true, …)`: blurs
+    /// rows `lines` of a `length`-wide image in place, writing points
+    /// `write` of each (and reading as far around them as the kernel needs).
+    static func blurLines(
+        _ pixels: UnsafeMutableBufferPointer<Float>, length: Int, lines: Range<Int>, write: Range<Int>, sigma: Double,
+        accuracy: Double
     ) {
-        let length = width, lines = height
-        let pointInc = 1, lineInc = width
+        let pointInc = 1, lineInc = length
+        let writeFrom = write.lowerBound, writeTo = write.upperBound
 
         let doDownscaling = sigma > 2 * minDownscaledSigma + 0.5
         let reduceBy = doDownscaling
@@ -85,9 +110,14 @@ enum GaussianBlur {
         // downscaled pixels), so the Gaussian makes up the rest.
         let sigmaGauss = doDownscaling
             ? (sigma * sigma / Double(reduceBy * reduceBy) - 1.0 / 3.0 - 1.0 / 4.0).squareRoot() : sigma
-        let newLength = doDownscaling ? (length + reduceBy - 1) / reduceBy + 2 * (upscaleKernelRadius + 1) : length
-        let (kernel, kernelSum) = makeGaussianKernel(sigma: sigmaGauss, accuracy: accuracy, maxRadius: newLength)
-        let unscaled0 = -(upscaleKernelRadius + 1) * reduceBy  // input point at cache index 0
+        let maxLength = doDownscaling ? (length + reduceBy - 1) / reduceBy + 2 * (upscaleKernelRadius + 1) : length
+        let (kernel, kernelSum) = makeGaussianKernel(sigma: sigmaGauss, accuracy: accuracy, maxRadius: maxLength)
+        let kRadius = kernel.count * reduceBy  // the kernel radius after upscaling
+        let readFrom = writeFrom - kRadius < 0 ? 0 : writeFrom - kRadius
+        let readTo = writeTo + kRadius > length ? length : writeTo + kRadius
+        let newLength = doDownscaling
+            ? (readTo - readFrom + reduceBy - 1) / reduceBy + 2 * (upscaleKernelRadius + 1) : length
+        let unscaled0 = readFrom - (upscaleKernelRadius + 1) * reduceBy  // input point at cache index 0
         let downscaleKernel = doDownscaling ? makeDownscaleKernel(reduceBy) : []
         let upscaleKernel = doDownscaling ? makeUpscaleKernel(reduceBy) : []
 
@@ -100,7 +130,7 @@ enum GaussianBlur {
         upscaleKernel.withUnsafeBufferPointer { upKernel in
         cache1.withUnsafeMutableBufferPointer { cache1 in
         cache2.withUnsafeMutableBufferPointer { cache2 in
-            for line in 0..<lines {
+            for line in lines {
                 let pixel0 = line * lineInc
                 if doDownscaling {
                     downscaleLine(
@@ -111,16 +141,18 @@ enum GaussianBlur {
                         kernelSum: kernSum, writeFrom: 1, writeTo: newLength - 1, point0: 0, pointInc: 1)
                     upscaleLine(
                         cache: cache2, pixels: base, kernel: upKernel, reduceBy: reduceBy, pixel0: pixel0,
-                        unscaled0: unscaled0, writeTo: length, pointInc: pointInc)
+                        unscaled0: unscaled0, writeFrom: writeFrom, writeTo: writeTo, pointInc: pointInc)
                 } else {
-                    var p = pixel0
-                    for i in 0..<length {
+                    // Only the points the kernel reaches are read; the rest of
+                    // the cache is never used (as in ImageJ).
+                    var p = pixel0 + readFrom * pointInc
+                    for i in readFrom..<readTo {
                         cache1[i] = base[p]
                         p += pointInc
                     }
                     convolveLine(
                         input: UnsafeBufferPointer(cache1), output: base, kernel: kern, kernelSum: kernSum,
-                        writeFrom: 0, writeTo: length, point0: pixel0, pointInc: pointInc)
+                        writeFrom: writeFrom, writeTo: writeTo, point0: pixel0, pointInc: pointInc)
                 }
             }
         }
@@ -196,13 +228,14 @@ enum GaussianBlur {
         return kernel
     }
 
-    /// `upscaleLine`: scales the convolved line back up into the image.
+    /// `upscaleLine`: scales the convolved line back up into points
+    /// `writeFrom..<writeTo` of the image's line.
     static func upscaleLine(
         cache: UnsafeMutableBufferPointer<Float>, pixels: UnsafeMutablePointer<Float>, kernel: UnsafeBufferPointer<Float>,
-        reduceBy: Int, pixel0: Int, unscaled0: Int, writeTo: Int, pointInc: Int
+        reduceBy: Int, pixel0: Int, unscaled0: Int, writeFrom: Int, writeTo: Int, pointInc: Int
     ) {
-        var p = pixel0
-        for xout in 0..<writeTo {
+        var p = pixel0 + pointInc * writeFrom
+        for xout in writeFrom..<writeTo {
             let xin = (xout - unscaled0 + reduceBy - 1) / reduceBy
             let x = reduceBy - 1 - (xout - unscaled0 + reduceBy - 1) % reduceBy
             pixels[p] = cache[xin - 2] * kernel[x] + cache[xin - 1] * kernel[x + reduceBy]

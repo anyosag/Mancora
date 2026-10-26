@@ -131,13 +131,21 @@ public struct URLSessionHTTPClient: HTTPClient {
         return (data, (http.value(forHTTPHeaderField: "Last-Modified")).flatMap(Self.httpDate))
     }
 
-    /// An RFC 7231 date: `Sun, 06 Nov 1994 08:49:37 GMT`.
+    /// An HTTP-date in any of the forms RFC 7231 §7.1.1.1 has recipients
+    /// accept (as Java's `URLConnection` does): `Sun, 06 Nov 1994 08:49:37 GMT`,
+    /// RFC 850's `Sunday, 06-Nov-94 08:49:37 GMT` and asctime's
+    /// `Sun Nov  6 08:49:37 1994`.
     public static func httpDate(_ text: String) -> Date? {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(identifier: "GMT")
-        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
-        return formatter.date(from: text)
+        // asctime pads a one-digit day with a second space.
+        let spaced = text.split(separator: " ").joined(separator: " ")
+        for format in ["EEE, dd MMM yyyy HH:mm:ss zzz", "EEEE, dd-MMM-yy HH:mm:ss zzz", "EEE MMM d HH:mm:ss yyyy"] {
+            formatter.dateFormat = format
+            if let date = formatter.date(from: spaced) { return date }
+        }
+        return nil
     }
 }
 

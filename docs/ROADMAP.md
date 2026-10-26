@@ -13,7 +13,7 @@ The root `Package.swift` holds platform-neutral code only:
 | Module | Purpose | May import |
 | --- | --- | --- |
 | `MancoraCore` | Pixel model, stacks, hyperstacks, calibration, LUTs, `DisplayMapper`; later ROIs | Swift standard library, `FoundationEssentials` |
-| `MancoraIO` | `ByteReader`, LUT reader, TIFF reader and writer, virtual stacks; later OME-TIFF, OME-Zarr | Core, Support, `FoundationEssentials` |
+| `MancoraIO` | `ByteReader`, LUT reader, TIFF reader and writer, virtual stacks, ImageJ ZIP, PNG, GIF and table files, `ImageOpener` routing by file type; later OME-TIFF, OME-Zarr | Core, Support, `FoundationEssentials` |
 | `MancoraSupport` | Dependency-free building blocks: Inflate (zlib/gzip), SHA-256/SHA-1, SemVer | Swift standard library |
 | `MancoraUpdate` | Update checks against GitHub releases, verified downloads | Support, Foundation |
 | `MancoraProcess` | Filters, conversions, projections, pixel math; measurements (Phase 2) | Core |
@@ -212,6 +212,10 @@ passes.
 
 ### P6: Native formats
 
+- Done: ImageJ's TIFF-in-ZIP, PNG, GIF and animated GIF, and Results and
+  table files (`.csv`, `.xls`, `.tsv`), read and written as ImageJ 1.54p
+  does; `ImageOpener` routes files by ImageJ's file types and leaves
+  MetaMorph STK, Zeiss LSM and OME-TIFF to ImageJ or Bio-Formats.
 - OME-TIFF with pyramids, OME-Zarr 0.4/0.5 (zstd and blosc), CZI, LIF, ND2.
 
 **Exit:** the OME sample images open with the same dimensions, calibration

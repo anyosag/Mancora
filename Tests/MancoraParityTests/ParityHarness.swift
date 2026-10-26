@@ -178,6 +178,18 @@ enum ParityInput: String, Sendable {
     // Images with a selection, which ImageJ reads from the TIFF.
     case rectangleROI, roundedROI, ovalROI, polygonROI, subpixelPolygonROI, freehandROI, tracedROI, edgeROI, namedROI
     case binaryRectangleROI, binaryOvalROI
+    // "<input>+<selection>": an input above with a selection (see `withSelection`).
+    case gray8Rect = "gray8+rect", gray8Oval = "gray8+oval", gray8Polygon = "gray8+polygon"
+    case gray8NearEdge = "gray8+nearEdge", gray8Line = "gray8+line", gray8Point = "gray8+point"
+    case gray16Oval = "gray16+oval", gray16NearEdge = "gray16+nearEdge", gray16Polygon = "gray16+polygon"
+    case gray32Rect = "gray32+rect", gray32Oval = "gray32+oval", gray32NearEdge = "gray32+nearEdge"
+    case rgbRect = "rgb+rect", rgbOval = "rgb+oval", rgbPolygon = "rgb+polygon", rgbNearEdge = "rgb+nearEdge"
+    case stack8Oval = "stack8+oval", stack16Rect = "stack16+rect", stack32Polygon = "stack32+polygon"
+    case binaryPolygon = "binary+polygon", binaryNearEdge = "binary+nearEdge", binaryStackOval = "binaryStack+oval"
+    case calibratedOval = "calibrated+oval", calibratedRect = "calibrated+rect", hyperstackOval = "hyperstack+oval"
+    case gray16Freehand = "gray16+freehand", gray32Subpixel = "gray32+subpixel", rgbLine = "rgb+line"
+    // Odd shapes for geometry: one pixel wide or high, and an RGB stack.
+    case column8, row16, row32, columnRGB, stackRGB
     case fixtureHyperstack = "ij-hyperstack-16bit.tif"
     case fixtureFire = "ij-8bit-fire.tif"
 
@@ -191,6 +203,11 @@ enum ParityInput: String, Sendable {
         case .stack8: made = try Self.make("stack8.tif", .gray8, slices: 5)
         case .stack16: made = try Self.make("stack16.tif", .gray16, slices: 5)
         case .stack32: made = try Self.make("stack32.tif", .gray32Float, slices: 5)
+        case .column8: made = try Self.make("column8.tif", .gray8, width: 1)
+        case .row16: made = try Self.make("row16.tif", .gray16, height: 1)
+        case .row32: made = try Self.make("row32.tif", .gray32Float, height: 1)
+        case .columnRGB: made = try Self.make("columnRGB.tif", .rgb8, width: 1)
+        case .stackRGB: made = try Self.make("stackRGB.tif", .rgb8, slices: 4)
         case .hyperstack:
             made = try Self.make("hyperstack.tif", .gray16, channels: 2, slices: 3, frames: 2, composite: true)
         case .calibrated:
@@ -222,6 +239,8 @@ enum ParityInput: String, Sendable {
             made = image
         case .fixtureHyperstack, .fixtureFire:
             return try TIFFImporter.read(path: Parity.url("Tests/Fixtures/tiff/" + rawValue).path)
+        default:
+            made = try withSelection()
         }
         return try Parity.roundTrip(made)
     }
@@ -256,7 +275,8 @@ enum ParityInput: String, Sendable {
     }
 
     static func make(
-        _ title: String, _ type: PixelType, channels: Int = 1, slices: Int = 1, frames: Int = 1, composite: Bool = false
+        _ title: String, _ type: PixelType, channels: Int = 1, slices: Int = 1, frames: Int = 1, composite: Bool = false,
+        width: Int = Self.width, height: Int = Self.height
     ) throws -> Hyperstack {
         var random = SeededRandom(seed: UInt64(title.utf8.reduce(0) { $0 &* 31 &+ UInt64($1) }))
         let count = width * height

@@ -103,7 +103,9 @@ struct TIFFPage: Sendable {
         }
         tiffInfo = infoLines.isEmpty ? nil : infoLines.map { $0 + "\n" }.joined()
 
-        if let counts = try d.integers(TIFFTag.imageJMetadataCounts, r), let entry = d.entries[TIFFTag.imageJMetadata],
+        // TiffDecoder reads these tags wherever they point and skips records
+        // that don't check out, so neither tag being unreadable stops the image.
+        if let counts = try? d.integers(TIFFTag.imageJMetadataCounts, r), let entry = d.entries[TIFFTag.imageJMetadata],
             let data = try? r.slice(at: entry.valueOffset, count: entry.count)
         {
             imageJMetadata = ImageJMetadata(counts: counts, data: data, bigEndian: r.bigEndian)

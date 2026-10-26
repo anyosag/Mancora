@@ -204,39 +204,39 @@ extension Functions {
         }
         try interp.getRightParen()
         let lower = path.lowercased()
-        if lower.hasSuffix(".ijm") || lower.hasSuffix(".txt") || lower.hasSuffix(".csv") || lower.hasSuffix(".roi")
-            || lower.hasSuffix(".zip")
-        {
-            if lower.hasSuffix(".roi") {
-                do { try modifyImage { $0.roi = nil } } catch {}
-                let roi: Roi
-                do { roi = try RoiCodec.read(path: path) } catch { try interp.fail("\(error)") }
-                try modifyImage { $0.roi = roi }
-                return
-            }
-            if lower.hasSuffix(".zip") {
-                try roiManagerOpen(path)
-                return
-            }
-            try unsupported("open(\"\(Self.javaFileName(path))\")")
-        }
-        var image: Hyperstack
+        // Opener.open sends text files and macros to the editor.
+        if lower.hasSuffix(".ijm") || lower.hasSuffix(".txt") { try unsupported("open(\"\(Self.javaFileName(path))\")") }
+        // Opener.open, routed as Opener.getFileType tells formats apart.
+        let contents: ImageOpener.Contents
         do {
-            image = try TIFFImporter.read(path: path)
+            contents = try ImageOpener.open(path: path)
+        } catch .unsupported {
+            try unsupported("open(\"\(Self.javaFileName(path))\")")
+        } catch .unreadable(_, let reason) where reason == "file not found" {
+            try interp.fail("File not found:\n" + path)
         } catch {
-            if !lower.hasSuffix(".tif") && !lower.hasSuffix(".tiff") {
-                try unsupported("open(\"\(Self.javaFileName(path))\")")
-            }
-            try interp.fail("File is not in a supported format, a reader\nplugin is not available, or it was not found.\n" + path)
+            try interp.fail(
+                "File is not in a supported format, a reader\nplugin is not available, or it was not found.\n" + path
+                    + "\n(\(error))")
         }
-        image.properties["Mancora.path"] = path
-        session.add(image)
-        if !n.isNaN {
-            try modifyImage { open in
-                let index = max(0, min(open.image.stack.count - 1, jIntI(n) - 1))
-                let p = open.image.dimensions.position(ofPlane: index)
-                (open.channel, open.slice, open.frame) = (p.channel, p.slice, p.frame)
+        switch contents {
+        case .image(var image):
+            image.properties["Mancora.path"] = path
+            session.add(image)
+            if !n.isNaN {
+                try modifyImage { open in
+                    let index = max(0, min(open.image.stack.count - 1, jIntI(n) - 1))
+                    let p = open.image.dimensions.position(ofPlane: index)
+                    (open.channel, open.slice, open.frame) = (p.channel, p.slice, p.frame)
+                }
             }
+        case .rois:
+            try roiManagerOpen(path)
+        case .roi(let roi):
+            do { try modifyImage { $0.roi = nil } } catch {}
+            try modifyImage { $0.roi = roi }
+        case .table(let table, let title):
+            setTable(title, table)
         }
         session.lastDirectory = (Self.javaParent(path) ?? "") + Self.separator
         session.lastName = Self.javaFileName(path)
@@ -339,8 +339,19 @@ extension Functions {
         }
     }
 
-    func save(_ path: String) throws(MacroSignal) {
-        try saveImage(path, format: "tiff")
+    /// `IJ.save(path)`: the format the extension names (TIFF without one),
+    /// keeping the image's title.
+    func save(_ pathIn: String) throws(MacroSignal) {
+        var path = pathIn
+        let title = session.context.current?.title
+        if javaLastIndexOf(path, ".") < 0, title != nil { path += ".tif" }
+        let dot = javaLastIndexOf(path, ".")
+        guard dot >= 0 else {
+            try interp.fail(
+                "The file path passed to IJ.save() method or save()\nmacro function is missing the required extension.\n \n\"\(path)\"")
+        }
+        try saveImage(path, format: javaSubstring(path, dot + 1).lowercased())
+        if let title { try modifyImage { $0.image.title = title } }
     }
 
     func saveAs() throws(MacroSignal) {
@@ -354,41 +365,98 @@ extension Functions {
             oneArg = true
         }
         if oneArg && (format.contains(Self.separator) || format.contains("/")) {
-            try saveImage(format, format: "tiff")
+            try save(format)
             return
         }
         try saveImage(path ?? "", format: format.lowercased())
     }
 
+    /// `IJ.updateExtension`: replaces a short extension (unless it starts
+    /// with a digit) or adds one.
+    static func updateExtension(_ path: String, _ ext: String) -> String {
+        let dot = javaLastIndexOf(path, "."), sep = javaLastIndexOf(path, separator)
+        let length = path.utf16.count
+        if dot >= 0 && dot > sep && length - dot <= 5 {
+            if dot + 1 < length, let c = javaSubstring(path, dot + 1, dot + 2).first, c.isASCII, c.isNumber { return path + ext }
+            return javaSubstring(path, 0, dot) + ext
+        }
+        return path + ext
+    }
+
+    /// `IJ.saveAs(format, path)`: formats are told apart by the words in
+    /// their name, in ImageJ's order.
     private func saveImage(_ pathIn: String, format: String) throws(MacroSignal) {
         if pathIn.isEmpty { try unsupported("saveAs with a save dialog") }
         var path = pathIn
-        switch format {
-        case "tiff", "tif":
+        func write(_ format: ImageSaver.Format) throws(MacroSignal) -> String {
             let open = try image()
-            if !path.lowercased().hasSuffix(".tif") && !path.lowercased().hasSuffix(".tiff") { path += ".tif" }
-            do { try TIFFExporter.write(open.image, to: path) } catch { try interp.fail("\(error)") }
-            let title = Self.javaFileName(path)
+            let position = ImageSaver.Position(channel: open.channel, slice: open.slice, frame: open.frame)
+            do {
+                return try ImageSaver.write(open.image, to: path, format: format, position: position)
+            } catch .unsupported(let what) {
+                try unsupported("saveAs(\"\(format.rawValue)\") of \(what)")
+            } catch {
+                try interp.fail("\(error)")
+            }
+        }
+        if format.contains("tif") {
+            if !path.hasSuffix(".tiff") { path = Self.updateExtension(path, ".tif") }
+            let title = try write(.tiff)
             try modifyImage { $0.image.title = title }
-        case "results", "measurements":
-            if !path.contains(".") { path += ".csv" }
-            let text = ResultsFormatter.csv(session.context.results, decimalPlaces: session.context.settings.decimalPlaces)
-            do { try Data(text.utf8).write(to: URL(fileURLWithPath: path)) } catch { try interp.fail("\(error)") }
-        case "text":
+        } else if format.contains("jpeg") || format.contains("jpg") {
+            try unsupported("saveAs(\"Jpeg\")")
+        } else if format.contains("gif") {
+            // GifWriter.save leaves the title as it was.
+            path = Self.updateExtension(path, ".gif")
+            _ = try write(.gif)
+        } else if format.contains("text image") {
+            try unsupported("saveAs(\"Text Image\")")
+        } else if format.contains("text") || format.contains("txt") {
             try unsupported("saveAs(\"Text\")")
-        case "selection":
+        } else if format.contains("zip") {
+            path = Self.updateExtension(path, ".zip")
+            let title = try write(.zip)
+            try modifyImage { $0.image.title = title }
+        } else if ["raw", "avi", "bmp", "fits"].contains(where: format.contains) {
+            try unsupported("saveAs(\"\(format)\")")
+        } else if format.contains("png") {
+            path = Self.updateExtension(path, ".png")
+            let title = try write(.png)
+            try modifyImage { $0.image.title = title }
+        } else if format.contains("pgm") || format.contains("lut") {
+            try unsupported("saveAs(\"\(format)\")")
+        } else if format.contains("results") || format.contains("measurements") || format.contains("table") {
+            // MeasurementsWriter: the Results table, as ResultsTable.saveAs writes it; nothing when it's empty.
+            let rt = session.context.results
+            if rt.isEmpty && rt.columns.isEmpty { return }
+            try saveTable(rt, to: path, rowNumbers: rt.showsRowNumbers ?? true)
+        } else if format.contains("selection") || format.contains("roi") {
             let open = try image()
             guard let roi = open.roi else { try interp.fail("Selection required") }
-            if !path.hasSuffix(".roi") { path += ".roi" }
+            path = Self.updateExtension(path, ".roi")
             do {
                 try Data(RoiCodec.encode(roi)).write(to: URL(fileURLWithPath: path))
             } catch {
                 try interp.fail("\(error)")
             }
-        case "lut":
-            try unsupported("saveAs(\"LUT\")")
-        default:
-            try unsupported("saveAs(\"\(format)\")")
+        } else if format.contains("xy") || format.contains("coordinates") {
+            try unsupported("saveAs(\"XY Coordinates\")")
+        } else {
+            try interp.fail("Unsupported save() or saveAs() file format: \"\(format)\"\n \n\"\(path)\"")
+        }
+    }
+
+    /// `ResultsTable.saveAs`, numbers as the table shows them.
+    func saveTable(_ rt: ResultsTable, to path: String, rowNumbers: Bool) throws(MacroSignal) {
+        let places = session.context.settings.decimalPlaces
+        do {
+            try ResultsTableIO.save(rt, to: path, rowNumbers: rowNumbers) { value, fixed in
+                if value.isNaN { return "NaN" }
+                if !fixed && Double(jInt(value)) == value { return ImageJFormat.d2s(value, 0) }
+                return ImageJFormat.resultsTableD2S(value, places)
+            }
+        } catch {
+            try interp.fail("\(error)")
         }
     }
 
@@ -1281,6 +1349,7 @@ extension Functions {
             guard let path = try image().image.properties["Mancora.path"] else { return "" }
             return (Self.javaParent(path) ?? "") + Self.separator
         case "image.subtitle":
+            _ = try image()  // there's no window to give a subtitle in batch mode
             return ""
         default:
             break
@@ -1494,8 +1563,24 @@ extension Functions {
         maximum?.setValue(stats.max)
         std?.setValue(stats.standardDeviation)
         if let hist {
-            let histogram = Self.histogram(open.currentPlane, width: open.image.width, region: region) ?? []
+            var histogram = Self.histogram(open.currentPlane, width: open.image.width, region: region) ?? []
+            if !calibrated, case .gray16(let p) = open.currentPlane, stats.max >= 0, stats.max.isFinite {
+                // getRawStatistics of a 16-bit image: ShortStatistics.histogram16, from 0 to the maximum.
+                histogram = [Int](repeating: 0, count: Int(stats.max) + 1)
+                Self.forEachPixel(width: open.image.width, height: p.count / max(open.image.width, 1), region: region) {
+                    let v = Int(p[$0])
+                    if v < histogram.count { histogram[v] += 1 }
+                }
+            }
             hist.setArray(VariableArray(histogram.map { Variable(Double($0)) }))
+        }
+    }
+
+    /// Calls `body` with the index of each pixel in `region` (or the whole plane).
+    static func forEachPixel(width: Int, height: Int, region: MeasurementRegion?, _ body: (Int) -> Void) {
+        let r = region ?? MeasurementRegion(x: 0, y: 0, width: width, height: height)
+        for y in max(r.y, 0)..<max(max(r.y, 0), min(r.y + r.height, height)) {
+            for x in max(r.x, 0)..<max(max(r.x, 0), min(r.x + r.width, width)) where r.contains(x, y) { body(y * width + x) }
         }
     }
 

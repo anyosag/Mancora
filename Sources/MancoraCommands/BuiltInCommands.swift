@@ -1,4 +1,5 @@
 import MancoraCore
+import MancoraIO
 import MancoraProcess
 
 /// Commands Mancora implements natively, named as in ImageJ's menus.
@@ -6,6 +7,8 @@ enum BuiltInCommands {
     static var all: [CommandDefinition] {
         lutCommands + [invertLUT, enhanceContrast, rename, close, closeAll, duplicate, properties, setScale]
             + [setMeasurements, measure, clearResults, analyzeParticles] + FilterCommands.all + ProcessCommands.all + ThresholdCommands.all + EditCommands.all
+            + CropCommands.all + TransformCommands.all
+            + GeometryCommands.all
     }
 
     // MARK: Image ▸ Lookup Tables
@@ -57,28 +60,73 @@ enum BuiltInCommands {
 
     // MARK: Process ▸ Enhance Contrast
 
-    /// `ij.plugin.ContrastEnhancer` without `normalize` or `equalize`: sets
-    /// the current channel's display range from the saturated histogram.
+    /// `ij.plugin.ContrastEnhancer` without `equalize`: sets the current
+    /// channel's display range from the saturated histogram (of the
+    /// selection, if any), or with `normalize` (which `process_all` implies)
+    /// stretches the pixels to the full range.
     static let enhanceContrast = CommandDefinition("Enhance Contrast...", menu: "Process") { context, options in
         let name = "Enhance Contrast..."
-        guard !options.flag(forLabel: "normalize"), !options.flag(forLabel: "equalize") else {
-            throw CommandError.notNative(name)  // these change pixels; the bridge can run them
+        var text = options.text
+        if text.contains("normalize_all") { text = text.replacing("normalize_all", with: "process_all") }
+        let macro = MacroOptions(text)
+        guard !macro.flag(forLabel: "Equalize histogram") else {
+            throw CommandError.notNative(name)  // it changes pixels; the bridge can run it
         }
-        let saturated = options.number(forLabel: "saturated", default: ContrastEnhancer.defaultSaturated)
+        let saturated = min(max(macro.number(forLabel: "Saturated pixels:", default: ContrastEnhancer.defaultSaturated), 0), 100)
         try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in
-            let range: ClosedRange<Double>?
+            let image = open.image
+            guard image.pixelType != .rgb8 else { throw .notNative(name) }
+            // The histogram is the selection's (`ip.setRoi(imp.getRoi())`).
+            if let roi = open.roi, !roi.isArea { throw .notNative(name) }
+            let region = try FilterCommands.measurementRegion(open, name)
+            let filterRegion = try FilterCommands.selectionRegion(name, open)
+            let width = image.width
+            func selected(_ plane: Plane) -> Plane { region.map { plane.values(in: $0, width: width) } ?? plane }
+            // showDialog: a composite (several channels) counts as one image and has no Normalize.
+            let composite = image.channels.count > 1
+            let stackSize = composite ? 1 : image.stack.count
+            var normalize = !composite && macro.flag(forLabel: "Normalize")
+            let areaSelection = open.roi != nil && !composite
+            let updateSelectionOnly = areaSelection && !macro.flag(forLabel: "Update all when normalizing") && normalize
+            let processStack = stackSize > 1 && macro.flag(forLabel: "Process_all")
+            let useStack = stackSize > 1 && macro.flag(forLabel: "Use stack histogram")
+            if processStack { normalize = true }
+            let current = image.dimensions.planeIndex(channel: open.channel, slice: open.slice, frame: open.frame)
+            guard selected(image.stack[current]).count > 0 else { return }
             do {
-                range =
-                    options.flag(forLabel: "use") && open.image.stack.count > 1
-                    ? try ContrastEnhancer.displayRange(forStack: open.image.stack, saturated: saturated)
-                    : try ContrastEnhancer.displayRange(for: open.currentPlane, saturated: saturated)
+                let stackStatistics = useStack
+                    ? try ImageStatistics(stack: ImageStack(
+                        width: selected(image.stack[0]).count, height: 1, planes: image.stack.planes.map(selected)))
+                    : nil
+                for index in processStack ? Array(0..<image.stack.count) : [current] {
+                    let statistics = try stackStatistics ?? ImageStatistics(selected(image.stack[index]))
+                    if !normalize {
+                        guard let range = ContrastEnhancer.displayRange(for: statistics, saturated: saturated) else { continue }
+                        var display = open.image.channels[open.channel]
+                        display.displayRange = range
+                        open.image.setDisplay(display, forChannel: open.channel)
+                        continue
+                    }
+                    guard let (lo, hi) = ContrastEnhancer.limits(for: statistics, saturated: saturated) else { continue }
+                    let original = image.stack[index]
+                    var plane = ContrastEnhancer.normalized(original, min: lo, max: hi)
+                    // The table applies within the selection (normalizeFloat ignores it).
+                    if updateSelectionOnly, let filterRegion, image.pixelType != .gray32Float {
+                        plane = filterRegion.restoringOutsideMask(
+                            plane.merged(into: original, width: width, within: filterRegion.rect), snapshot: original,
+                            width: width)
+                    }
+                    try open.image.setPlane(plane, at: index)
+                }
             } catch {
-                throw .notNative(name)  // RGB images
+                throw .failed(command: name, detail: "\(error)")
             }
-            guard let range else { return }
-            var display = open.image.channels[open.channel]
-            display.displayRange = range
-            open.image.setDisplay(display, forChannel: open.channel)
+            if normalize {
+                // run(): the current processor shows the full range.
+                var display = open.image.channels[open.channel]
+                display.displayRange = image.pixelType == .gray32Float ? 0...1 : image.pixelType == .gray16 ? 0...65535 : 0...255
+                open.image.setDisplay(display, forChannel: open.channel)
+            }
         }
     }
 
@@ -108,6 +156,11 @@ enum BuiltInCommands {
     /// `duplicate` is given, and otherwise the current position (every
     /// channel of a composite shown as one); other images take `range=`
     /// with `duplicate`, and otherwise the current slice.
+    ///
+    /// An area selection crops the copy to its bounds, and a
+    /// non-rectangular one moves onto the copy at (0, 0); `ignore` (offered
+    /// for images that aren't hyperstacks) copies the whole image and the
+    /// selection as it is. Any selection moves a set origin by its position.
     static let duplicate = CommandDefinition("Duplicate...", menu: "Image") { context, options in
         let name = "Duplicate..."
         guard let open = context.current else { throw CommandError.noImage(name) }
@@ -115,6 +168,28 @@ enum BuiltInCommands {
         let dims = image.dimensions
         let wholeStack = options.flag(forLabel: "duplicate")
         let isHyper = dims.channels > 1 || (dims.slices > 1 && dims.frames > 1)
+        let roi = try CropCommands.selection(name, open)
+        var crop: RoiBounds?
+        var copiedROI: [UInt8]?
+        if let roi {
+            let b = roi.bounds
+            if b.x >= image.width || b.y >= image.height || b.x + b.width <= 0 || b.y + b.height <= 0 {
+                throw CommandError.notNative(name)  // a selection outside the image
+            }
+            if case .polygon(let p) = roi.shape, case .rotatedRectangle? = p.parametric {
+                throw CommandError.notNative(name)  // ImageJ straightens rotated rectangles
+            }
+            if !isHyper && options.flag(forLabel: "Ignore selection") {
+                copiedROI = image.encodedROI
+            } else if roi.isArea {
+                crop = try CropCommands.cropRectangle(name, roi, width: image.width, height: image.height)
+                if roi.kind != .rectangle {
+                    guard let moved = CropCommands.atOrigin(roi) else { throw CommandError.notNative(name) }
+                    copiedROI = RoiCodec.encode(moved)
+                }
+            }
+            if crop != nil, !image.encodedOverlay.isEmpty { throw CommandError.notNative(name) }  // ImageJ crops overlays
+        }
         var indices: [Int] = []
         var newDims: HyperstackDimensions
         var channels = image.channels
@@ -161,14 +236,16 @@ enum BuiltInCommands {
         }
         let title = options.value(forLabel: "title") ?? uniqueName(image.title, among: context.images.map(\.title))
         do {
+            let planes = indices.map { index in crop.map { image.stack[index].cropped(width: image.width, to: $0) } ?? image.stack[index] }
             let stack = try ImageStack(
-                width: image.width, height: image.height, planes: indices.map { image.stack[$0] },
+                width: crop?.width ?? image.width, height: crop?.height ?? image.height, planes: planes,
                 labels: indices.map { image.stack.labels[$0] })
+            let calibration = roi.map { CropCommands.shiftedOrigin(image.calibration, by: $0.bounds) } ?? image.calibration
             var copy = try Hyperstack(
-                title: title, stack: stack, dimensions: newDims, calibration: image.calibration,
+                title: title, stack: stack, dimensions: newDims, calibration: calibration,
                 channels: channels, compositeMode: image.compositeMode, info: image.info,
                 properties: image.properties)
-            copy.encodedROI = image.encodedROI
+            copy.encodedROI = copiedROI
             // Duplicator marks plain images and stacks, not hyperstacks.
             if !isHyper { copy.properties["UniqueName"] = "true" }
             context.add(copy)
@@ -216,9 +293,9 @@ enum BuiltInCommands {
         try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in
             var image = open.image
             let dims = image.dimensions
-            let c = max(Int(options.number(forLabel: "channels", default: Double(dims.channels))), 1)
-            let z = max(Int(options.number(forLabel: "slices", default: Double(dims.slices))), 1)
-            let t = max(Int(options.number(forLabel: "frames", default: Double(dims.frames))), 1)
+            let c = max(Int(JavaNumerics.int32(options.number(forLabel: "channels", default: Double(dims.channels)))), 1)
+            let z = max(Int(JavaNumerics.int32(options.number(forLabel: "slices", default: Double(dims.slices)))), 1)
+            let t = max(Int(JavaNumerics.int32(options.number(forLabel: "frames", default: Double(dims.frames)))), 1)
             if c * z * t == image.stack.count {
                 try? image.setDimensions(HyperstackDimensions(channels: c, slices: z, frames: t))
             } else {
@@ -318,7 +395,7 @@ enum BuiltInCommands {
         if let redirect = macro.value(forLabel: "Redirect to:"), redirect != "None" {
             throw CommandError.notNative(name)  // measuring another image's pixels: ImageJ can
         }
-        let precision = Int(macro.number(forLabel: "Decimal places (0-9):", default: Double(context.settings.decimalPlaces)))
+        let precision = Int(JavaNumerics.int32(macro.number(forLabel: "Decimal places (0-9):", default: Double(context.settings.decimalPlaces))))
         context.settings.decimalPlaces = min(max(precision, 0), 9)
         context.settings.measurements = measurements
         context.results.emptyCellsAreNaN = measurements.contains(.nanEmptyCells)

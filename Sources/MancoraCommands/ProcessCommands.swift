@@ -43,6 +43,12 @@ enum ProcessCommands {
             if type == .rgb8, open.image.channels.count > 1, open.image.stack.count > open.image.channels.count {
                 throw CommandError.notNative(name)
             }
+            // Converter.convert removes the threshold first, even when there's
+            // nothing to convert; "RGB Color" also forgets the LUT's name.
+            try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in
+                open.threshold = nil
+                if type == .rgb8 { open.image.properties[BuiltInCommands.currentLUTKey] = nil }
+            }
             if open.image.pixelType == type, type != .gray8 { return }  // nothing to do
             let options = ConversionOptions(scale: context.settings.scaleConversions)
             try replaceCurrent(name, &context) { open in try ImageConverter.convert(open.image, to: type, options: options) }
@@ -93,14 +99,19 @@ enum ProcessCommands {
     }
 
     /// Applies `operation` to the planes `IJ.setupDialog` picks: the whole
-    /// image (with ImageMath's display-range rules) or one plane of a stack.
+    /// image (with ImageMath's display-range rules) or one plane of a stack,
+    /// within an area selection (restoring the pixels outside its mask).
     static func math(
         _ name: String, _ operation: ImageMath.Operation, _ context: inout CommandContext, _ options: MacroOptions
     ) throws {
         guard let open = context.current else { throw CommandError.noImage(name) }
+        let region = try FilterCommands.selectionRegion(name, open)
         let targets = FilterCommands.targetPlanes(open, options)
+        if targets.count == 1 {
+            try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in open.resetBinaryThreshold() }
+        }
         if targets.count == open.image.stack.count {
-            try replaceCurrent(name, &context) { open in ImageMath.apply(operation, to: open.image) }
+            try replaceCurrent(name, &context) { open in ImageMath.apply(operation, to: open.image, region: region) }
             return
         }
         try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in
@@ -111,9 +122,21 @@ enum ProcessCommands {
             } else {
                 signed = false
             }
+            let width = open.image.width
             for index in targets {
-                let plane = ImageMath.apply(operation, to: open.image.stack[index], displayRange: display, signed16: signed)
+                let original = open.image.stack[index]
+                // Changed within the selection's bounds; the pixels outside its mask come back after.
+                let inBounds = ImageMath.apply(
+                    operation, to: original, displayRange: display, signed16: signed, width: width, rect: region?.rect)
+                var plane = inBounds
+                if let region { plane = region.restoringOutsideMask(plane, snapshot: original, width: width) }
                 do { try open.image.setPlane(plane, at: index) } catch { throw .failed(command: name, detail: "\(error)") }
+                // The plane shown is the image's processor: a reset changes the image's display range.
+                if ImageMath.resetsDisplayRange(operation, type: open.image.pixelType, signed16: signed) {
+                    var channel = open.image.channels[open.channel]
+                    channel.displayRange = ImageMath.resetRange(inBounds)
+                    open.image.setDisplay(channel, forChannel: open.channel)
+                }
             }
         }
     }
@@ -191,8 +214,8 @@ enum ProcessCommands {
         }
         let isHyper = dims.channels > 1 || (dims.slices > 1 && dims.frames > 1)
         let depth = isHyper ? (dims.slices > 1 ? dims.slices : dims.frames) : open.image.stack.count
-        let start = Int(options.number(forLabel: "Start slice:", default: 1))
-        let stop = Int(options.number(forLabel: "Stop slice:", default: Double(depth)))
+        let start = Int(JavaNumerics.int32(options.number(forLabel: "Start slice:", default: 1)))
+        let stop = Int(JavaNumerics.int32(options.number(forLabel: "Stop slice:", default: Double(depth))))
         let all = dims.frames > 1 && dims.slices > 1 && options.flag(forLabel: "All time frames")
         let slices = max(start, 1) - 1 <= min(stop, depth) - 1 ? (max(start, 1) - 1)...(min(stop, depth) - 1) : nil
         let result = ZProjector.project(open.image, method: method, slices: slices, allTimeFrames: all, frame: open.frame)

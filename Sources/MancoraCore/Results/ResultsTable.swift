@@ -33,6 +33,15 @@ public struct ResultsTable: Sendable, Hashable {
     public private(set) var labels: [String?] = []
     /// Whether cells never set read as NaN rather than 0 (Set Measurements ▸ NaN empty cells).
     public var emptyCellsAreNaN = false
+    /// Columns shown with the table's decimal places, integers included:
+    /// those that have held a value that isn't an int, and the shape
+    /// descriptors (ImageJ's `decimalPlaces[column]` other than AUTO_FORMAT).
+    public private(set) var decimalColumns: Set<String> = []
+    /// ImageJ's `showRowNumbers` once something has set it (opening a file,
+    /// `Table.showRowNumbers`), or `nil` for the default of the window the
+    /// table is shown in: row numbers in "Results", none elsewhere. Saved
+    /// tables start with a " " column of row numbers when this is on.
+    public var showsRowNumbers: Bool?
 
     public init() {}
 
@@ -50,6 +59,15 @@ public struct ResultsTable: Sendable, Hashable {
     public mutating func set(_ column: String, row: Int, _ value: Value) {
         if !used.contains(column) { used.append(column) }
         cells[row][column] = value
+        // `(int)value != value && !Double.isNaN(value)`
+        if case .number(let n) = value, !n.isNaN, !(n >= -2147483648 && n <= 2147483647 && n == n.rounded(.towardZero)) {
+            decimalColumns.insert(column)
+        }
+    }
+
+    /// `setDecimalPlaces(column, precision)`: shows `column` with decimals from now on.
+    public mutating func setDecimal(_ column: String) {
+        decimalColumns.insert(column)
     }
 
     public mutating func set(_ column: String, row: Int, _ number: Double) {
@@ -84,5 +102,6 @@ public struct ResultsTable: Sendable, Hashable {
         used = []
         cells = []
         labels = []
+        decimalColumns = []
     }
 }

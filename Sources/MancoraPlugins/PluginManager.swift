@@ -104,6 +104,9 @@ public final class PluginManager {
         files.removeAllFiles()
         files.conflicts = []
         warnings = []
+        // A new plan: names a disabled or removed site left to delete are
+        // decided again from what the sites now say.
+        staleNames = []
         for site in files.activeSites {
             guard let url = URL(string: site.url + "db.xml.gz") else {
                 warnings.append("Could not update from site '\(site.name)': invalid URL \(site.url)")
