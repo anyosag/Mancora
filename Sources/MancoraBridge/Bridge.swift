@@ -29,6 +29,9 @@ public struct BridgeRunResult: Sendable {
     public let log: String
     /// A macro's return value.
     public let value: String?
+    /// The message of the error that stopped the macro, as ImageJ's "Macro Error" dialog shows it, and its line.
+    public var macroError: String? = nil
+    public var macroErrorLine: Int? = nil
 }
 
 /// Runs ImageJ, its plugins and Bio-Formats in a supervised Java helper
@@ -187,7 +190,9 @@ public actor Bridge {
             produced.append(
                 BridgeImage(image: image, title: output.title, replacesInput: output.replaces.flatMap(inputs.firstIndex(of:))))
         }
-        return BridgeRunResult(images: produced, results: result.results, log: result.log, value: result.value)
+        return BridgeRunResult(
+            images: produced, results: result.results, log: result.log, value: result.value,
+            macroError: result.macroError, macroErrorLine: result.macroErrorLine)
     }
 
     private func call<P: Encodable, R: Decodable>(_ method: String, _ params: P?, as type: R.Type, retry: Bool)

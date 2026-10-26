@@ -36,6 +36,8 @@ public struct BridgeHome: Sendable {
     public var jars: URL { root.appendingPathComponent("jars") }
     public var plugins: URL { root.appendingPathComponent("plugins") }
     public var imageJJar: URL { jars.appendingPathComponent("ij.jar") }
+    /// Whether `installImageJ` has run (`mancora bridge setup`).
+    public var hasImageJ: Bool { FileManager.default.fileExists(atPath: imageJJar.path) }
 
     /// The ImageJ release the bridge installs, and the SHA-1 Maven Central publishes for it.
     public static let imageJVersion = "1.54p"

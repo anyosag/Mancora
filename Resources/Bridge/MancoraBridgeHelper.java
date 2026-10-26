@@ -29,6 +29,7 @@ import ij.IJ;
 import ij.ImageJ;
 import ij.CompositeImage;
 import ij.ImagePlus;
+import ij.Macro;
 import ij.Menus;
 import ij.WindowManager;
 import ij.io.FileSaver;
@@ -224,7 +225,26 @@ public class MancoraBridgeHelper {
                     + "when the options are given); run Mancora with a display, or install Xvfb");
         } else {
             DialogWatchdog.reset();
-            String value = IJ.runMacro((String) params.get("code"), params.get("argument") == null ? "" : (String) params.get("argument"));
+            // IJ.runMacro, but with the interpreter at hand: headless, its error
+            // dialog throws, and the message it was about to show is reported.
+            Interpreter interp = new Interpreter();
+            String value = null;
+            try {
+                value = interp.run((String) params.get("code"), params.get("argument") == null ? "" : (String) params.get("argument"));
+            } catch (Throwable t) {
+                boolean cancelled = Macro.MACRO_CANCELED.equals(t.getMessage());
+                if (interp.getErrorMessage() == null && !cancelled) throw t;
+                if (interp.getErrorMessage() != null) {
+                    result.put("macroError", interp.getErrorMessage());
+                    try {
+                        java.lang.reflect.Field line = Interpreter.class.getDeclaredField("lineNumber");
+                        line.setAccessible(true);
+                        result.put("macroErrorLine", line.getInt(interp));
+                    } catch (Exception ignored) {
+                    }
+                    DialogWatchdog.forgetMacroError();
+                }
+            }
             DialogWatchdog.check("The macro");
             result.put("value", value);
         }
@@ -297,6 +317,11 @@ public class MancoraBridgeHelper {
         static void reset() {
             errors.clear();
             questions.clear();
+        }
+
+        /** Drops the macro error dialog: the request reports that error itself. */
+        static void forgetMacroError() {
+            errors.removeIf(e -> e.endsWith("(\"Macro Error\" dialog)") || e.endsWith("(\"No Image\" dialog)"));
         }
 
         /** Logs the questions answered, and fails with the messages shown. */
