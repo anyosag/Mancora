@@ -105,7 +105,7 @@ struct MancoraApp: App {
         }
         .defaultSize(width: 720, height: 520)
         Settings {
-            SettingsView(updater: updater)
+            SettingsView(updater: updater, bridge: bridge)
         }
     }
 }
@@ -150,23 +150,5 @@ struct PluginCommands: Commands {
         } else {
             AppMenuActions.perform(name, viewer: viewer, bridge: bridge, openWindow: openWindow)
         }
-    }
-}
-
-struct SettingsView: View {
-    @Bindable var updater: AppUpdater
-
-    var body: some View {
-        Form {
-            Toggle(
-                "Check for updates automatically",
-                isOn: Binding(get: { updater.automaticallyChecks }, set: { updater.setAutomaticallyChecks($0) })
-            )
-            Text("Mancora looks for a newer release on GitHub at most once a day.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(20)
-        .frame(width: 380)
     }
 }
