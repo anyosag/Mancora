@@ -116,4 +116,33 @@ struct CommandTests {
         #expect(BuiltInCommands.uniqueName("a-0.tif", among: ["a-0.tif"]) == "a-0-1.tif")
         #expect(BuiltInCommands.uniqueName("noext", among: []) == "noext-1")
     }
+
+    @Test func propertiesAndScale() throws {
+        var context = CommandContext()
+        context.add(try image("p.tif", planes: 6))
+        let registry = CommandRegistry.standard
+        try registry.run(
+            "Properties...",
+            options: MacroOptions("channels=2 slices=3 frames=1 unit=um pixel_width=0.25 pixel_height=0.5 voxel_depth=2 frame=[0.5min] origin=3,4"),
+            in: &context)
+        var cal = try #require(context.current).image.calibration
+        #expect(context.current?.image.dimensions == HyperstackDimensions(channels: 2, slices: 3))
+        #expect((cal.unit, cal.pixelWidth, cal.pixelHeight, cal.pixelDepth) == ("µm", 0.25, 0.5, 2))
+        #expect((cal.frameInterval, cal.timeUnit) == (0.5, "min"))
+        #expect((cal.xOrigin, cal.yOrigin, cal.invertY) == (3, 4, false))
+        #expect(throws: CommandError.self) {
+            try registry.run("Properties...", options: MacroOptions("channels=4 slices=1 frames=1"), in: &context)
+        }
+        // unit=none resets the spatial calibration.
+        try registry.run("Properties...", options: MacroOptions("unit=none pixel_width=1"), in: &context)
+        #expect(try #require(context.current).image.calibration.unit == "pixel")
+
+        try registry.run("Set Scale...", options: MacroOptions("distance=100 known=10 pixel=1 unit=um"), in: &context)
+        cal = try #require(context.current).image.calibration
+        #expect((cal.unit, cal.pixelWidth, cal.pixelHeight, cal.pixelDepth) == ("µm", 0.1, 0.1, 0.1))
+        try registry.run("Set Scale...", options: MacroOptions("distance=0 known=0 unit=pixel"), in: &context)
+        #expect(try #require(context.current).image.calibration.unit == "pixel")
+        #expect(BuiltInCommands.spacedInterval("0.5min") == "0.5 min")
+        #expect(BuiltInCommands.spacedInterval("2 sec") == "2 sec")
+    }
 }

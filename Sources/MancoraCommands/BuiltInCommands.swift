@@ -3,7 +3,7 @@ import MancoraCore
 /// Commands Mancora implements natively, named as in ImageJ's menus.
 enum BuiltInCommands {
     static var all: [CommandDefinition] {
-        lutCommands + [invertLUT, enhanceContrast, rename, close, closeAll, duplicate]
+        lutCommands + [invertLUT, enhanceContrast, rename, close, closeAll, duplicate, properties, setScale]
     }
 
     // MARK: Image ▸ Lookup Tables
@@ -146,5 +146,114 @@ enum BuiltInCommands {
             return "\(base)-\(i)\(ext)"
         }
         return name
+    }
+
+    // MARK: Image ▸ Properties and Analyze ▸ Set Scale
+
+    /// `ij.plugin.filter.ImageProperties` as a macro drives it: dimensions,
+    /// unit (`unit=`), pixel size, frame interval (`frame=[0.5 min]`),
+    /// origin and Invert Y (a checkbox, so off unless named).
+    static let properties = CommandDefinition("Properties...", menu: "Image") { context, options in
+        let name = "Properties..."
+        try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in
+            var image = open.image
+            let dims = image.dimensions
+            let c = max(Int(options.number(forLabel: "channels", default: Double(dims.channels))), 1)
+            let z = max(Int(options.number(forLabel: "slices", default: Double(dims.slices))), 1)
+            let t = max(Int(options.number(forLabel: "frames", default: Double(dims.frames))), 1)
+            if c * z * t == image.stack.count {
+                try? image.setDimensions(HyperstackDimensions(channels: c, slices: z, frames: t))
+            } else {
+                throw .invalidOption(
+                    command: name,
+                    detail: "The product of channels (\(c)), slices (\(z)) and frames (\(t)) must equal the stack size (\(image.stack.count)).")
+            }
+            var cal = image.calibration
+            var unit = cal.unit
+            if let given = options.value(forLabel: "unit") {
+                if given != cal.unit {
+                    cal.yUnit = nil
+                    cal.zUnit = nil
+                }
+                unit = given
+            }
+            let pixelWidth = options.number(forLabel: "pixel_width", default: cal.pixelWidth)
+            let pixelHeight = options.number(forLabel: "pixel_height", default: cal.pixelHeight)
+            let pixelDepth = options.number(forLabel: "voxel_depth", default: cal.pixelDepth)
+            if unit.isEmpty || unit.lowercased() == "none" || pixelWidth == 0 {
+                cal.unit = "pixel"
+                cal.pixelWidth = 1
+                cal.pixelHeight = 1
+                cal.pixelDepth = 1
+            } else {
+                cal.unit = sanitizedUnit(unit)
+                cal.pixelWidth = pixelWidth
+                cal.pixelHeight = pixelHeight
+                cal.pixelDepth = pixelDepth
+            }
+            if let interval = options.value(forLabel: "frame") {
+                let parts = spacedInterval(interval).split(whereSeparator: { $0 == " " || $0 == "-" })
+                let seconds = parts.first.flatMap { Double($0) } ?? .nan
+                cal.frameInterval = seconds.isNaN ? 0 : seconds
+                var timeUnit = parts.count >= 2 ? String(parts[1]) : "sec"
+                if timeUnit == "sec", cal.frameInterval <= 2, cal.frameInterval >= 1.0 / 30 { cal.fps = 1 / cal.frameInterval }
+                if timeUnit == "usec" { timeUnit = "µsec" }
+                cal.timeUnit = timeUnit
+            }
+            if let origin = options.value(forLabel: "origin") {
+                let parts = origin.split(whereSeparator: { $0 == " " || $0 == "," }).map { Double($0) ?? .nan }
+                let x = parts.count >= 1 ? parts[0] : .nan, y = parts.count >= 2 ? parts[1] : .nan
+                let zo = parts.count >= 3 ? parts[2] : .nan
+                cal.xOrigin = x.isNaN ? 0 : x
+                cal.yOrigin = y.isNaN ? cal.xOrigin : y
+                cal.zOrigin = zo.isNaN ? 0 : zo
+            }
+            cal.invertY = options.flag(forLabel: "invert")
+            image.calibration = cal
+            open.image = image
+        }
+    }
+
+    /// `ij.plugin.filter.ScaleDialog`: `distance=` pixels are `known=` units
+    /// (`unit=`), with `pixel=` the aspect ratio; anything incomplete resets to pixels.
+    static let setScale = CommandDefinition("Set Scale...", menu: "Analyze") { context, options in
+        try context.withCurrent("Set Scale...") { (open: inout OpenImage) throws(CommandError) in
+            var cal = open.image.calibration
+            let measured = options.number(forLabel: "distance", default: 0)
+            let known = options.number(forLabel: "known", default: 0)
+            let aspect = options.number(forLabel: "pixel", default: 1)
+            var unit = options.value(forLabel: "unit") ?? cal.unit
+            if unit == "A" { unit = "Å" }
+            if measured == known, unit == "unit" { unit = "pixel" }
+            if measured <= 0 || known <= 0 || unit.hasPrefix("pixel") || unit.hasPrefix("Pixel") || unit.isEmpty {
+                cal.pixelWidth = 1
+                cal.pixelHeight = 1
+                cal.pixelDepth = 1
+                cal.unit = "pixel"
+            } else {
+                cal.pixelWidth = known / measured
+                if cal.pixelDepth == 1 { cal.pixelDepth = cal.pixelWidth }
+                cal.pixelHeight = aspect != 0 ? cal.pixelWidth * aspect : cal.pixelWidth
+                cal.unit = sanitizedUnit(unit)
+            }
+            open.image.calibration = cal
+        }
+    }
+
+    /// `Calibration.sanitizeUnit` for a non-empty unit.
+    static func sanitizedUnit(_ unit: String) -> String {
+        switch unit {
+        case "um": "µm"
+        case "A": "Å"
+        default: unit
+        }
+    }
+
+    /// `ImageProperties.validateInterval`: "0.5min" → "0.5 min".
+    static func spacedInterval(_ interval: String) -> String {
+        guard !interval.contains(" "), let letter = interval.firstIndex(where: { $0.isLetter }),
+            letter != interval.startIndex, interval.index(after: letter) != interval.endIndex
+        else { return interval }
+        return String(interval[..<letter]) + " " + String(interval[letter...])
     }
 }

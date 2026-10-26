@@ -87,6 +87,18 @@ public struct Hyperstack: Sendable, Equatable {
         channels[channel] = display
     }
 
+    /// Reinterprets the planes as `dims` (ImageJ's `setDimensions`); the
+    /// plane count must stay the same. Channels keep their display settings
+    /// where they still exist; new ones get ImageJ's defaults.
+    public mutating func setDimensions(_ dims: HyperstackDimensions) throws(ImageModelError) {
+        guard dims.planeCount == stack.count else { throw .dimensionMismatch(planes: stack.count, dimensions: dims) }
+        let defaults = Self.defaultChannels(for: stack, dimensions: dims)
+        channels = (0..<dims.channels).map { c in
+            c < channels.count && dims.channels > 1 && dimensions.channels > 1 ? channels[c] : defaults[c]
+        }
+        dimensions = dims
+    }
+
     /// Colors ImageJ assigns to channels 1–8 of a new composite image
     /// (`CompositeImage.colors`); later channels are gray.
     public static let defaultChannelLUTs: [LUT] = [.red, .green, .blue, .grays, .cyan, .magenta, .yellow, .grays]
