@@ -8,7 +8,7 @@ import SwiftUI
 
 // `Mancora --screenshots <folder>`: opens real windows, puts the app in each
 // state a design review wants to see (no image, the inspector, a threshold,
-// selections, a hyperstack, the ROI Manager, Results, plots, the recorder,
+// selections, a hyperstack, the ROI Manager, Results, plots, the macro editor, the recorder,
 // a command dialog, Find Command, Update Sites, the Image menu), saves a PNG
 // of the window in light and in dark mode, writes `index.md`, and exits.
 //
@@ -166,23 +166,23 @@ final class ScreenshotRun {
     // MARK: States
 
     private func runStates() async {
-        await state(1, "no-image") {
+        await state("01", "no-image") {
             guard let window = await poll(timeout: 30, { Self.window(titled: "Mancora") }) else {
                 throw Failure("the first window never appeared")
             }
             await settle(1.0)
-            await shoot(1, "no-image", "The app with no image open", window)
+            await shoot("01", "no-image", "The app with no image open", window)
         }
 
-        await state(2, "inspector") {
+        await state("02", "inspector") {
             let url = try fixture("tiff/tf-gray8-none-le.tif")
             let opened = try await open(url)
             gray = opened
             opened.model.showsInspector = true
-            await shoot(2, "inspector", "An image window with the inspector (brightness and contrast)", opened.window)
+            await shoot("02", "inspector", "An image window with the inspector (brightness and contrast)", opened.window)
         }
 
-        await state(3, "threshold") {
+        await state("03", "threshold") {
             let g = try grayscale()
             g.model.showsThreshold = true
             g.model.autoThreshold()
@@ -196,26 +196,26 @@ final class ScreenshotRun {
                 g.model.showsThreshold = false
             }
             await settle(1.0)
-            await shoot(3, "threshold", "The inspector's Threshold section, with a threshold set", g.window)
+            await shoot("03", "threshold", "The inspector's Threshold section, with a threshold set", g.window)
         }
 
-        await state(4, "selection-rectangle") {
+        await state("04", "selection-rectangle") {
             let g = try grayscale()
             AppSession.shared.tool = .rectangle
             g.model.setSelection(Roi(.rectangle(.integer(x: 5, y: 4, width: 18, height: 11))))
             await settle(0.5)
-            await shoot(4, "selection-rectangle", "A rectangle selection drawn on the image", g.window)
+            await shoot("04", "selection-rectangle", "A rectangle selection drawn on the image", g.window)
         }
 
-        await state(4, "selection-oval") {
+        await state("04", "selection-oval") {
             let g = try grayscale()
             AppSession.shared.tool = .oval
             g.model.setSelection(Roi(.oval(.integer(x: 14, y: 3, width: 20, height: 16))))
             await settle(0.5)
-            await shoot(4, "selection-oval", "An oval selection drawn on the image", g.window)
+            await shoot("04", "selection-oval", "An oval selection drawn on the image", g.window)
         }
 
-        await state(5, "hyperstack") {
+        await state("05", "hyperstack") {
             let url = try fixture("tiff/ij-hyperstack-16bit.tif")
             let opened = try await open(url)
             opened.model.channel = 1
@@ -223,10 +223,10 @@ final class ScreenshotRun {
             opened.model.frame = 2
             opened.model.positionChanged()
             await settle(1.0)
-            await shoot(5, "hyperstack", "A hyperstack (2 channels, 3 slices, 4 frames) with its C/Z/T sliders", opened.window)
+            await shoot("05", "hyperstack", "A hyperstack (2 channels, 3 slices, 4 frames) with its C/Z/T sliders", opened.window)
         }
 
-        await state(6, "roi-manager") {
+        await state("06", "roi-manager") {
             let g = try grayscale()
             guard let image = g.model.image else { throw Failure("the grayscale image is gone") }
             let session = AppSession.shared
@@ -242,10 +242,10 @@ final class ScreenshotRun {
             defer { session.showsAllRois = false }
             let window = try await openTool("roi-manager", title: "ROI Manager")
             await settle(1.0)
-            await shoot(6, "roi-manager", "The ROI Manager with four ROIs", window)
+            await shoot("06", "roi-manager", "The ROI Manager with four ROIs", window)
         }
 
-        await state(7, "results") {
+        await state("07", "results") {
             let g = try grayscale()
             do throws(AppSession.ManagerError) {
                 try g.model.measure(AppSession.shared.roiManager.entries.map(\.roi))
@@ -254,27 +254,37 @@ final class ScreenshotRun {
             }
             let window = try await openTool("results", title: "Results")
             await settle(1.0)
-            await shoot(7, "results", "The Results table after Measure", window)
+            await shoot("07", "results", "The Results table after Measure", window)
         }
 
-        await state(8, "plot-profile") {
+        await state("08", "plot-profile") {
             let g = try grayscale()
             g.model.setSelection(Roi(.line(.init(x1: 1, y1: 2, x2: 35, y2: 20))))
             let window = try await openPlot("Plot Profile", titlePrefix: "Plot of", viewer: g.model)
             await settle(1.0)
-            await shoot(8, "plot-profile", "A Plot Profile window", window)
+            await shoot("08", "plot-profile", "A Plot Profile window", window)
         }
 
-        await state(8, "histogram") {
+        await state("08", "histogram") {
             let g = try grayscale()
             g.model.setSelection(nil)
             let window = try await openPlot("Histogram", titlePrefix: "Histogram of", viewer: g.model)
             await settle(1.0)
-            await shoot(8, "histogram", "A Histogram window", window)
+            await shoot("08", "histogram", "A Histogram window", window)
         }
 
-        await state(9, "macro-editor") {
-            // Mancora has no macro editor yet; the Recorder window is its macro text window.
+        await state("09", "macro-editor") {
+            let (window, text) = try await openEditor()
+            text.show(Self.sampleMacro)
+            // The caret on the Measure line, so the status bar has a position to show.
+            if let measure = Self.sampleMacro.range(of: "Measure") {
+                text.setSelectedRange(NSRange(measure.lowerBound..<measure.lowerBound, in: Self.sampleMacro))
+            }
+            await settle(1.0)
+            await shoot("09", "macro-editor", "The macro editor with a short macro", window)
+        }
+
+        await state("09b", "recorder") {
             let window = try await openTool("recorder", title: "Recorder")
             let recorder = AppRecorder.shared
             recorder.clear()
@@ -285,10 +295,10 @@ final class ScreenshotRun {
             recorder.recordLine("makeOval(14, 3, 20, 16);")
             recorder.record("Measure", options: "")
             await settle(1.0)
-            await shoot(9, "macro-editor", "The macro window (the Recorder) with a short macro", window)
+            await shoot("09b", "recorder", "The Recorder window with a recorded macro", window)
         }
 
-        await state(10, "command-dialog") {
+        await state("10", "command-dialog") {
             let g = try grayscale()
             let dialogs: BridgeDialogs
             do {
@@ -300,12 +310,12 @@ final class ScreenshotRun {
             defer { g.model.pendingDialog = nil }
             guard await waitUntil(10, { g.window.attachedSheet != nil }) else { throw Failure("the dialog sheet never appeared") }
             await settle(1.0)
-            await shoot(10, "command-dialog", "Gaussian Blur…, in the native command dialog (a hand-made description)", g.window)
+            await shoot("10", "command-dialog", "Gaussian Blur…, in the native command dialog (a hand-made description)", g.window)
             g.model.pendingDialog = nil
             await waitUntil(5, { g.window.attachedSheet == nil })
         }
 
-        await state(11, "find-command") {
+        await state("11", "find-command") {
             let g = try grayscale()
             g.model.showsCommandFinder = true
             defer { g.model.showsCommandFinder = false }
@@ -313,25 +323,25 @@ final class ScreenshotRun {
             // The finder starts the Java bridge for ImageJ's commands; show it once that has settled.
             await waitUntil(40, { bridgeHasSettled })
             await settle(1.0)
-            await shoot(11, "find-command", "Find Command (⌘L)", g.window)
+            await shoot("11", "find-command", "Find Command (⌘L)", g.window)
             g.model.showsCommandFinder = false
             await waitUntil(5, { g.window.attachedSheet == nil })
         }
 
-        await state(12, "update-sites") {
+        await state("12", "update-sites") {
             let window = try await openTool("update-sites", title: "Update Sites")
             await settle(1.5)
-            await shoot(12, "update-sites", "The Update Sites window", window)
+            await shoot("12", "update-sites", "The Update Sites window", window)
         }
 
-        await state(13, "image-menu") {
+        await state("13", "image-menu") {
             try await shootImageMenu()
         }
     }
 
     /// Runs one state; a state that can't be set up is a problem in the index, and the run goes on.
-    private func state(_ number: Int, _ name: String, _ body: () async throws -> Void) async {
-        let label = "\(Self.twoDigits(number))-\(name)"
+    private func state(_ code: String, _ name: String, _ body: () async throws -> Void) async {
+        let label = "\(code)-\(name)"
         running = label
         writeIndex()
         Screenshots.report("screenshots: \(label)")
@@ -385,6 +395,30 @@ final class ScreenshotRun {
         })
         guard let window else { throw Failure(viewer.errorMessage ?? "no \(command) window opened") }
         return window
+    }
+
+    /// Plugins ▸ New ▸ Macro: an empty editor window of its own, and its text view. The editor's model
+    /// lives in the window's state, and the app reaches it only as the focused scene value of menu
+    /// commands; the text view is what shows the text, and `show` is what `MacroEditorModel.load` ends with.
+    private func openEditor() async throws -> (NSWindow, MacroTextView) {
+        let before = Set(Self.contentWindows().map { ObjectIdentifier($0) })
+        openWindow(id: "macro-editor", value: EditorRequest(serial: UUID()))
+        guard let window = await poll(timeout: 30, { Self.contentWindows().first { !before.contains(ObjectIdentifier($0)) } }) else {
+            throw Failure("no macro editor window opened")
+        }
+        guard let text = await poll(timeout: 30, { window.contentView.flatMap { Self.textView(in: $0) } }) else {
+            throw Failure("the macro editor window has no text view")
+        }
+        window.makeKeyAndOrderFront(nil)
+        return (window, text)
+    }
+
+    private static func textView(in view: NSView) -> MacroTextView? {
+        if let found = view as? MacroTextView { return found }
+        for subview in view.subviews {
+            if let found = textView(in: subview) { return found }
+        }
+        return nil
     }
 
     /// The grayscale image window, in front.
@@ -441,6 +475,19 @@ final class ScreenshotRun {
             Roi(.rectangle(.integer(x: 24, y: 12, width: 10, height: 8))),
         ]
     }()
+
+    /// A short macro that uses what the editor colors: a comment, a keyword, functions, strings and numbers.
+    private static let sampleMacro = """
+        // Blur, threshold and measure three ovals
+        open("tf-gray8-none-le.tif");
+        run("Gaussian Blur...", "sigma=2");
+        setAutoThreshold("Default dark");
+        for (i = 0; i < 3; i++) {
+            makeOval(14 + i, 3, 20, 16);
+            run("Measure");
+        }
+        print("Measured " + nResults + " ovals");
+        """
 
     /// What the bridge would describe for Gaussian Blur…, written by hand so the dialog
     /// can be shown without Java.
@@ -505,14 +552,14 @@ final class ScreenshotRun {
 
     // MARK: Capturing
 
-    /// Saves `window` in light and in dark mode as `NN-name-light.png` and `NN-name-dark.png`.
-    private func shoot(_ number: Int, _ name: String, _ detail: String, _ window: NSWindow) async {
+    /// Saves `window` in light and in dark mode as `<code>-name-light.png` and `<code>-name-dark.png`.
+    private func shoot(_ code: String, _ name: String, _ detail: String, _ window: NSWindow) async {
         for dark in [false, true] {
             let mode = dark ? "dark" : "light"
             setAppearance(dark: dark)
             window.makeKeyAndOrderFront(nil)
             await settle(0.8)
-            let file = "\(Self.twoDigits(number))-\(name)-\(mode).png"
+            let file = "\(code)-\(name)-\(mode).png"
             let url = directory.appendingPathComponent(file)
             do {
                 let taken = try await capture(window, to: url)
@@ -745,8 +792,6 @@ final class ScreenshotRun {
 
     // MARK: The index
 
-    private static func twoDigits(_ number: Int) -> String { number < 10 ? "0\(number)" : "\(number)" }
-
     private func writeIndex() {
         var lines = ["# Mancora screenshots", ""]
         let seconds = Int(Date().timeIntervalSince(startedAt))
@@ -779,7 +824,7 @@ final class ScreenshotRun {
             "## Notes",
             "",
             "- Pictures marked in-process are `cacheDisplay` of the window's frame view; those marked screencapture are `/usr/sbin/screencapture -l`, used when the in-process picture was blank.",
-            "- Mancora has no macro editor yet: state 09 shows the Recorder window, the only window with macro text.",
+            "- State 09 is the macro editor (Plugins ▸ New ▸ Macro) with text put straight into its text view; 09b is the Recorder window.",
             "- State 13 is the Image menu as a pop-up (a rebuilt copy of the menu bar's menu), not hanging from the menu bar.",
             "- State 10 uses a hand-made description of Gaussian Blur…'s dialog, so it needs no Java.",
             "- The images are the small test fixtures in `Tests/Fixtures/tiff`: `tf-gray8-none-le.tif` (grayscale) and `ij-hyperstack-16bit.tif`.",
