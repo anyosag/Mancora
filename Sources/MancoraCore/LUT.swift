@@ -168,7 +168,7 @@ extension LUT {
     }
 
     /// A port of `java.awt.Color.HSBtoRGB`.
-    static func hsbToRGB(hue: Float, saturation: Float, brightness: Float) -> (UInt8, UInt8, UInt8) {
+    package static func hsbToRGB(hue: Float, saturation: Float, brightness: Float) -> (UInt8, UInt8, UInt8) {
         func channel(_ v: Float) -> UInt8 { UInt8(truncatingIfNeeded: JavaNumerics.int32(v * 255.0 + 0.5)) }
         if saturation == 0 {
             let v = channel(brightness)
