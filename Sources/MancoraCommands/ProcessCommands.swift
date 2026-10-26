@@ -125,10 +125,18 @@ enum ProcessCommands {
             let width = open.image.width
             for index in targets {
                 let original = open.image.stack[index]
-                var plane = ImageMath.apply(
+                // Changed within the selection's bounds; the pixels outside its mask come back after.
+                let inBounds = ImageMath.apply(
                     operation, to: original, displayRange: display, signed16: signed, width: width, rect: region?.rect)
+                var plane = inBounds
                 if let region { plane = region.restoringOutsideMask(plane, snapshot: original, width: width) }
                 do { try open.image.setPlane(plane, at: index) } catch { throw .failed(command: name, detail: "\(error)") }
+                // The plane shown is the image's processor: a reset changes the image's display range.
+                if ImageMath.resetsDisplayRange(operation, type: open.image.pixelType, signed16: signed) {
+                    var channel = open.image.channels[open.channel]
+                    channel.displayRange = ImageMath.resetRange(inBounds)
+                    open.image.setDisplay(channel, forChannel: open.channel)
+                }
             }
         }
     }

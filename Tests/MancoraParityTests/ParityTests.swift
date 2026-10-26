@@ -79,6 +79,18 @@ struct ParityTests {
             ParityCase("Duplicate...", "title=current", on: .hyperstack),
             ParityCase("Duplicate...", "title=current", on: .fixtureHyperstack),
             ParityCase("Duplicate...", "duplicate frames=2", on: .fixtureHyperstack),
+            // An area selection crops the copy to its bounds within the image.
+            ParityCase("Duplicate...", "title=copy", on: .rectangleROI),
+            ParityCase("Duplicate...", "title=copy", on: .ovalROI),
+            ParityCase("Duplicate...", "title=copy", on: .edgeROI),
+            ParityCase("Duplicate...", "title=copy", on: .polygonROI),
+            ParityCase("Duplicate...", "title=copy", on: .roundedROI),
+            ParityCase("Duplicate...", "title=copy", on: .freehandROI),
+            ParityCase("Duplicate...", "title=copy", on: .namedROI),
+            ParityCase(
+                steps: [.init(command: "Properties...", options: "channels=1 slices=1 frames=1 unit=nm pixel_width=3 pixel_height=3 voxel_depth=3 origin=4,5"),
+                        .init(command: "Duplicate...", options: "title=copy")],
+                inputs: [.rectangleROI]),
         ])
     }
 
@@ -160,6 +172,31 @@ struct FilterParityTests {
         ])
     }
 
+    /// Filters that support masking change only the selection, reading the
+    /// image around it.
+    @Test func selections() async throws {
+        try await Parity.check([
+            ParityCase("Gaussian Blur...", "sigma=2", on: .rectangleROI),
+            ParityCase("Gaussian Blur...", "sigma=2", on: .ovalROI),
+            ParityCase("Gaussian Blur...", "sigma=1.5", on: .polygonROI),
+            ParityCase("Gaussian Blur...", "sigma=9", on: .edgeROI),
+            // Downscaled lines start where the kernel starts reading.
+            ParityCase("Gaussian Blur...", "sigma=12", on: .rectangleROI),
+            ParityCase("Gaussian Blur...", "sigma=12", on: .ovalROI),
+            ParityCase("Mean...", "radius=2", on: .ovalROI),
+            ParityCase("Median...", "radius=1", on: .rectangleROI),
+            ParityCase("Variance...", "radius=2", on: .rectangleROI),
+            ParityCase("Remove Outliers...", "radius=2 threshold=20 which=Bright", on: .ovalROI),
+            ParityCase("Despeckle", on: .edgeROI),
+            ParityCase("Smooth", on: .ovalROI),
+            ParityCase("Sharpen", on: .polygonROI),
+            ParityCase("Find Edges", on: .edgeROI),
+            ParityCase("Convolve...", "text1=[1 2 1 2 4 2 1 2 1] normalize", on: .ovalROI),
+            // With a selection, Convolver keeps the display range.
+            ParityCase("Convolve...", "text1=[0 1 0\n1 1 1\n0 1 0]", on: .rectangleROI),
+        ])
+    }
+
     @Test func rankFilters() async throws {
         try await Parity.check([
             ParityCase("Mean...", "radius=2", on: .gray8),
@@ -233,6 +270,25 @@ struct FilterParityTests {
                         inputs: [.binary]),
                 ])
     }
+
+    /// Erode and dilate change the selection's bounds at each iteration and
+    /// its mask at the end; Fill Holes fills the whole image but the mask's
+    /// bounds; Skeletonize ignores the selection.
+    @Test func binaryWithinSelections() async throws {
+        typealias Step = ParityCase.Step
+        let reset = Step(command: "Options...", options: "iterations=1 count=1 black do=Nothing")
+        let iterations = Step(command: "Options...", options: "iterations=3 count=2 black do=Nothing")
+        let white = Step(command: "Options...", options: "iterations=1 count=1 do=Nothing")
+        try await Parity.check(
+            ["Erode", "Dilate", "Fill Holes", "Skeletonize", "Outline"].map { ParityCase($0, on: .binaryOvalROI) }
+                + ["Open", "Outline"].map { ParityCase($0, on: .binaryRectangleROI) }
+                + [
+                    ParityCase(steps: [iterations, Step(command: "Erode", options: ""), reset], inputs: [.binaryOvalROI]),
+                    ParityCase(steps: [iterations, Step(command: "Close-", options: ""), reset], inputs: [.binaryRectangleROI]),
+                    ParityCase(steps: [white, Step(command: "Outline", options: ""), reset], inputs: [.binaryOvalROI]),
+                    ParityCase(steps: [white, Step(command: "Erode", options: ""), reset], inputs: [.binaryOvalROI]),
+                ])
+    }
 }
 
 /// Image ▸ Type, Process ▸ Math, Image Calculator and the stack and channel tools.
@@ -274,6 +330,26 @@ struct ProcessParityTests {
             ParityCase("XOR...", "value=1010", on: .gray16),
             ParityCase("Invert", on: .gray8), ParityCase("Invert", on: .gray16), ParityCase("Invert", on: .gray32),
             ParityCase("Invert", on: .rgb), ParityCase("Invert", "stack", on: .stack16), ParityCase("Invert", on: .stack8),
+            // One slice of a stack is the image's processor, whose display range Min, Max and Abs reset.
+            ParityCase("Max...", "value=2000", on: .stack16),
+            ParityCase("Min...", "value=1000", on: .stack16),
+            ParityCase("Abs", on: .stack32),
+            ParityCase("Min...", "value=0", on: .stack32),
+        ])
+    }
+
+    /// Process ▸ Math and Invert change only the selection; a display range
+    /// reset sees its bounds changed, before the mask restores the rest.
+    @Test func mathWithinSelections() async throws {
+        try await Parity.check([
+            ParityCase("Add...", "value=25", on: .ovalROI),
+            ParityCase("Add...", "value=25", on: .rectangleROI),
+            ParityCase("Multiply...", "value=1.5", on: .polygonROI),
+            ParityCase("Min...", "value=1500", on: .rectangleROI),
+            ParityCase("Max...", "value=1", on: .polygonROI),
+            ParityCase("Invert", on: .rectangleROI),
+            ParityCase("Invert", on: .polygonROI),
+            ParityCase("Invert", on: .ovalROI),
         ])
     }
 

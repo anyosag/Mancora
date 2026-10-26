@@ -135,6 +135,25 @@ public enum ImageMath {
     /// and then gets the pixels outside the mask back (`reset(mask)`). A
     /// single image's display range is reset before that, as ImageJ resets
     /// it within the filter's run.
+    /// Whether ImageJ resets the processor's display range to its new pixel
+    /// range after `operation`: ImageMath's Min, Max (16- and 32-bit) and
+    /// Abs, NaN Background, and a full-range 16-bit inversion. Run on one
+    /// plane of a stack, this is the image's display range.
+    public static func resetsDisplayRange(
+        _ operation: Operation, type: PixelType, signed16: Bool, fullRange16BitInversions: Bool = false
+    ) -> Bool {
+        switch operation {
+        case .min, .max: type == .gray16 || type == .gray32Float
+        case .abs: type == .gray32Float || signed16
+        case .nanBackground: type == .gray32Float
+        case .invert: type == .gray16 && fullRange16BitInversions
+        default: false
+        }
+    }
+
+    /// The display range ImageJ resets to: the plane's range of values.
+    public static func resetRange(_ plane: Plane) -> ClosedRange<Double> { ImageJRules.resetRange(plane) }
+
     public static func apply(
         _ operation: Operation,
         to image: Hyperstack,
@@ -159,15 +178,9 @@ public enum ImageMath {
         }
         var channels = image.channels
         if planes.count == 1 {
-            let reset: Bool
-            switch operation {
-            case .min, .max: reset = type == .gray16 || type == .gray32Float
-            case .abs: reset = type == .gray32Float || signed
-            case .nanBackground: reset = type == .gray32Float
-            case .invert: reset = type == .gray16 && fullRange16BitInversions
-            default: reset = false
+            if resetsDisplayRange(operation, type: type, signed16: signed, fullRange16BitInversions: fullRange16BitInversions) {
+                channels[0].displayRange = ImageJRules.resetRange(planes[0])
             }
-            if reset { channels[0].displayRange = ImageJRules.resetRange(planes[0]) }
             restoreOutsideMask()
         } else if operation == .invert, type == .gray16 {
             restoreOutsideMask()
