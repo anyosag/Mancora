@@ -10,6 +10,9 @@ public struct OpenImage: Sendable {
     public var channel = 0
     public var slice = 0
     public var frame = 0
+    /// The threshold set on the image (ImageJ's `getMinThreshold()` and
+    /// `getMaxThreshold()`, in raw values), or `nil`.
+    public var threshold: ThresholdLevels?
 
     public var title: String { image.title }
 

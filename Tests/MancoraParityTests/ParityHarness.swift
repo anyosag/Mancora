@@ -54,6 +54,7 @@ enum Parity {
             java: java!, home: home, helperSource: url("Resources/Bridge/MancoraBridgeHelper.java"),
             commandTable: url("Resources/Bridge/imagej-commands.tsv"))
         config.timeoutSeconds = 300
+        config.maximumHeapMegabytes = 512  // several suites run helpers at once
         let bridge = Bridge(configuration: config)
         do {
             _ = try await bridge.start()

@@ -5,7 +5,7 @@ import MancoraProcess
 enum BuiltInCommands {
     static var all: [CommandDefinition] {
         lutCommands + [invertLUT, enhanceContrast, rename, close, closeAll, duplicate, properties, setScale]
-            + [setMeasurements, measure, clearResults] + FilterCommands.all + ProcessCommands.all
+            + [setMeasurements, measure, clearResults] + FilterCommands.all + ProcessCommands.all + ThresholdCommands.all
     }
 
     // MARK: Image ▸ Lookup Tables
@@ -328,9 +328,10 @@ enum BuiltInCommands {
     /// `Analyzer.measure` without a selection: the current plane, whole.
     static let measure = CommandDefinition("Measure", menu: "Analyze") { context, _ in
         guard let open = context.current else { throw CommandError.noImage("Measure") }
+        let threshold = open.threshold.flatMap { $0.lower <= $0.upper ? $0.lower...$0.upper : nil }
         Analyzer.measure(
             open.image, channel: open.channel, slice: open.slice, frame: open.frame,
-            options: context.settings.measurements, into: &context.results)
+            options: context.settings.measurements, threshold: threshold, into: &context.results)
     }
 
     static let clearResults = CommandDefinition("Clear Results", menu: "Analyze") { context, _ in

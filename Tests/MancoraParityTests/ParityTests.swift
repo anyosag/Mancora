@@ -261,3 +261,37 @@ struct ProcessParityTests {
         ])
     }
 }
+
+/// Process ▸ Binary ▸ Convert to Mask, which runs ImageJ's 17 automatic
+/// threshold methods on stacks.
+@Suite("ImageJ parity: thresholds", .enabled(if: Parity.available, "needs MANCORA_TEST_IJ_JAR, a JDK and a display or Xvfb"))
+struct ThresholdParityTests {
+    @Test func convertToMask() async throws {
+        try await Parity.check(
+            [ParityInput.gray8, .gray16, .gray32, .stack8, .stack16, .fixtureFire, .hyperstack].map {
+                ParityCase("Convert to Mask", on: $0)
+            } + [
+                ParityCase("Make Binary", on: .gray8),
+                ParityCase("Convert to Mask", "method=Default background=Default black", on: .stack8),
+                ParityCase("Convert to Mask", "method=Default background=Default only black", on: .stack8),
+                ParityCase("Convert to Mask", "method=Otsu background=Dark calculate black create", on: .stack16),
+            ])
+    }
+
+    @Test(arguments: [ParityInput.stack8, .stack16, .stack32])
+    func everyMethod(on input: ParityInput) async throws {
+        try await Parity.check(
+            AutoThresholderMethods.all.flatMap { method in
+                ["Dark", "Light"].map { background in
+                    ParityCase("Convert to Mask", "method=\(method) background=\(background) calculate black", on: input)
+                }
+            })
+    }
+}
+
+enum AutoThresholderMethods {
+    static let all = [
+        "Default", "Huang", "Intermodes", "IsoData", "IJ_IsoData", "Li", "MaxEntropy", "Mean", "MinError", "Minimum",
+        "Moments", "Otsu", "Percentile", "RenyiEntropy", "Shanbhag", "Triangle", "Yen",
+    ]
+}
