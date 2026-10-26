@@ -151,6 +151,15 @@ let variableFunctions: [(String, Int)] = [
     ("Color", COLOR),
 ]
 
+extension MancoraMacro {
+    /// The language's keywords (`macro`, `if`, `true`, `PI`…) and the names of its built-in functions
+    /// (`print`, `getTitle`, `Array`, `Table`…), for editors that color them.
+    public static let vocabulary: (keywords: Set<String>, functions: Set<String>) = (
+        Set(keywords.map { $0.0 }),
+        Set((functions + numericFunctions + stringFunctions + arrayFunctions + variableFunctions).map { $0.0 })
+    )
+}
+
 /// The function type of a built-in symbol type, as `Symbol.getFunctionType`.
 @inline(__always)
 func functionType(ofSymbolType type: Int) -> Int {
