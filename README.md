@@ -29,6 +29,23 @@ Download the installer for your system from the
 The installers are built by `.github/workflows/release.yml` with the
 scripts in `Tools/package/`.
 
+## Releasing
+
+Releases are automatic:
+1. In a pull request, set the new version in `VERSION` and in
+   `MancoraVersion.number` (`Sources/MancoraCore/MancoraVersion.swift`). A
+   test fails if the two disagree.
+2. Optionally, describe the release in `docs/releases/<version>.md`.
+3. Merge the pull request into `main`.
+
+The release workflow then builds and smoke-tests the macOS, Windows and
+Linux installers. It publishes them as GitHub release `v<version>`, with the
+release notes, auto-generated change notes and checksums. Versions below 1.0
+are marked as pre-releases.
+
+A version is only ever released once, so other merges into `main` don't
+create a release.
+
 ## Layout
 
 | Path | What it is |
