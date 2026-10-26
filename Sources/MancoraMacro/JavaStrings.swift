@@ -330,73 +330,211 @@ enum JavaFormatter {
         let description: String
     }
 
-    /// `String.format(format, args)` with Double arguments.
-    static func format(_ format: String, _ args: [Double]) throws(Failure) -> String {
-        let f = Array(format.utf16)
-        var out = ""
-        var i = 0
-        var argIndex = 0
-        var literal: [UInt16] = []
-        func flushLiteral() {
-            if !literal.isEmpty {
-                out += utf16String(literal)
-                literal = []
+    /// One `%[argument_index$][flags][width][.precision]conversion`.
+    private struct Specifier {
+        var index: Int?  // explicit argument index (1-based)
+        var flags: Set<UInt16> = []
+        var width: Int?
+        var precision: Int?
+        var dateTime = false
+        /// The conversion as written (`E` for `%E`).
+        var conversion: UInt16 = 0
+
+        var c: Character { Character(Unicode.Scalar(conversion) ?? "?") }
+        var lower: Character { Character(Unicode.Scalar(javaLower(conversion)) ?? "?") }
+        var upper: Bool { conversion >= 65 && conversion <= 90 }
+
+        /// `FormatSpecifier.toString()`, as exceptions show it.
+        var description: String {
+            var s = "%" + Self.flagString(flags)
+            if let index, index > 0 { s += "\(index)$" }
+            if let width { s += "\(width)" }
+            if let precision { s += ".\(precision)" }
+            if dateTime { s += upper ? "T" : "t" }
+            return s + String(c)
+        }
+
+        static let flagOrder: [UInt16] = [45, 35, 43, 32, 48, 44, 40, 60]  // - # + space 0 , ( <
+
+        static func flagString(_ flags: Set<UInt16>) -> String {
+            utf16String(flagOrder.filter { flags.contains($0) })
+        }
+    }
+
+    private static func failure(_ exception: String, _ message: String) -> Failure {
+        Failure(description: "java.util." + exception + ": " + message)
+    }
+
+    /// The specifier after a `%` at `i`, as Formatter's parser reads it, or nil where it fails.
+    private static func parseSpecifier(_ f: [UInt16], _ i: inout Int) throws(Failure) -> Specifier? {
+        func isDigit(_ k: Int) -> Bool { k < f.count && f[k] >= 48 && f[k] <= 57 }
+        var spec = Specifier()
+        var j = i
+        var number = 0
+        while isDigit(j) {
+            number = number * 10 + Int(f[j] - 48)
+            j += 1
+        }
+        if j > i && j < f.count && f[j] == 36 {  // $
+            spec.index = number
+            j += 1
+        } else {
+            j = i
+        }
+        while j < f.count, Specifier.flagOrder.contains(f[j]) {
+            if spec.flags.contains(f[j]) {
+                throw failure("DuplicateFormatFlagsException", "Flags = '\(utf16String([f[j]]))'")
+            }
+            spec.flags.insert(f[j])
+            j += 1
+        }
+        if isDigit(j) {
+            var w = 0
+            while isDigit(j) {
+                w = w * 10 + Int(f[j] - 48)
+                j += 1
+            }
+            spec.width = w
+        }
+        if j < f.count && f[j] == 46 {  // .
+            j += 1
+            guard isDigit(j) else { return nil }
+            var p = 0
+            while isDigit(j) {
+                p = p * 10 + Int(f[j] - 48)
+                j += 1
+            }
+            spec.precision = p
+        }
+        if j < f.count && (f[j] == 116 || f[j] == 84) {  // t T
+            spec.dateTime = true
+            spec.conversion = f[j]
+            j += 1
+            guard j < f.count, isLetter(f[j]) else { return nil }
+            let dc = f[j]
+            if !"HIklMSLNpzZsQBbhAaCYyjmdeRTrDFc".utf16.contains(dc) {
+                throw failure("UnknownFormatConversionException", "Conversion = 't\(utf16String([dc]))'")
+            }
+            spec.conversion = dc
+            i = j + 1
+            return spec
+        }
+        guard j < f.count, isLetter(f[j]) || f[j] == 37 else { return nil }
+        spec.conversion = f[j]
+        i = j + 1
+        return spec
+    }
+
+    private static func isLetter(_ c: UInt16) -> Bool { (c >= 65 && c <= 90) || (c >= 97 && c <= 122) }
+
+    /// The checks `FormatSpecifier`'s constructor makes, before anything is printed.
+    private static func check(_ spec: Specifier) throws(Failure) {
+        let f = spec.flags
+        func mismatch(_ bad: [UInt16]) throws(Failure) {
+            for flag in bad where f.contains(flag) {
+                throw failure(
+                    "FormatFlagsConversionMismatchException", "Conversion = \(spec.lower), Flags = \(utf16String([flag]))")
             }
         }
+        func needsWidth(_ flagsNeedingIt: [UInt16]) throws(Failure) {
+            if spec.width == nil && flagsNeedingIt.contains(where: f.contains) {
+                throw failure("MissingFormatWidthException", spec.description)
+            }
+        }
+        func checkNumeric() throws(Failure) {
+            try needsWidth([45, 48])
+            if (f.contains(43) && f.contains(32)) || (f.contains(45) && f.contains(48)) {
+                throw failure("IllegalFormatFlagsException", "Flags = '\(Specifier.flagString(f))'")
+            }
+        }
+        if let index = spec.index, index == 0 {
+            throw failure("IllegalFormatArgumentIndexException", "Illegal format argument index = 0")
+        }
+        if spec.dateTime {
+            if let p = spec.precision { throw failure("IllegalFormatPrecisionException", "\(p)") }
+            try mismatch([35, 43, 32, 48, 44, 40])
+            try needsWidth([45])
+            return
+        }
+        switch spec.lower {
+        case "b", "h", "s":
+            if spec.lower != "s" { try mismatch([35]) }
+            try needsWidth([45])
+            try mismatch([43, 32, 48, 44, 40])
+        case "c":
+            if let p = spec.precision { throw failure("IllegalFormatPrecisionException", "\(p)") }
+            try mismatch([35, 43, 32, 48, 44, 40])
+            try needsWidth([45])
+        case "d", "o", "x":
+            try checkNumeric()
+            if let p = spec.precision { throw failure("IllegalFormatPrecisionException", "\(p)") }
+            try mismatch(spec.lower == "d" ? [35] : [44])
+        case "e", "f", "g", "a":
+            try checkNumeric()
+            switch spec.lower {
+            case "a": try mismatch([40, 44])
+            case "e": try mismatch([44])
+            case "g": try mismatch([35])
+            default: break
+            }
+        case "%":
+            if let p = spec.precision { throw failure("IllegalFormatPrecisionException", "\(p)") }
+            if !f.subtracting([45]).isEmpty {
+                throw failure("IllegalFormatFlagsException", "Flags = '\(Specifier.flagString(f))'")
+            }
+            try needsWidth([45])
+        case "n":
+            if let p = spec.precision { throw failure("IllegalFormatPrecisionException", "\(p)") }
+            if let w = spec.width { throw failure("IllegalFormatWidthException", "\(w)") }
+            if !f.isEmpty { throw failure("IllegalFormatFlagsException", "Flags = '\(Specifier.flagString(f))'") }
+        default:
+            throw failure("UnknownFormatConversionException", "Conversion = '\(spec.c)'")
+        }
+    }
+
+    /// `String.format(format, args)` with Double arguments: the whole format
+    /// is parsed and checked first, then the arguments are formatted in turn.
+    static func format(_ format: String, _ args: [Double]) throws(Failure) -> String {
+        let f = Array(format.utf16)
+        enum Part {
+            case text([UInt16])
+            case specifier(Specifier)
+        }
+        var parts: [Part] = []
+        var literal: [UInt16] = []
+        var i = 0
         while i < f.count {
             guard f[i] == 37 else {  // %
                 literal.append(f[i])
                 i += 1
                 continue
             }
-            flushLiteral()
+            if !literal.isEmpty {
+                parts.append(.text(literal))
+                literal = []
+            }
             i += 1
-            // %[argument_index$][flags][width][.precision]conversion
-            var flags: Set<UInt16> = []
-            var explicitIndex: Int?
-            var j = i
-            var number = 0
-            var sawDigits = false
-            while j < f.count, f[j] >= 48, f[j] <= 57 {
-                number = number * 10 + Int(f[j] - 48)
-                sawDigits = true
-                j += 1
+            guard i < f.count else { throw failure("UnknownFormatConversionException", "Conversion = '%'") }
+            let first = f[i]
+            guard let spec = try parseSpecifier(f, &i) else {
+                throw failure("UnknownFormatConversionException", "Conversion = '\(utf16String([first]))'")
             }
-            if sawDigits, j < f.count, f[j] == 36 {  // $
-                explicitIndex = number
-                i = j + 1
+            try check(spec)
+            parts.append(.specifier(spec))
+        }
+        if !literal.isEmpty { parts.append(.text(literal)) }
+
+        var out = ""
+        var ordinary = -1
+        var last = -1
+        for part in parts {
+            guard case .specifier(let spec) = part else {
+                if case .text(let t) = part { out += utf16String(t) }
+                continue
             }
-            while i < f.count, [45, 35, 43, 32, 48, 44, 40].contains(f[i]) {  // - # + space 0 , (
-                flags.insert(f[i])
-                i += 1
-            }
-            var width: Int?
-            while i < f.count, f[i] >= 48, f[i] <= 57 {
-                width = (width ?? 0) * 10 + Int(f[i] - 48)
-                i += 1
-            }
-            var precision: Int?
-            if i < f.count, f[i] == 46 {
-                i += 1
-                var p = 0
-                var any = false
-                while i < f.count, f[i] >= 48, f[i] <= 57 {
-                    p = p * 10 + Int(f[i] - 48)
-                    any = true
-                    i += 1
-                }
-                guard any else { throw Failure(description: "java.util.IllegalFormatPrecisionException") }
-                precision = p
-            }
-            guard i < f.count else {
-                throw Failure(description: "java.util.UnknownFormatConversionException: Conversion = '%'")
-            }
-            let conversion = f[i]
-            i += 1
-            let c = Character(Unicode.Scalar(conversion) ?? "?")
-            switch c {
+            switch spec.lower {
             case "%":
-                out += pad("%", width, flags)
+                out += pad("%", spec.width, spec.flags)
                 continue
             case "n":
                 out += "\n"
@@ -404,38 +542,61 @@ enum JavaFormatter {
             default: break
             }
             let index: Int
-            if let explicitIndex { index = explicitIndex - 1 } else {
-                index = argIndex
-                argIndex += 1
+            if spec.flags.contains(60) {  // <
+                index = last
+            } else if let explicit = spec.index {
+                index = explicit - 1
+            } else {
+                ordinary += 1
+                index = ordinary
             }
+            last = index
             guard index >= 0, index < args.count else {
-                throw Failure(description: "java.util.MissingFormatArgumentException: Format specifier '%\(c)'")
+                throw failure("MissingFormatArgumentException", "Format specifier '\(spec.description)'")
             }
-            let value = args[index]
-            switch c {
-            case "f", "e", "E", "g", "G":
-                var s = floating(value, c, precision, flags)
-                if flags.contains(48), !flags.contains(45), let width, s.utf16.count < width, value.isFinite {
-                    // Zeros go after the sign.
-                    let signed = s.hasPrefix("-") || s.hasPrefix("+") || s.hasPrefix(" ")
-                    let zeros = String(repeating: "0", count: width - s.utf16.count)
+            out += try formatted(args[index], spec)
+        }
+        return out
+    }
+
+    private static func formatted(_ value: Double, _ spec: Specifier) throws(Failure) -> String {
+        if spec.dateTime {
+            throw failure("IllegalFormatConversionException", "\(spec.c) != java.lang.Double")
+        }
+        let flags = spec.flags
+        func general(_ s: String) -> String {
+            var s = s
+            if let precision = spec.precision { s = javaSubstring(s, 0, precision) }
+            return pad(spec.upper ? javaToUpperCase(s) : s, spec.width, flags)
+        }
+        switch spec.lower {
+        case "f", "e", "g", "a":
+            var s = floating(value, spec)
+            if flags.contains(48), let width = spec.width, s.utf16.count < width, value.isFinite {
+                // Zeros go after the sign or the opening parenthesis.
+                let signed = s.hasPrefix("-") || s.hasPrefix("+") || s.hasPrefix(" ") || s.hasPrefix("(")
+                let zeros = String(repeating: "0", count: width - s.utf16.count)
+                if spec.lower == "a" {
+                    let prefix = s.hasPrefix("-") || s.hasPrefix("+") || s.hasPrefix(" ") ? 3 : 2
+                    s = String(s.prefix(prefix)) + zeros + String(s.dropFirst(prefix))
+                } else {
                     s = signed ? String(s.prefix(1)) + zeros + String(s.dropFirst()) : zeros + s
                 }
-                out += pad(s, width, flags)
-            case "s", "S":
-                var s = javaString(value)
-                if let precision { s = javaSubstring(s, 0, precision) }
-                out += pad(c == "S" ? s.uppercased() : s, width, flags)
-            case "b", "B":
-                out += pad(c == "B" ? "TRUE" : "true", width, flags)
-            case "d", "x", "X", "o", "c", "C":
-                throw Failure(description: "java.util.IllegalFormatConversionException: \(c) != java.lang.Double")
-            default:
-                throw Failure(description: "java.util.UnknownFormatConversionException: Conversion = '\(c)'")
             }
+            return pad(s, spec.width, flags)
+        case "s":
+            if flags.contains(35) {  // a Double isn't Formattable
+                throw failure("FormatFlagsConversionMismatchException", "Conversion = s, Flags = #")
+            }
+            return general(javaString(value))
+        case "b":
+            return general("true")
+        case "h":
+            let bits = value.isNaN ? UInt64(0x7ff8_0000_0000_0000) : value.bitPattern
+            return general(String(UInt32(truncatingIfNeeded: bits ^ (bits >> 32)), radix: 16))
+        default:
+            throw failure("IllegalFormatConversionException", "\(spec.lower) != java.lang.Double")
         }
-        flushLiteral()
-        return out
     }
 
     private static func pad(_ s: String, _ width: Int?, _ flags: Set<UInt16>) -> String {
@@ -444,24 +605,29 @@ enum JavaFormatter {
         return flags.contains(45) ? s + fill : fill + s
     }
 
-    /// `%f`, `%e` and `%g`: FloatingDecimal's digits rounded half-up, as Java's Formatter does.
-    private static func floating(_ value: Double, _ c: Character, _ precisionIn: Int?, _ flags: Set<UInt16>)
-        -> String
-    {
-        let negative = value.sign == .minus && !value.isNaN
+    /// `%f`, `%e`, `%g` and `%a`: FloatingDecimal's digits rounded half-up, as Java's Formatter does.
+    private static func floating(_ value: Double, _ spec: Specifier) -> String {
+        let flags = spec.flags
+        if value.isNaN { return spec.upper ? "NAN" : "NaN" }
+        let negative = value.sign == .minus
         var body: String
-        if value.isNaN || value.isInfinite {
-            body = value.isNaN ? "NaN" : "Infinity"
+        if value.isInfinite {
+            body = spec.upper ? "INFINITY" : "Infinity"
         } else {
             let magnitude = abs(value)
-            switch c {
+            switch spec.lower {
             case "f":
-                body = fixed(magnitude, precisionIn ?? 6)
-            case "e", "E":
-                body = scientific(magnitude, precisionIn ?? 6)
-                if c == "E" { body = body.uppercased() }
+                let precision = spec.precision ?? 6
+                body = fixed(magnitude, precision)
+                if precision == 0 && flags.contains(35) { body += "." }
+            case "e":
+                let precision = spec.precision ?? 6
+                body = scientific(magnitude, precision)
+                if precision == 0 && flags.contains(35), let e = body.firstIndex(of: "e") { body.insert(".", at: e) }
+            case "a":
+                body = hexDouble(magnitude, spec.precision)
             default:
-                var precision = precisionIn ?? 6
+                var precision = spec.precision ?? 6
                 if precision == 0 { precision = 1 }
                 if magnitude == 0 {
                     body = fixed(0, precision - 1)
@@ -476,9 +642,9 @@ enum JavaFormatter {
                         body = scientific(magnitude, precision - 1)
                     }
                 }
-                if c == "G" { body = body.uppercased() }
             }
-            if flags.contains(44), c == "f" || c == "g" || c == "G" { body = grouped(body) }
+            if spec.upper { body = body.uppercased() }
+            if flags.contains(44), spec.lower == "f" || spec.lower == "g" { body = grouped(body) }
         }
         var sign = ""
         if negative {
@@ -490,6 +656,50 @@ enum JavaFormatter {
         }
         if negative && flags.contains(40) { return "(" + body + ")" }
         return sign + body
+    }
+
+    /// `%a` of a positive finite value: `Double.toHexString`, or rounded
+    /// half-even to `precision` hex digits (subnormals normalized).
+    private static func hexDouble(_ v: Double, _ precisionIn: Int?) -> String {
+        var prec = precisionIn ?? 0
+        if precisionIn == 0 { prec = 1 }
+        func toHexString(_ d: Double) -> (mantissa: String, exponent: Int) {
+            if d == 0 { return ("0.0", 0) }
+            let subnormal = d < Double.leastNormalMagnitude
+            var signif = String(d.significandBitPattern, radix: 16)
+            signif = String(repeating: "0", count: 13 - signif.count) + signif
+            while signif.count > 1 && signif.hasSuffix("0") { signif.removeLast() }
+            return ((subnormal ? "0." : "1.") + signif, subnormal ? -1022 : Int(d.exponent))
+        }
+        var mantissa: String
+        var exponent: Int
+        if v == 0 || prec == 0 || prec >= 13 {
+            (mantissa, exponent) = toHexString(v)
+        } else {
+            var d = v
+            let subnormal = d < Double.leastNormalMagnitude
+            if subnormal { d *= 0x1p54 }
+            let shift = 52 - prec * 4
+            let bits = d.bitPattern & 0x7fff_ffff_ffff_ffff
+            var newSignif = bits >> UInt64(shift)
+            let roundingBits = bits & ~(~UInt64(0) << UInt64(shift))
+            let leastZero = newSignif & 1 == 0
+            let round = (UInt64(1) << UInt64(shift - 1)) & roundingBits != 0
+            let sticky = shift > 1 && (~(UInt64(1) << UInt64(shift - 1)) & roundingBits) != 0
+            if (leastZero && round && sticky) || (!leastZero && round) { newSignif += 1 }
+            let result = Double(bitPattern: newSignif << UInt64(shift))
+            if result.isInfinite {
+                (mantissa, exponent) = ("1.0", 1024)
+            } else {
+                (mantissa, exponent) = toHexString(result)
+                if subnormal { exponent -= 54 }
+            }
+        }
+        if prec != 0, let dot = mantissa.firstIndex(of: ".") {
+            let digits = mantissa.distance(from: mantissa.index(after: dot), to: mantissa.endIndex)
+            if digits < prec { mantissa += String(repeating: "0", count: prec - digits) }
+        }
+        return "0x" + mantissa + "p" + String(exponent)
     }
 
     private static func digits(_ v: Double) -> (digits: [UInt8], decExponent: Int) {

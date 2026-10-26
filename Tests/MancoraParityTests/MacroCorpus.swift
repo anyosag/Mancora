@@ -295,6 +295,42 @@ enum MacroCorpus {
         .init("a replacement's missing named group", #"""
             print(replace("ab", "(?<n>a)b", "${m}"));
             """#),
+        .init("String.format conversions and flags", #"""
+            print(String.format("%#.0f", 3), String.format("%#.0e", 2.5), String.format("%.1f %<.2f", 1.25), String.format("%2$.1f %1$.1f", 1, 2));
+            print(String.format("%h|%H|%.1h", 1.5, -1234567.891, NaN), String.format("%a %A %.2a %.0a", 1.5, -0.1, 0.1, -0.1));
+            print(String.format("%E|%G|%+.1f|%010.1f|%-8.1e|", NaN, NaN, NaN, NaN, 1/0), String.format("%.1b|%5%|%S", 1, NaN));
+            print(String.format("%0(10.1f|% (.1f|%010.3e|%.20a|%a", -1.5, -1.5, -1.5, -0.1, 1e-320));
+            """#),
+        .init("String.format: '-' with '0'", #"""
+            print(String.format("%-08.2f|", 1.5));
+            """#),
+        .init("String.format: ',' with %e", #"""
+            print(String.format("%,.3e", 1234.5));
+            """#),
+        .init("String.format: a missing argument", #"""
+            print(String.format("%.2f %.3f", 1));
+            """#),
+        .init("String.format: '<' without a previous argument", #"""
+            print(String.format("%<.1f", 1));
+            """#),
+        .init("String.format: '-' without a width", #"""
+            print(String.format("%-.2f", 1));
+            """#),
+        .init("String.format: a precision without digits", #"""
+            print(String.format("%.f", 1));
+            """#),
+        .init("String.format: no conversion", #"""
+            print(String.format("%5", 1));
+            """#),
+        .init("String.format: '#' with %g", #"""
+            print(String.format("%#g", 1));
+            """#),
+        .init("String.format: an unknown conversion after a good one", #"""
+            print(String.format("%.2f %q", 1));
+            """#),
+        .init("String.format: a repeated flag", #"""
+            print(String.format("%++.2f", 1));
+            """#),
     ]
 
     /// Images: the current image, pixels, selections, statistics,
