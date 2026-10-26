@@ -192,19 +192,18 @@ public enum TIFFExporter {
         } else if cal.valueUnit != Calibration().valueUnit {
             escaped("vunit", cal.valueUnit)
         }
-        if cal.frameInterval != 0 {
-            let whole = cal.frameInterval == cal.frameInterval.rounded(.towardZero) && abs(cal.frameInterval) < 2e9
-            lines.append("finterval=" + (whole ? String(Int(cal.frameInterval)) : number(cal.frameInterval)))
+        // `(int)v == v ? "" + (int)v : "" + v`: whole numbers within an int print as integers.
+        func javaIntOrDouble(_ v: Double) -> String {
+            let int = JavaNumerics.int32(v)
+            return Double(int) == v ? String(int) : number(v)
         }
+        if cal.frameInterval != 0 { lines.append("finterval=" + javaIntOrDouble(cal.frameInterval)) }
         if cal.timeUnit != "sec" { escaped("tunit", cal.timeUnit) }
         if let y = cal.yUnit, y != cal.unit { escaped("yunit", y) }
         if let z = cal.zUnit, z != cal.unit { escaped("zunit", z) }
         if planes > 1 {
             if cal.pixelDepth != 1 { lines.append("spacing=\(number(cal.pixelDepth))") }
-            if cal.fps != 0 {
-                let whole = cal.fps == cal.fps.rounded(.towardZero) && abs(cal.fps) < 2e9
-                lines.append("fps=" + (whole ? String(Int(cal.fps)) : number(cal.fps)))
-            }
+            if cal.fps != 0 { lines.append("fps=" + javaIntOrDouble(cal.fps)) }
             lines.append("loop=\(cal.loop)")
         }
 

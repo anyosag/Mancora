@@ -252,6 +252,23 @@ struct TIFFExporterTests {
         #expect(scale.unit == 1)
     }
 
+    /// FileSaver writes `finterval` and `fps` as integers when `(int)value
+    /// == value`, which holds for every whole number Java's `int` holds.
+    @Test func wholeFrameIntervalsAsJavaCastsThem() throws {
+        let stack = try ImageStack(width: 1, height: 1, planes: [.gray8([0]), .gray8([0])])
+        var image = try Hyperstack(title: "t", stack: stack, dimensions: HyperstackDimensions(frames: 2))
+        for (value, text) in [
+            (2_100_000_000.0, "2100000000"), (2_147_483_647, "2147483647"), (-2_147_483_648, "-2147483648"),
+            (2_147_483_648, "2.147483648E9"), (-3, "-3"), (4.5, "4.5"),
+        ] {
+            image.calibration.frameInterval = value
+            image.calibration.fps = value
+            let description = TIFFExporter.descriptionString(image)
+            #expect(description.contains("\nfinterval=\(text)\n"), "\(description)")
+            #expect(description.contains("\nfps=\(text)\n"), "\(description)")
+        }
+    }
+
     @Test func refusesMultiChannelRGB() throws {
         let stack = try ImageStack(width: 1, height: 1, planes: [.rgb8([0]), .rgb8([0])])
         let image = try Hyperstack(title: "t", stack: stack, dimensions: HyperstackDimensions(channels: 2))
