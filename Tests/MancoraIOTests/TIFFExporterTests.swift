@@ -120,6 +120,22 @@ struct TIFFMetadataTests {
         #expect(ImageJMetadata(counts: [12], data: Array("IJIJinfo\0\0\0\u{1}".utf8)[...], bigEndian: true) == nil)
     }
 
+    /// TiffDecoder reads ImageJ's private tags without checking where they
+    /// point, and skips records whose header doesn't check out; the image
+    /// opens without them.
+    @Test func unreadableMetadataTagsAreIgnored() throws {
+        let pixels: [UInt8] = [1, 2, 3, 4]
+        for tag: UInt16 in [50838, 50839] {
+            var b = TIFFBuilder.gray8(width: 2, height: 2, pixels: pixels)
+            b.set(50838, 4, [12, 8])
+            b.set(50839, 1, Array("IJIJinfo\0\0\0\u{1}\0H\0i".utf8).map(UInt32.init))
+            b.valueOffsets[tag] = 0x00FF_FFF0  // past the end of the file
+            let image = try TIFFImporter.decode(b.build(), title: "x")
+            #expect(image.stack[0] == .gray8(pixels))
+            #expect(image.info == nil)
+        }
+    }
+
     @Test func metadataRoundTrip() throws {
         var m = ImageJMetadata()
         m.info = "ünïcödé ✓ 𝛑"
