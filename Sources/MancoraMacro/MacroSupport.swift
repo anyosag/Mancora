@@ -153,6 +153,15 @@ public enum MacroSupport {
                     }
                 case SET_Z_COORDINATE, SET_RGB_WEIGHTS:
                     note(name)
+                case MAKE_POINT:
+                    // makePoint(x, y, "... add"): a point added to the overlay.
+                    var j = i + 2
+                    var depth = 0
+                    while token(j) & TOK_MASK != EOF, depth > 0 || token(j) != ch(")") {
+                        if token(j) == ch("(") { depth += 1 } else if token(j) == ch(")") { depth -= 1 }
+                        if let s = string(j), s.contains("add") { note("makePoint with \"add\"") }
+                        j += 1
+                    }
                 default:
                     break
                 }
@@ -169,8 +178,7 @@ public enum MacroSupport {
     static let unsupportedFunctions: Set<String> = [
         "doCommand", "doWand", "drawString", "exec", "Ext",
         "Fit", "floodFill", "getCursorLoc", "getDisplayedArea", "getFontList", "getImageInfo",
-        "getLine", "getLocationAndSize", "getProfile", "getStringWidth", "makeArrow", "makeEllipse",
-        "makeRotatedRectangle", "makeText", "newMenu", "Overlay", "Plot", "selectionContains", "setLut",
+        "getLocationAndSize", "getProfile", "getStringWidth", "makeText", "newMenu", "Overlay", "Plot", "setLut",
         "showText",
     ]
 
@@ -218,8 +226,15 @@ public enum MacroSupport {
             "saveColumnHeaders", "sort", "showArray", "showArrays", "getSelectionStart", "getSelectionEnd",
             "setSelection", "setLocAndSize", "setLocationAndSize",
         ],
-        "Roi": ["size", "getBounds", "getCoordinates", "getName", "setName", "getType", "move", "translate",
-            "remove", "contains"],
+        "Roi": [
+            "size", "getBounds", "getFloatBounds", "getCoordinates", "getContainedPoints", "getName", "setName",
+            "getType", "move", "translate", "remove", "selectNone", "contains", "copy", "paste", "getStrokeColor",
+            "setStrokeColor", "getFillColor", "setFillColor", "getStrokeWidth", "setStrokeWidth",
+            "setUnscalableStrokeWidth", "setMinStrokeWidth", "setAntiAlias", "getGroup", "getProperty",
+            "setProperty", "getProperties", "getPosition", "setPosition", "getPointPosition", "getFeretPoints",
+            "getDefaultColor", "getDefaultStrokeWidth", "setDefaultStrokeWidth", "getDefaultGroup", "getGroupNames",
+            "setGroupNames", "setFontSize", "setJustification",
+        ],
         "RoiManager": ["size", "selected", "getName", "getIndex", "select"],
         "Property": ["get", "set", "getInfo", "setInfo", "getSliceLabel"],
         "Image": ["title", "name", "width", "height"],

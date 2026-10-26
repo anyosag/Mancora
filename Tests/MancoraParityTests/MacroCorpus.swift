@@ -806,4 +806,121 @@ enum MacroCorpus {
             x = Table.get("A", 0, "Mancora Missing");
             """#),
     ]
+
+    /// Selections: the parametric constructors, Roi.* members and geometry queries.
+    static let rois: [MacroParityCase] = [
+        .init("selection constructors", #"""
+            makeEllipse(10, 20, 40, 30, 0.5);
+            print(selectionType(), Roi.getType, Roi.size);
+            getSelectionCoordinates(xs, ys);
+            print(xs.length, xs[0], ys[0], xs[18], ys[18], xs[45], ys[45]);
+            getSelectionBounds(x, y, w, h);
+            print(x, y, w, h, getValue("Area"), getValue("Mean"));
+            makeRotatedRectangle(5, 5, 40, 25, 8);
+            // (Roi.getType says "polygon" here: Mancora keeps the selection as
+            // its .roi bytes, and ImageJ's own decoder reads these back as one.)
+            print(selectionType(), getValue("Area"));
+            getSelectionCoordinates(xs, ys);
+            Array.print(xs);
+            Array.print(ys);
+            makeArrow(5, 5, 30, 20, "notched large");
+            print(selectionType(), Roi.getType, Roi.getStrokeWidth);
+            getLine(x1, y1, x2, y2, lw);
+            print(x1, y1, x2, y2, lw);
+            makeLine(3, 4, 30, 40, 5);
+            getLine(x1, y1, x2, y2, lw);
+            print(selectionType(), x1, y1, x2, y2, lw, Roi.size, Roi.getStrokeColor);
+            makeLine(3.5, 4, 30, 40.25);
+            getLine(x1, y1, x2, y2, lw);
+            print(x1, y2, lw, Roi.size, Roi.getStrokeColor);
+            run("Select None");
+            getLine(x1, y1, x2, y2, lw);
+            print(x1, lw);
+            makePoint(10.5, 12, "large cross red");
+            print(selectionType(), Roi.getType, Roi.getStrokeColor);
+            getSelectionCoordinates(xs, ys);
+            print(xs[0], ys[0]);
+            makeSelection("point dot", newArray(1, 5, 9), newArray(2, 6, 10));
+            print(selectionType(), Roi.size, Roi.getStrokeColor);
+            """#, on: .gray8),
+        .init("geometry queries", #"""
+            makeOval(10, 10, 20, 12);
+            Roi.getFeretPoints(xs, ys);
+            Array.print(xs);
+            Array.print(ys);
+            makePolygon(5, 5, 40, 8, 30, 40, 8, 30);
+            Roi.getFeretPoints(xs, ys);
+            Array.print(xs);
+            Array.print(ys);
+            print(selectionContains(10, 10), selectionContains(4, 4), selectionContains(29.6, 39.4));
+            makeRectangle(10, 10, 4, 3);
+            Roi.getContainedPoints(xs, ys);
+            print(xs.length);
+            Array.print(xs);
+            Array.print(ys);
+            makeLine(2, 2, 20, 30, 10, 40);
+            print(Roi.contains(10, 20), Roi.contains(3, 3), selectionContains(15, 25));
+            makePoint(7, 8);
+            print(Roi.contains(7, 8), Roi.contains(8, 8));
+            makeSelection("point", newArray(1.5, 4), newArray(2, 6));
+            Roi.getContainedPoints(xs, ys);
+            Array.print(xs);
+            makeLine(1, 1, 10, 10);
+            print(Roi.contains(5, 5));
+            """#, on: .gray8),
+        .init("Roi without a selection", #"""
+            run("Select None");
+            print(Roi.size);
+            c = Roi.getStrokeColor;
+            """#, on: .gray8),
+        // Last: after Roi.copy and Roi.paste, ImageJ no longer reports the
+        // next case's image as changed (state the bridge keeps between macros).
+        .init("Roi properties and colors", #"""
+            makeRectangle(5, 6, 20, 10);
+            print(Roi.getStrokeColor, Roi.getFillColor, Roi.getStrokeWidth, Roi.getGroup, Roi.getName + "|");
+            Roi.setStrokeColor("red");
+            Roi.setStrokeWidth(3);
+            print(Roi.getStrokeColor, Roi.getStrokeWidth);
+            Roi.setStrokeColor(0, 128, 255);
+            print(Roi.getStrokeColor);
+            Roi.setStrokeColor("#80ff0000");
+            print(Roi.getStrokeColor);
+            Roi.setFillColor("cyan");
+            print(Roi.getFillColor, Roi.getStrokeColor);
+            Roi.setProperty("id", "42");
+            Roi.setProperty("flag");
+            Roi.setProperty("zeta", "z");
+            print(Roi.getProperty("id"), Roi.getProperty("flag"), Roi.getProperty("none") + "|");
+            print(Roi.getProperties);
+            Roi.setProperty("flag", "");
+            print(Roi.getProperties);
+            Roi.setPosition(3);
+            Roi.getPosition(c, z, t);
+            print(c, z, t);
+            Roi.setPosition(1, 2, 3);
+            Roi.getPosition(c, z, t);
+            print(c, z, t);
+            Roi.setName("box");
+            print(Roi.getName, selectionName());
+            Roi.getFloatBounds(x, y, w, h);
+            print(x, y, w, h);
+            makeRectangle(1.5, 2.25, 10.5, 4);
+            Roi.getFloatBounds(x, y, w, h);
+            print(x, y, w, h);
+            Roi.getBounds(x, y, w, h);
+            print(x, y, w, h);
+            print(Roi.getDefaultColor, Roi.getDefaultStrokeWidth, Roi.getDefaultGroup);
+            Roi.copy;
+            run("Select None");
+            print(selectionType());
+            Roi.paste;
+            print(selectionType());
+            Roi.move(3, 4);
+            Roi.translate(1, 1);
+            getSelectionBounds(x, y, w, h);
+            print(x, y, w, h);
+            Roi.selectNone;
+            print(selectionType(), Roi.size);
+            """#, on: .gray8),
+    ]
 }

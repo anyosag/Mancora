@@ -1785,7 +1785,7 @@ extension Functions {
         case .rectangle(_, let corner): corner > 0 ? roi.outline()?.xs.count ?? 0 : 4
         case .oval: roi.outline()?.xs.count ?? 0
         case .polygon(let p): p.vertices.count
-        case .line: 2
+        case .line: roi.strokeWidth <= 1 ? 2 : 4
         case .points(let p): p.vertices.count
         case .opaque: 0
         }

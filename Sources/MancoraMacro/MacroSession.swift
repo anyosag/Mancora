@@ -81,6 +81,11 @@ public final class MacroSession {
     var frontTable: String?
     /// How each table shows and saves its rows, by title.
     var tableDisplay: [String: TableDisplay] = [:]
+    /// `Roi.copy`'s selection, for `Roi.paste`.
+    var roiClipboard: Roi?
+    /// `Roi.setDefaultStrokeWidth` and `Roi.setGroupNames`.
+    var defaultStrokeWidth = 0.0
+    var groupNames: String?
     /// Image IDs, most recently activated last (ImageJ's `imageActivations`).
     var activations: [Int] = []
     /// Settings `saveSettings()` keeps.

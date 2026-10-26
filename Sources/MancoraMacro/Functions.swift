@@ -138,6 +138,9 @@ final class Functions {
         case GET_DIMENSIONS: try getDimensions()
         case MAKE_POINT: try makePoint()
         case MAKE_ELLIPSE: try makeEllipse()
+        case MAKE_ROTATED_RECT: try makeRotatedRectangle()
+        case MAKE_ARROW: try makeArrow()
+        case GET_LINE: try getLine()
         case TO_SCALED: try toScaled()
         case TO_UNSCALED: try toUnscaled()
         case WAIT_FOR_USER: try waitForUser()
@@ -219,6 +222,7 @@ final class Functions {
         case GET_VALUE: return try getValue()
         case STACK: return try doStack()
         case MATCHES: return try matches(nil)
+        case SELECTION_CONTAINS: return try selectionContains()
         default:
             try unsupported(type)
         }

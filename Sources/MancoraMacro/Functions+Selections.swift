@@ -71,8 +71,12 @@ extension Functions {
         while interp.token == ch(",") {
             let x = Int32(truncatingIfNeeded: javaMathRound(try interp.getExpression()))
             if points.count == 2 && interp.nextToken() == ch(")") {
+                // makeLine(x1, y1, x2, y2, lineWidth): a wide straight line
+                // (updateWideLine), drawn in the ROI color made translucent.
                 try interp.getRightParen()
-                try unsupported("makeLine with a line width")
+                let line = Roi.Line(x1: x1, y1: y1, x2: x2, y2: y2)
+                try setSelection(Roi(.line(line), strokeColor: Self.defaultRoiColor & 0x00FF_FFFF | 0x4D00_0000, strokeWidth: Float(x)))
+                return
             }
             try interp.getComma()
             let y = Int32(truncatingIfNeeded: javaMathRound(try interp.getExpression()))
@@ -107,15 +111,15 @@ extension Functions {
         if interp.nextToken() == ch(",") { options = try getNextString() }
         try interp.getRightParen()
         _ = try image()
-        if options != nil { try unsupported("makePoint with options") }
+        if let options {
+            // new PointRoi(x, y, options): always subpixel, with the options' type, size and color.
+            try setSelection(try pointRoi(.subpixel([Roi.FloatPoint(x: Float(x), y: Float(y))]), options: options))
+            return
+        }
         let vertices: Roi.Vertices =
             Double(jInt(x)) == x && Double(jInt(y)) == y
             ? .integer([Roi.IntPoint(x: jInt(x), y: jInt(y))]) : .subpixel([Roi.FloatPoint(x: Float(x), y: Float(y))])
         try setSelection(Roi(.points(Roi.Points(vertices))))
-    }
-
-    func makeEllipse() throws(MacroSignal) {
-        try unsupported("makeEllipse")
     }
 
     func makeSelection() throws(MacroSignal) {
@@ -161,8 +165,13 @@ extension Functions {
             let p = vertices.floatPoints
             roi = Roi(.line(Roi.Line(x1: Double(p[0].x), y1: Double(p[0].y), x2: Double(p[1].x), y2: Double(p[1].y))))
         case .point:
-            if let type, type != "point" { try unsupported("makeSelection(\"\(type)\", ...)") }
-            roi = Roi(.points(Roi.Points(vertices)))
+            if let type, type != "point" {
+                // new PointRoi(x, y, type): every element of the arrays, as floats.
+                let all = (0..<min(x.count, y.count)).map { Roi.FloatPoint(x: Float(x[$0]), y: Float(y[$0])) }
+                roi = try pointRoi(.subpixel(all), options: type)
+            } else {
+                roi = Roi(.points(Roi.Points(vertices)))
+            }
         default:
             let polygonKind: Roi.Polygon.Kind =
                 switch kind {
@@ -521,64 +530,6 @@ extension Functions {
         if interp.token != ch(".") { try interp.error("'.' expected") }
         interp.getToken()
         return interp.tokenString ?? ""
-    }
-
-    func doRoi() throws(MacroSignal) -> Variable? {
-        let name = try memberName()
-        switch name {
-        case "size":
-            try interp.getParens()
-            guard let roi = try image().roi else { return Variable(0) }
-            return Variable(Double(Self.roiSize(roi)))
-        case "getBounds":
-            try getBounds()
-            return nil
-        case "getCoordinates":
-            try getCoordinates()
-            return nil
-        case "getName":
-            try interp.getParens()
-            return Variable(try image().roi?.name ?? "")
-        case "setName":
-            try setSelectionName()
-            return nil
-        case "getType":
-            try interp.getParens()
-            guard let roi = try image().roi else { return Variable("") }
-            let names = ["rectangle", "oval", "polygon", "freehand", "traced", "line", "polyline", "freeline", "angle",
-                "composite", "point"]
-            return Variable(names[roi.kind.rawValue])
-        case "move":
-            let x = try getFirstArg()
-            let y = try getLastArg()
-            guard let roi = try image().roi else { try interp.fail("Selection required") }
-            let b = roi.bounds
-            try setSelection(Self.translated(roi, dx: x - Double(b.x), dy: y - Double(b.y)))
-            return nil
-        case "translate":
-            let dx = try getFirstArg()
-            let dy = try getLastArg()
-            guard let roi = try image().roi else { try interp.fail("Selection required") }
-            try setSelection(Self.translated(roi, dx: dx, dy: dy))
-            return nil
-        case "remove":
-            try interp.getParens()
-            try setSelection(nil)
-            return nil
-        case "contains":
-            let x = Int(Int32(truncatingIfNeeded: javaMathRound(try getFirstArg())))
-            let y = Int(Int32(truncatingIfNeeded: javaMathRound(try getLastArg())))
-            guard let roi = try image().roi else { try interp.fail("Selection required") }
-            return Variable(Self.roiContains(roi, x, y) ? 1 : 0)
-        default:
-            try unsupported("Roi." + name)
-        }
-    }
-
-    /// `Roi.contains(x, y)` for area selections: whether the pixel is in the mask.
-    static func roiContains(_ roi: Roi, _ x: Int, _ y: Int) -> Bool {
-        guard roi.isArea, let mask = try? roi.mask() else { return false }
-        return mask[x: x, y: y]
     }
 
     func doRoiManager() throws(MacroSignal) -> Variable? {
