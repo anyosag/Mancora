@@ -208,11 +208,15 @@ struct Checksummer {
             files.add(file)
             return
         }
-        let obsoletes = cache[":" + checksum]?.checksum.split(separator: ":").map(String.init) ?? []
+        // The digests an older updater computed matter only for a file that
+        // isn't the site's current version, and cost three more passes over a
+        // jar: they're computed (and cached, as the updater caches them) then.
         if !object.hasPreviousVersion(checksum) {
             // The site may record the digest an older updater computed.
-            if let older = obsoletes.first(where: { object.hasPreviousVersion($0) }) { checksum = older }
-        } else if let current = object.current, !obsoletes.isEmpty, obsoletes.contains(current.checksum) {
+            if let older = obsoleteDigests(candidate, checksum).first(where: { object.hasPreviousVersion($0) }) { checksum = older }
+        } else if let current = object.current, current.checksum != checksum,
+            obsoleteDigests(candidate, checksum).contains(current.checksum)
+        {
             checksum = current.checksum
         }
         object.setLocalVersion(filename: candidate.path, checksum: checksum, timestamp: candidate.timestamp)
@@ -284,11 +288,31 @@ struct Checksummer {
                 : try FijiChecksum.digest(path: path, contents: bytes)
             cache[path] = (checksum, timestamp)
         }
-        if cache[":" + checksum] == nil, path.hasSuffix(".jar") {
-            let bytes = try contents ?? [UInt8](Data(contentsOf: file))
-            let obsoletes = try FijiChecksum.obsoleteDigests(path: path, contents: bytes)
-            cache[":" + checksum] = (obsoletes.joined(separator: ":"), timestamp)
-        }
+        lastContents = path.hasSuffix(".jar") ? contents.map { (path, $0) } : nil
         return checksum
+    }
+
+    /// The jar just digested, kept for its obsolete digests.
+    private var lastContents: (path: String, bytes: [UInt8])?
+
+    /// The digests older updaters computed for a jar with `checksum` (none for other files), cached as `:<checksum>`.
+    mutating func obsoleteDigests(_ candidate: Candidate, _ checksum: String) -> [String] {
+        guard candidate.path.hasSuffix(".jar") else { return [] }
+        if let cached = cache[":" + checksum] { return cached.checksum.split(separator: ":").map(String.init) }
+        let bytes = lastContents?.path == candidate.path ? lastContents?.bytes : (try? [UInt8](Data(contentsOf: candidate.url)))
+        guard let bytes, let obsoletes = try? FijiChecksum.obsoleteDigests(path: candidate.path, contents: bytes) else { return [] }
+        cache[":" + checksum] = (obsoletes.joined(separator: ":"), candidate.timestamp)
+        return obsoletes
+    }
+
+    /// Records the checksums of files just installed (each checked against
+    /// its site's), so the next check needn't read them again.
+    mutating func remember(_ installed: [(path: String, checksum: String)]) {
+        if !cacheLoaded { readCache() }
+        for (path, checksum) in installed where !checksum.isEmpty {
+            guard let date = Self.modificationDate(url(path)) else { continue }
+            cache[path] = (checksum, UpdaterTime.timestamp(date, timeZone: files.timeZone))
+        }
+        writeCache()
     }
 }

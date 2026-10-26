@@ -240,6 +240,9 @@ public final class PluginManager {
             file.setLocalVersion(filename: file.filename, checksum: file.checksum ?? "", timestamp: file.timestamp)
             file.setStatus(.installed)
         }
+        // Verified as they came: the next check needn't read them again.
+        var checksummer = Checksummer(files: files, root: root)
+        checksummer.remember(downloads.map { ($0.filename, $0.checksum ?? "") })
 
         // Uninstalling removes the local copy (the updater stages an empty file for it).
         for file in files.toUninstall {
