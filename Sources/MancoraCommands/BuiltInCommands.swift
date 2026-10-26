@@ -1,4 +1,5 @@
 import MancoraCore
+import MancoraIO
 import MancoraProcess
 
 /// Commands Mancora implements natively, named as in ImageJ's menus.
@@ -6,6 +7,7 @@ enum BuiltInCommands {
     static var all: [CommandDefinition] {
         lutCommands + [invertLUT, enhanceContrast, rename, close, closeAll, duplicate, properties, setScale]
             + [setMeasurements, measure, clearResults, analyzeParticles] + FilterCommands.all + ProcessCommands.all + ThresholdCommands.all + EditCommands.all
+            + CropCommands.all
     }
 
     // MARK: Image ▸ Lookup Tables
@@ -108,6 +110,11 @@ enum BuiltInCommands {
     /// `duplicate` is given, and otherwise the current position (every
     /// channel of a composite shown as one); other images take `range=`
     /// with `duplicate`, and otherwise the current slice.
+    ///
+    /// An area selection crops the copy to its bounds, and a
+    /// non-rectangular one moves onto the copy at (0, 0); `ignore` (offered
+    /// for images that aren't hyperstacks) copies the whole image and the
+    /// selection as it is. Any selection moves a set origin by its position.
     static let duplicate = CommandDefinition("Duplicate...", menu: "Image") { context, options in
         let name = "Duplicate..."
         guard let open = context.current else { throw CommandError.noImage(name) }
@@ -115,6 +122,28 @@ enum BuiltInCommands {
         let dims = image.dimensions
         let wholeStack = options.flag(forLabel: "duplicate")
         let isHyper = dims.channels > 1 || (dims.slices > 1 && dims.frames > 1)
+        let roi = try CropCommands.selection(name, open)
+        var crop: RoiBounds?
+        var copiedROI: [UInt8]?
+        if let roi {
+            let b = roi.bounds
+            if b.x >= image.width || b.y >= image.height || b.x + b.width <= 0 || b.y + b.height <= 0 {
+                throw CommandError.notNative(name)  // a selection outside the image
+            }
+            if case .polygon(let p) = roi.shape, case .rotatedRectangle? = p.parametric {
+                throw CommandError.notNative(name)  // ImageJ straightens rotated rectangles
+            }
+            if !isHyper && options.flag(forLabel: "Ignore selection") {
+                copiedROI = image.encodedROI
+            } else if roi.isArea {
+                crop = try CropCommands.cropRectangle(name, roi, width: image.width, height: image.height)
+                if roi.kind != .rectangle {
+                    guard let moved = CropCommands.atOrigin(roi) else { throw CommandError.notNative(name) }
+                    copiedROI = RoiCodec.encode(moved)
+                }
+            }
+            if crop != nil, !image.encodedOverlay.isEmpty { throw CommandError.notNative(name) }  // ImageJ crops overlays
+        }
         var indices: [Int] = []
         var newDims: HyperstackDimensions
         var channels = image.channels
@@ -161,14 +190,16 @@ enum BuiltInCommands {
         }
         let title = options.value(forLabel: "title") ?? uniqueName(image.title, among: context.images.map(\.title))
         do {
+            let planes = indices.map { index in crop.map { image.stack[index].cropped(width: image.width, to: $0) } ?? image.stack[index] }
             let stack = try ImageStack(
-                width: image.width, height: image.height, planes: indices.map { image.stack[$0] },
+                width: crop?.width ?? image.width, height: crop?.height ?? image.height, planes: planes,
                 labels: indices.map { image.stack.labels[$0] })
+            let calibration = roi.map { CropCommands.shiftedOrigin(image.calibration, by: $0.bounds) } ?? image.calibration
             var copy = try Hyperstack(
-                title: title, stack: stack, dimensions: newDims, calibration: image.calibration,
+                title: title, stack: stack, dimensions: newDims, calibration: calibration,
                 channels: channels, compositeMode: image.compositeMode, info: image.info,
                 properties: image.properties)
-            copy.encodedROI = image.encodedROI
+            copy.encodedROI = copiedROI
             // Duplicator marks plain images and stacks, not hyperstacks.
             if !isHyper { copy.properties["UniqueName"] = "true" }
             context.add(copy)
