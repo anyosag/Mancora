@@ -40,6 +40,11 @@ public struct CommandSettings: Sendable, Hashable {
     /// Process ▸ Binary ▸ Options ▸ EDM output: where Distance Map, Ultimate
     /// Points and Voronoi put their result.
     public var edmOutput = EDMOutput.overwrite
+    /// Process ▸ Find Maxima's prominence and output type, which ImageJ
+    /// keeps from one run to the next: a macro that leaves them out gets
+    /// the last ones.
+    public var maximaProminence = 10.0
+    public var maximaOutput = MaximaOutput.pointSelection
     /// Edit ▸ Options ▸ Conversions ▸ Scale when converting.
     public var scaleConversions = true
     /// Analyze ▸ Set Measurements ▸ Decimal places.

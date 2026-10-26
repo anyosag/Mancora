@@ -43,9 +43,10 @@ enum SegmentationCommands {
 
     /// `MaximumFinder` on the current plane: `prominence=` (an old macro's
     /// `noise=`), `strict`, `exclude`, `above` (with a threshold), `light`
-    /// and `output=`. Image outputs open a new 8-bit image; Point Selection
-    /// selects the maxima, List replaces the Results table with their
-    /// coordinates and Count adds a row.
+    /// and `output=`, the prominence and output defaulting to the last
+    /// run's. Image outputs open a new 8-bit image; Point Selection selects
+    /// the maxima, List replaces the Results table with their coordinates
+    /// and Count adds a row.
     static let findMaxima = CommandDefinition("Find Maxima...", menu: "Process") { context, options in
         let name = "Find Maxima..."
         guard var open = context.current else { throw CommandError.noImage(name) }
@@ -59,16 +60,19 @@ enum SegmentationCommands {
         let macro = MacroOptions(text)
         let image = open.image
         guard image.calibration.valueFunction == nil else { throw CommandError.notNative(name) }  // calibrated values
-        let tolerance = max(macro.number(forLabel: "Prominence >", default: 10), 0)
+        // The dialog's defaults are the last run's values (MaximumFinder's statics).
+        let tolerance = max(macro.number(forLabel: "Prominence >", default: context.settings.maximaProminence), 0)
         let strict = macro.flag(forLabel: "Strict")
         let excludeOnEdges = macro.flag(forLabel: "Exclude edge maxima")
         let useMinThreshold = thresholded && macro.flag(forLabel: "Above lower threshold")
         let lightBackground = macro.flag(forLabel: "Light background")
-        let outputName = macro.value(forLabel: "Output type:") ?? MaximaOutput.names[MaximaOutput.pointSelection.rawValue]
+        let outputName = macro.value(forLabel: "Output type:") ?? MaximaOutput.names[context.settings.maximaOutput.rawValue]
         guard let outputIndex = MaximaOutput.names.firstIndex(of: outputName), let output = MaximaOutput(rawValue: outputIndex)
         else {
             throw CommandError.invalidOption(command: name, detail: "\"\(outputName)\" is not a valid choice for \"Output type:\"")
         }
+        context.settings.maximaProminence = tolerance
+        context.settings.maximaOutput = output
         let invertedLUT = FilterCommands.hasInvertedLUT(open)
         let findMinima = invertedLUT != lightBackground
         // ImageJ asks whether to go on without the threshold when finding minima.

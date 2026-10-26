@@ -187,6 +187,12 @@ struct MaximaParityTests {
                 steps: [Step(command: "Find Maxima...", options: "prominence=10 output=Count"),
                         Step(command: "Find Maxima...", options: "prominence=30 exclude output=Count")],
                 inputs: [.blobs8], tolerance: 1e-9, results: true),
+            // Left out, the prominence and output are the last run's.
+            ParityCase(
+                steps: [Step(command: "Find Maxima...", options: "prominence=45 output=Count"),
+                        Step(command: "Find Maxima...", options: "exclude"),
+                        Step(command: "Find Maxima...", options: "prominence=5 light")],
+                inputs: [.blobs8], tolerance: 1e-9, results: true),
             // (Set Measurements alone leaves ImageJ's table with empty columns
             // that Count would slot in between; Clear Results drops them.)
             ParityCase(
