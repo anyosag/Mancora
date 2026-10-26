@@ -289,6 +289,26 @@ struct UpdaterUnitTests {
         #expect(throws: XML.ParseError.self) { try XML.parse(Array(bomb.utf8)) }
     }
 
+    /// A file's download URL names the file, whatever its name holds: `#`,
+    /// `?` and `%` would otherwise start a fragment, a query or an escape.
+    /// Spaces become `%20`, as in `FilesCollection.getURL`.
+    @Test func downloadURLsNameTheFile() throws {
+        let collection = PluginCollection(root: nil, activePlatforms: ["linux64"])
+        let site = UpdateSite(name: "S", url: "https://sites.test/S/")
+        site.isActive = true
+        collection.addSite(site)
+        for name in ["plugins/a#b.ijm", "macros/what?.ijm", "macros/50%25 off.txt", "plugins/Ünïcode [x].jar", "jars/x y.jar"] {
+            let file = PluginFile(updateSite: "S", filename: name, filesize: 1, checksum: "0", timestamp: 20240101000000, status: .new)
+            collection.add(file)
+            let address = try #require(collection.url(of: file))
+            let url = try #require(URL(string: address), "\(address)")
+            #expect(url.path == "/S/\(name)-20240101000000", "\(address)")
+            #expect(url.query == nil && url.fragment == nil, "\(address)")
+        }
+        let plain = PluginFile(updateSite: "S", filename: "jars/x y.jar", filesize: 1, checksum: "0", timestamp: 1, status: .new)
+        #expect(collection.url(of: plain) == "https://sites.test/S/jars/x%20y.jar-1")
+    }
+
     /// "If the same entity is declared more than once, the first declaration
     /// encountered is binding" (XML 1.0 §4.2).
     @Test func xmlFirstEntityDeclarationIsBinding() throws {
