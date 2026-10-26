@@ -16,6 +16,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "MancoraBridge", targets: ["MancoraBridge"]),
+        .library(name: "MancoraCommands", targets: ["MancoraCommands"]),
         .library(name: "MancoraCore", targets: ["MancoraCore"]),
         .library(name: "MancoraIO", targets: ["MancoraIO"]),
         .library(name: "MancoraMacro", targets: ["MancoraMacro"]),
@@ -30,6 +31,7 @@ let package = Package(
             dependencies: ["MancoraCore", "MancoraIO", "MancoraSupport", "MancoraUpdate"],
             swiftSettings: strictness
         ),
+        .target(name: "MancoraCommands", dependencies: ["MancoraCore", "MancoraProcess"], swiftSettings: strictness),
         .target(name: "MancoraCore", swiftSettings: strictness),
         .target(name: "MancoraIO", dependencies: ["MancoraCore", "MancoraSupport"], swiftSettings: strictness),
         .target(name: "MancoraMacro", swiftSettings: strictness),
@@ -44,6 +46,11 @@ let package = Package(
         .testTarget(
             name: "MancoraBridgeTests",
             dependencies: ["MancoraBridge", "MancoraCore", "MancoraIO", "MancoraUpdate"],
+            swiftSettings: strictness
+        ),
+        .testTarget(
+            name: "MancoraCommandsTests",
+            dependencies: ["MancoraCommands", "MancoraCore"],
             swiftSettings: strictness
         ),
         .testTarget(
