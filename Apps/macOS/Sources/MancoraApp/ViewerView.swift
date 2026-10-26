@@ -30,6 +30,7 @@ struct ViewerWindow: View {
                 }
             }
             .focusedSceneValue(\.viewer, model)
+            .background(ChangeTracking(model: model))
             .onChange(of: activeState, initial: true) {
                 if activeState == .key { AppSession.shared.activate(model) }
             }

@@ -26,6 +26,7 @@ let package = Package(
                 .product(name: "MancoraIO", package: "Mancora"),
                 .product(name: "MancoraMacro", package: "Mancora"),
                 .product(name: "MancoraPlugins", package: "Mancora"),
+                .product(name: "MancoraProcess", package: "Mancora"),
                 .product(name: "MancoraSupport", package: "Mancora"),
                 .product(name: "MancoraUpdate", package: "Mancora"),
             ],

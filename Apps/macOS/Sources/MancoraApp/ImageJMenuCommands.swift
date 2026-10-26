@@ -158,7 +158,9 @@ enum AppMenuActions {
             NSApp.keyWindow?.performClose(nil)
         case "Close All":
             for window in NSApp.windows where window.isVisible && window.title != "Recorder" { window.performClose(nil) }
-        case "Save", "Tiff...":
+        case "Save":
+            viewer?.saveInPlace()
+        case "Tiff...":
             viewer?.presentSavePanel()
         case "Revert":
             viewer?.revert()

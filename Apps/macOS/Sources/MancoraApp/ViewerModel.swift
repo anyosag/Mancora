@@ -79,6 +79,9 @@ final class ViewerModel {
     @ObservationIgnored private var renderTask: Task<Void, Never>?
 
     var hasImage: Bool { image != nil }
+    /// Unsaved changes (ImageJ's `ImagePlus.changes`): set when a command
+    /// changes the image, cleared when it's opened or saved.
+    var isChanged = false
 
     // MARK: Opening and saving
 
@@ -150,6 +153,7 @@ final class ViewerModel {
         zoom = .fit
         autoState.reset()
         threshold = nil
+        isChanged = false
         render()
     }
 
@@ -181,10 +185,37 @@ final class ViewerModel {
             if let error {
                 errorMessage = error.description
             } else {
-                self.image?.title = url.lastPathComponent
-                fileURL = url
-                AppRecorder.shared.recordSave(url)
+                didSave(to: url)
             }
+        }
+    }
+
+    /// Saves now, for the questions asked on close and quit; returns whether it saved.
+    func saveNow(to url: URL) -> Bool {
+        guard let image else { return false }
+        do throws(MancoraIOError) {
+            try TIFFExporter.write(image, to: url.path)
+        } catch {
+            errorMessage = error.description
+            return false
+        }
+        didSave(to: url)
+        return true
+    }
+
+    private func didSave(to url: URL) {
+        image?.title = url.lastPathComponent
+        fileURL = url
+        isChanged = false
+        AppRecorder.shared.recordSave(url)
+    }
+
+    /// File ▸ Save: over the TIFF the image came from, else Save As.
+    func saveInPlace() {
+        if let fileURL, ["tif", "tiff"].contains(fileURL.pathExtension.lowercased()) {
+            save(to: fileURL)
+        } else {
+            presentSavePanel()
         }
     }
 
@@ -440,6 +471,7 @@ final class ViewerModel {
             }
         }
         image = changed
+        isChanged = true
         channel = min(channel, dims.channels - 1)
         slice = min(slice, dims.slices - 1)
         frame = min(frame, dims.frames - 1)

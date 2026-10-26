@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 @main
 struct MancoraApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var updater = AppUpdater()
     @State private var bridge = AppBridge()
     @State private var updateSites = AppUpdateSites()
