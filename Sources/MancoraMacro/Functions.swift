@@ -1676,8 +1676,9 @@ final class Functions {
         case "open": return try openFile()
         case "openAsString":
             let path = try getStringArg()
+            // IJ.openAsString's error string, which the macro reports as the error.
             guard let data = fm.contents(atPath: path) else {
-                try interp.error("File not found")
+                try interp.error("Error: file not found")
                 return nil
             }
             return String(decoding: data, as: UTF8.self)
@@ -1867,7 +1868,6 @@ final class Functions {
         return javaSubstring(path, 0, i)
     }
 
-    #if os(Windows)
     /// The path a `java.io.File` keeps: separators doubled or at the end removed ("a//b/" is "a/b").
     static func javaNormalizedPath(_ path: String) -> String {
         var out: [UInt16] = []
@@ -1880,6 +1880,7 @@ final class Functions {
         return utf16String(out)
     }
 
+    #if os(Windows)
         static let separator = "\\"
     #else
         static let separator = "/"

@@ -1281,6 +1281,7 @@ extension Functions {
             guard let path = try image().image.properties["Mancora.path"] else { return "" }
             return (Self.javaParent(path) ?? "") + Self.separator
         case "image.subtitle":
+            _ = try image()  // there's no window to give a subtitle in batch mode
             return ""
         default:
             break
