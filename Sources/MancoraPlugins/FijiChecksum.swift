@@ -44,10 +44,15 @@ public enum FijiChecksum {
             let x = Array(a.element.name.utf16), y = Array(b.element.name.utf16)
             return x.lexicographicallyPrecedes(y) || (x == y && a.offset < b.offset)
         }.map(\.element)
+        // Java's JarFile reads an entry by its name, which for a name the jar
+        // holds twice (vecmath-1.7.2.jar's pom.xml and pom.properties) is
+        // always the last copy in the central directory.
+        var lastCopy: [String: [UInt8]] = [:]
+        for entry in entries { lastCopy[entry.name] = entry.data }
         var sha = SHA1()
         for entry in sorted {
             sha.update(asciiBytes(entry.name))
-            var data = entry.data
+            var data = lastCopy[entry.name] ?? entry.data
             if properties && entry.name.hasSuffix(".properties") { data = skipHashedLines(data) }
             if manifests && entry.name == "META-INF/MANIFEST.MF" { data = filterManifest(data, keepOnlyMainClass: keepOnlyMainClass) }
             sha.update(data)

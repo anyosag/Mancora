@@ -76,11 +76,14 @@ jobs:
         run: >-
           MANCORA_NETWORK_TESTS=1 MANCORA_TEST_IJ_JAR="$GITHUB_WORKSPACE/Tools/fixtures/.cache/ij-1.54p.jar"
           xvfb-run -a -s "-screen 0 1280x1024x24 -nolisten tcp" swift test --skip-build --filter UpdateSiteNetworkTests
-      - name: The latest Fiji, downloaded and run behind the bridge, and its update sites checked
-        # fiji-latest-linux64-jdk.zip (about 700 MB) from downloads.imagej.net, verified,
-        # unpacked, then ImageJ 1.x, SciJava commands, scripts and menus through the bridge.
+      - name: Fiji from its update site, run behind the bridge, and its update sites checked
+        # GitHub's runners can't download from downloads.imagej.net, so Fiji is put
+        # together from its own update site (sites.imagej.net/Fiji, every file
+        # checked by Mancora's updater) and runs on this JDK; then ImageJ 1.x,
+        # SciJava commands, scripts and menus through the bridge, and an update check.
         run: >-
-          MANCORA_NETWORK_TESTS=1
+          MANCORA_NETWORK_TESTS=1 MANCORA_TEST_FIJI_FROM_SITES=1
+          JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")"
           xvfb-run -a -s "-screen 0 1280x1024x24 -nolisten tcp" swift test --skip-build --no-parallel --filter FijiNetworkTests
 
   windows:

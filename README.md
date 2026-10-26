@@ -110,7 +110,9 @@ unpacked into a staging folder and renamed into place, in
 `~/Library/Application Support/Mancora/Fiji` on macOS and
 `$XDG_DATA_HOME/mancora/Fiji` (`~/.local/share/mancora/Fiji`) on Linux, or
 `MANCORA_FIJI_HOME`. Fiji is downloaded on the user's computer, not
-shipped with Mancora.
+shipped with Mancora. A Fiji without Java of its own (Fiji's no-Java
+download, say) runs on the JDK in `MANCORA_JAVA_HOME` or `JAVA_HOME`
+(Java 11 or newer).
 
 Updates come from the update sites Fiji's own `db.xml.gz` enables, read
 by Mancora's port of Fiji's updater. They're applied to a copy of the
@@ -190,7 +192,10 @@ with code written alongside it:
   and the latest Fiji is downloaded, run behind the bridge (an ImageJ 1.x
   command, SciJava commands and scripts, Fiji's menus) and checked for
   updates (`FijiNetworkTests`; `MANCORA_TEST_FIJI_DOWNLOADS` can name a
-  folder already holding the archive and its `.sha256`).
+  folder already holding the archive and its `.sha256`). With
+  `MANCORA_TEST_FIJI_FROM_SITES=1`, as in CI (whose runners can't reach
+  downloads.imagej.net), Fiji is put together from its own update site
+  instead and runs on the JDK in `JAVA_HOME`.
 
 `Tools/fixtures/generate.sh` regenerates the fixtures.
 
