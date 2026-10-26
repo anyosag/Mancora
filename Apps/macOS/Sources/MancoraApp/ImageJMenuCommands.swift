@@ -162,6 +162,12 @@ enum AppMenuActions {
             viewer?.saveInPlace()
         case "Tiff...":
             viewer?.presentSavePanel()
+        case "ZIP...":
+            viewer?.presentSavePanel(as: .zip, extension: "zip")
+        case "PNG...":
+            viewer?.presentSavePanel(as: .png, extension: "png")
+        case "Gif...":
+            viewer?.presentSavePanel(as: .gif, extension: "gif")
         case "Revert":
             viewer?.revert()
         case "In [+]":

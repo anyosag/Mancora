@@ -98,23 +98,36 @@ final class ViewerModel {
     /// The bridge, for files Mancora can't read itself.
     @ObservationIgnored var bridge: AppBridge?
 
+    /// File ▸ Open: images natively (TIFF, ZIP, PNG, GIF), ROI sets into
+    /// the ROI Manager, a `.roi` file as the selection, and tables into
+    /// the Results window; other formats through ImageJ or Bio-Formats.
     func open(_ request: OpenRequest) {
         isBusy = true
         let path = request.url.path, virtual = request.virtual
         let isTIFF = ["tif", "tiff", "btf", "tf8"].contains(request.url.pathExtension.lowercased())
         Task {
             // Large files take a while to decode; keep the window responsive.
-            let result = await Task.detached(priority: .userInitiated) { () -> Result<Hyperstack, MancoraIOError> in
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<ImageOpener.Contents, MancoraIOError> in
                 do throws(MancoraIOError) {
-                    return .success(try TIFFImporter.read(path: path, options: .init(virtual: virtual)))
+                    return .success(try ImageOpener.open(path: path, options: .init(virtual: virtual)))
                 } catch {
                     return .failure(error)
                 }
             }.value
             switch result {
-            case .success(let image):
+            case .success(.image(let image)):
                 isBusy = false
                 show(image, from: request.url)
+            case .success(.rois(let entries)):
+                isBusy = false
+                AppSession.shared.roiManager.entries += entries.map { .init(name: $0.name, roi: $0.roi) }
+                AppSession.shared.requestWindow("roi-manager")
+            case .success(.roi(let roi)):
+                isBusy = false
+                if hasImage { setSelection(roi) } else { errorMessage = "Open an image first: \(request.url.lastPathComponent) is a selection." }
+            case .success(.table(let table, let title)):
+                isBusy = false
+                AppSession.shared.showTable(table, title: title)
             case .failure(let error):
                 // Not a TIFF, or a TIFF feature Mancora lacks: ImageJ, or Bio-Formats, may read it.
                 var unsupported = false
@@ -165,6 +178,24 @@ final class ViewerModel {
         panel.nameFieldStringValue = (base.isEmpty ? "Untitled" : base) + ".tif"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         save(to: url)
+    }
+
+    /// File ▸ Save As ▸ ZIP, PNG or GIF: the format ImageJ writes (PNG and
+    /// GIF save the plane shown).
+    func presentSavePanel(as format: ImageOpener.Format, extension ext: String) {
+        guard let image else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: ext) ?? .data]
+        let base = (image.title as NSString).deletingPathExtension
+        panel.nameFieldStringValue = (base.isEmpty ? "Untitled" : base) + "." + ext
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let position = ImageOpener.Position(channel: channel, slice: slice, frame: frame)
+        do throws(MancoraIOError) {
+            try ImageOpener.write(image, to: url.path, format: format, position: position)
+            AppRecorder.shared.recordLine("saveAs(\"\(ext == "zip" ? "ZIP" : ext.uppercased())\", \"\(MacroRecorder.escape(url.path))\");")
+        } catch {
+            errorMessage = error.description
+        }
     }
 
     /// Saves as an ImageJ-compatible TIFF that ImageJ and Fiji reopen as the same image.

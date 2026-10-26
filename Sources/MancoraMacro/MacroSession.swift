@@ -306,6 +306,11 @@ public struct RoiManagerList: Sendable {
     public struct Entry: Sendable, Hashable {
         public var name: String
         public var roi: Roi
+
+        public init(name: String, roi: Roi) {
+            self.name = name
+            self.roi = roi
+        }
     }
 
     public var entries: [Entry] = []

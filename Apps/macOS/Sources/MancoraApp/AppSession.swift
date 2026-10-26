@@ -93,6 +93,19 @@ final class AppSession {
         resultsAdded += 1
     }
 
+    /// Asks the front image window to open a tool window (`openWindow` lives in views).
+    private(set) var requestedWindow: (id: String, serial: Int)?
+    func requestWindow(_ id: String) {
+        requestedWindow = (id, (requestedWindow?.serial ?? 0) + 1)
+    }
+
+    /// A table opened from a file: "Results" replaces the Results table,
+    /// others are kept under their title.
+    func showTable(_ table: ResultsTable, title: String) {
+        if title == "Results" { results = table } else { tables[title] = table }
+        resultsAdded += 1
+    }
+
     func clearResults() {
         results.reset()
     }

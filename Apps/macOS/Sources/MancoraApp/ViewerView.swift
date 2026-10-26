@@ -45,6 +45,9 @@ struct ViewerWindow: View {
             }
             .onChange(of: AppSession.shared.resultsAdded) { openWindow(id: "results") }
             .onChange(of: AppSession.shared.logAdded) { openWindow(id: "log") }
+            .onChange(of: AppSession.shared.requestedWindow?.serial) {
+                if activeState == .key, let id = AppSession.shared.requestedWindow?.id { openWindow(id: id) }
+            }
             .onOpenURL { url in
                 model.bridge = bridge
                 // Files opened from the Finder: fill this window if it's empty.
