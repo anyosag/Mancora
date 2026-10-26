@@ -172,6 +172,30 @@ struct BridgeIntegrationTests {
 
     /// The P4 exit test: killing the helper loses nothing, and the next
     /// request starts a new one.
+    /// Bridges that start together on a new home (as test suites and app
+    /// windows do) compile the helper once between them, and none of them
+    /// runs a copy that another is still writing.
+    @Test func bridgesStartingTogetherShareTheHelper() async throws {
+        let first = try BridgeFixtures.bridge()
+        let config = await first.configuration
+        let image = fixture
+        let bridges = [first] + (1..<6).map { _ in Bridge(configuration: config) }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for bridge in bridges {
+                group.addTask {
+                    let result = try await bridge.run("Invert", images: [image])
+                    #expect(result.images.count == 1)
+                    #expect(await bridge.launchCount == 1)
+                    await bridge.stop()
+                }
+            }
+            try await group.waitForAll()
+        }
+        let helpers = try FileManager.default.contentsOfDirectory(atPath: config.home.root.appendingPathComponent("helper").path)
+        #expect(helpers.count == 1)
+        #expect(helpers.allSatisfy { !$0.hasPrefix(".") })
+    }
+
     @Test func recoversWhenTheHelperIsKilled() async throws {
         let bridge = try BridgeFixtures.bridge()
         try await bridge.start()
