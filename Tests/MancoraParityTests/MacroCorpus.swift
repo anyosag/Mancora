@@ -303,6 +303,20 @@ enum MacroCorpus {
             function f(a, b, c, d) { return f(a, b, c, d); }
             f(1, 2, 3, 4);
             """#),
+        .init("results as strings and headings", #"""
+            setResult("A", 0, 1.5);
+            setResult("A", 1, 2);
+            setResult("B", 0, 3);
+            setResult("B", 1, 1e9);
+            setResult("C", 0, 2147483647);
+            setResult("C", 1, 4e9);
+            print(getResultString("A", 0), getResultString("A", 1), getResultString("B", 0), getResultString("B", 1));
+            print(getResultString("C", 0), getResultString("C", 1), Table.getString("A", 1), Table.getString("B", 1));
+            print(String.getResultsHeadings + "|");
+            print(Table.headings + "|");
+            setResult("Label", 0, "x");
+            print(Table.headings + "|");
+            """#),
         .init("String.format conversions and flags", #"""
             print(String.format("%#.0f", 3), String.format("%#.0e", 2.5), String.format("%.1f %<.2f", 1.25), String.format("%2$.1f %1$.1f", 1, 2));
             print(String.format("%h|%H|%.1h", 1.5, -1234567.891, NaN), String.format("%a %A %.2a %.0a", 1.5, -0.1, 0.1, -0.1));

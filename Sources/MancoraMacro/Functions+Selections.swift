@@ -355,8 +355,9 @@ extension Functions {
         if rt.columns.contains(column) {
             switch rt.value(column, row: row) {
             case .text(let s)?: return s
-            case .number(let n)?: return ResultsFormatter.cell(n, decimalPlaces: session.context.settings.decimalPlaces)
-            case nil: return ResultsFormatter.cell(rt.number(column, row: row), decimalPlaces: session.context.settings.decimalPlaces)
+            default:
+                return ResultsFormatter.cell(
+                    rt.number(column, row: row), column: column, of: rt, decimalPlaces: session.context.settings.decimalPlaces)
             }
         }
         if column == "Label" { return rt.labels[row] ?? "null" }
@@ -658,8 +659,7 @@ extension Functions {
                 if interp.nextToken() != ch(")") { title = try getString() }
                 try interp.getRightParen()
             }
-            let rt = try table(title)
-            return Variable((rt.labels.contains { $0 != nil } ? ["Label"] : []).joined() + (rt.labels.contains { $0 != nil } ? "\t" : "") + rt.columns.joined(separator: "\t"))
+            return Variable(ResultsFormatter.headings(try table(title)))
         case "get", "getString":
             let column = try getFirstString()
             try interp.getComma()
@@ -675,7 +675,11 @@ extension Functions {
             if name == "getString" {
                 switch rt.value(column, row: row) {
                 case .text(let s)?: return Variable(s)
-                default: return Variable(ResultsFormatter.cell(rt.number(column, row: row), decimalPlaces: session.context.settings.decimalPlaces))
+                default:
+                    return Variable(
+                        ResultsFormatter.cell(
+                            rt.number(column, row: row), column: column, of: rt,
+                            decimalPlaces: session.context.settings.decimalPlaces))
                 }
             }
             if case .text(let s)? = rt.value(column, row: row) { return Variable(toolsParseDouble(s)) }
@@ -1013,13 +1017,18 @@ enum MaximumFinder1D {
 
 /// How the results table shows and saves numbers.
 enum ResultsFormatter {
-    /// A cell as `ResultsTable.getStringValue` gives it: integers without
-    /// decimals when the column is all integers is ImageJ's rule; here a
-    /// value is shown with `decimalPlaces` unless it is an integer.
-    static func cell(_ value: Double, decimalPlaces: Int) -> String {
+    /// A number in `column` as `ResultsTable.getStringValue` gives it: with
+    /// `decimalPlaces` once the column has held a non-integer, otherwise
+    /// integers without decimals (`n(value)`).
+    static func cell(_ value: Double, column: String, of rt: ResultsTable, decimalPlaces: Int) -> String {
         if value.isNaN { return "NaN" }
-        if Double(jInt(value)) == value && abs(value) < 1e9 { return ImageJFormat.d2s(value, 0) }
+        if !rt.decimalColumns.contains(column) && Double(jInt(value)) == value { return ImageJFormat.d2s(value, 0) }
         return ImageJFormat.resultsTableD2S(value, decimalPlaces)
+    }
+
+    /// `getColumnHeadings()`: the row numbers' column, Label, then the columns, tab-separated.
+    static func headings(_ rt: ResultsTable) -> String {
+        " \t" + (rt.labels.contains { $0 != nil } ? "Label\t" : "") + rt.columns.joined(separator: "\t")
     }
 
     /// `ResultsTable.saveAs(path.csv)`: a heading row (" " for the row
@@ -1037,7 +1046,7 @@ enum ResultsFormatter {
             for column in rt.columns {
                 switch rt.value(column, row: row) {
                 case .text(let s)?: cells.append(s)
-                default: cells.append(cell(rt.number(column, row: row), decimalPlaces: decimalPlaces))
+                default: cells.append(cell(rt.number(column, row: row), column: column, of: rt, decimalPlaces: decimalPlaces))
                 }
             }
             lines.append(cells.joined(separator: ","))

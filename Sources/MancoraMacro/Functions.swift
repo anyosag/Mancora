@@ -957,10 +957,7 @@ final class Functions {
             }
         case "getResultsHeadings":
             try interp.getParens()
-            // ResultsTable.getColumnHeadings(): the row number column, Label, then the columns.
-            let rt = session.context.results
-            let label = rt.labels.contains { $0 != nil } ? "Label\t" : ""
-            return " \t" + label + rt.columns.map { $0 + "\t" }.joined()
+            return ResultsFormatter.headings(session.context.results)
         case "copy", "show", "copyResults", "paste", "setFontSize":
             try unsupported("String." + name)
         default:

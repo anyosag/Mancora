@@ -229,6 +229,7 @@ public final class MacroSession {
         guard lo <= hi else { return }
         var table = ResultsTable()
         table.emptyCellsAreNaN = context.results.emptyCellsAreNaN
+        for column in context.results.decimalColumns { table.setDecimal(column) }
         for row in 0..<rows where row < lo || row > hi {
             let r = table.addRow(label: context.results.labels[row])
             for column in context.results.columns {
