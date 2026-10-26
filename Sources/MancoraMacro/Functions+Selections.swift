@@ -72,7 +72,10 @@ extension Functions {
             let x = Int32(truncatingIfNeeded: javaMathRound(try interp.getExpression()))
             if points.count == 2 && interp.nextToken() == ch(")") {
                 try interp.getRightParen()
-                try unsupported("makeLine with a line width")
+                // Line.updateWideLine: the width, and ImageJ's yellow at 30% opacity.
+                let line = Roi.Line(x1: x1, y1: y1, x2: x2, y2: y2)
+                try setSelection(Roi(.line(line), strokeColor: 0x4DFF_FF00, strokeWidth: max(Float(x), 0)))
+                return
             }
             try interp.getComma()
             let y = Int32(truncatingIfNeeded: javaMathRound(try interp.getExpression()))

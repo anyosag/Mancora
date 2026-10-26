@@ -28,6 +28,12 @@ final class Functions {
     var pen: (x: Int, y: Int) = (0, 0)
     /// `snapshot()`'s copy of a plane, for `reset()`.
     var snapshot: (id: Int, index: Int, plane: Plane)?
+    /// The shift and alt keys `setKeyDown` held for the next selection
+    /// function (ImageJ's `shiftKeyDown`, `altKeyDown`), and whether it was
+    /// called (`Interpreter.keysSet`: the keys are released at the end).
+    var selectionShift = false
+    var selectionAlt = false
+    var keysSet = false
 
     init(interp: Interpreter) {
         self.interp = interp
@@ -47,6 +53,11 @@ final class Functions {
             try? writer.close()
             self.writer = nil
         }
+        if keysSet {
+            session.keys.alt = false
+            session.keys.shift = false
+            session.keys.space = false
+        }
         session.finishMacro()
     }
 
@@ -54,7 +65,9 @@ final class Functions {
 
     func doFunction(_ type: Int) throws(MacroSignal) {
         switch type {
-        case RUN: try doRun()
+        case RUN:
+            try doRun()
+            releaseKeys()
         case SELECT: try selectWindow()
         case WAIT:
             let ms = try getArg()
@@ -74,8 +87,9 @@ final class Functions {
         case SET_BACKGROUND: try setBackgroundColor()
         case SET_COLOR: try setColor()
         case MAKE_LINE: try makeLine()
-        case MAKE_OVAL: try makeOval()
-        case MAKE_RECTANGLE: try makeRectangle()
+        case MAKE_OVAL: try makingSelection("makeOval", releasingKeys: true) { () throws(MacroSignal) in try makeOval() }
+        case MAKE_RECTANGLE:
+            try makingSelection("makeRectangle", releasingKeys: true) { () throws(MacroSignal) in try makeRectangle() }
         case DUMP: try interp.getParens()
         case MOVE_TO: try moveTo()
         case LINE_TO: try lineTo()
@@ -98,10 +112,14 @@ final class Functions {
         case SET_LOCATION: try skipArgs()
         case GET_VOXEL_SIZE: try getVoxelSize()
         case GET_HISTOGRAM: try getHistogram()
+        case GET_LINE: try getLine()
         case GET_BOUNDING_RECT, GET_BOUNDS: try getBounds()
         case GET_LUT: try getLut()
         case GET_COORDINATES: try getCoordinates()
-        case MAKE_SELECTION: try makeSelection()
+        case MAKE_SELECTION:
+            try makingSelection("makeSelection", combines: { $0.kind == .polygon || $0.kind == .freehand }) {
+                () throws(MacroSignal) in try makeSelection()
+            }
         case SET_RESULT: try setResult()
         case UPDATE_RESULTS: try interp.getParens()
         case SET_BATCH_MODE: try setBatchMode()
@@ -126,17 +144,24 @@ final class Functions {
         case GET_DATE_AND_TIME: try getDateAndTime()
         case SET_METADATA: try setMetadata()
         case CALCULATOR: try imageCalculator()
-        case MAKE_POLYGON: try makePolygon()
+        case MAKE_POLYGON: try makingSelection("makePolygon") { () throws(MacroSignal) in try makePolygon() }
         case SET_SELECTION_NAME: try setSelectionName()
         case DRAW_RECT, FILL_RECT, DRAW_OVAL, FILL_OVAL: try drawOrFill(type)
         case SET_OPTION: try setOption()
         case SET_SELECTION_LOC: try setSelectionLocation()
         case GET_DIMENSIONS: try getDimensions()
-        case MAKE_POINT: try makePoint()
+        case MAKE_POINT:
+            // IJ.makePoint adds (shift) or removes (alt) a point of a point selection.
+            if session.keys.shift || session.keys.alt, session.context.current?.roi?.kind == .point {
+                try unsupported("makePoint with the shift or alt key down")
+            }
+            try makePoint()
+            (selectionShift, selectionAlt) = (false, false)
         case MAKE_ELLIPSE: try makeEllipse()
         case TO_SCALED: try toScaled()
         case TO_UNSCALED: try toUnscaled()
-        case SET_JUSTIFICATION, SET_Z_COORDINATE, SET_KEY_DOWN, RESTORE_PREVIOUS_TOOL, SET_RGB_WEIGHTS:
+        case SET_KEY_DOWN: try setKeyDown()
+        case SET_JUSTIFICATION, SET_Z_COORDINATE, RESTORE_PREVIOUS_TOOL, SET_RGB_WEIGHTS:
             try skipArgs()
         default:
             try unsupported(type)
@@ -196,9 +221,7 @@ final class Functions {
             return 1
         case PARSE_FLOAT: return parseDouble(try getStringArg())
         case PARSE_INT: return try parseInt()
-        case IS_KEY_DOWN:
-            _ = try getStringArg()
-            return 0
+        case IS_KEY_DOWN: return try isKeyDown()
         case GET_SLICE_NUMBER:
             try interp.getParens()
             return Double(try image().currentSliceNumber)

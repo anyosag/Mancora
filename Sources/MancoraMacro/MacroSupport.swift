@@ -48,7 +48,7 @@ public enum MacroSupport {
     static let unsupportedFunctions: Set<String> = [
         "Dialog", "doCommand", "doWand", "drawString", "exec", "Ext",
         "Fit", "floodFill", "getCursorLoc", "getDisplayedArea", "getFontList", "getImageInfo",
-        "getLine", "getLocationAndSize", "getProfile", "getStringWidth", "makeArrow", "makeEllipse",
+        "getLocationAndSize", "getStringWidth", "makeArrow", "makeEllipse",
         "makeRotatedRectangle", "makeText", "newMenu", "Overlay", "Plot", "selectionContains", "setLut",
         "showText", "waitForUser",
     ]
