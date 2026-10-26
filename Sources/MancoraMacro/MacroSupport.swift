@@ -112,7 +112,7 @@ public enum MacroSupport {
             "getDisplayMode",
         ],
         "Table": ["size", "title", "headings", "get", "getString", "set", "getColumn", "setColumn", "columnExists",
-            "create", "reset", "update", "show"],
+            "create", "reset", "update", "show", "save", "open", "showRowNumbers", "hideRowNumbers"],
         "Roi": ["size", "getBounds", "getCoordinates", "getName", "setName", "getType", "move", "translate",
             "remove", "contains"],
         "RoiManager": ["size", "selected", "getName", "getIndex", "select"],

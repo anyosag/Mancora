@@ -1,7 +1,7 @@
 // `mancora`: headless command-line access to Mancora's core.
 //
-//   mancora info [--virtual] <image.tif>   describe an image (--virtual reads planes on demand)
-//   mancora convert <in.tif> <out.tif>     re-save a TIFF the way ImageJ writes them
+//   mancora info [--virtual] <image>       describe an image: TIFF, ZIP, PNG or GIF (--virtual: TIFF planes on demand)
+//   mancora convert <in> <out>             re-save an image the way ImageJ writes it, as .tif, .zip, .png or .gif
 //   mancora lut <file.lut>                 describe a LUT file
 //   mancora luts                           list the built-in LUTs
 //   mancora update [--download <dir>]      check for a newer release
@@ -21,8 +21,8 @@ import MancoraSupport
 import MancoraUpdate
 
 let usage = """
-    usage: mancora info [--virtual] [--scan] <image.tif>
-           mancora convert <in.tif> <out.tif> [--big-endian]
+    usage: mancora info [--virtual] [--scan] <image>       (TIFF, ZIP, PNG or GIF)
+           mancora convert <in> <out> [--big-endian]       (out: .tif, .zip, .png or .gif)
            mancora lut <file.lut>
            mancora luts
            mancora update [--download <directory>]
@@ -78,7 +78,7 @@ case ("info", 2...4):
     guard flags.isSubset(of: ["--virtual", "--scan"]) else { fail(usage) }
     do {
         let started = Date()
-        let image = try TIFFImporter.read(path: args[args.count - 1], options: .init(virtual: flags.contains("--virtual")))
+        let image = try ImageOpener.read(path: args[args.count - 1], options: .init(virtual: flags.contains("--virtual")))
         print(describe(image))
         print("opened in \(milliseconds(since: started)) ms\(image.stack.isVirtual ? " (virtual)" : "")")
         if flags.contains("--scan") {
@@ -107,8 +107,12 @@ case ("lut", 2):
 case ("convert", 3), ("convert", 4):
     guard args.count == 3 || args[3] == "--big-endian" else { fail(usage) }
     do {
-        let image = try TIFFImporter.read(path: args[1])
-        try TIFFExporter.write(image, to: args[2], options: .init(bigEndian: args.count == 4))
+        let image = try ImageOpener.read(path: args[1])
+        if args.count == 4 || ImageSaver.Format(path: args[2]) == .tiff {
+            try TIFFExporter.write(image, to: args[2], options: .init(bigEndian: args.count == 4))
+        } else {
+            try ImageSaver.write(image, to: args[2])
+        }
     } catch {
         fail("mancora: \(error)")
     }
@@ -205,7 +209,7 @@ func bridgeCommand(_ args: [String]) async {
                 print("\(command.name)\t\(command.className)")
             }
         case ("run", 4), ("run", 5):
-            let input = try TIFFImporter.read(path: args[3])
+            let input = try ImageOpener.read(path: args[3])
             let result = try await bridge.run(args[1], options: args[2], images: [input])
             printBridgeResult(result)
             if args.count == 5 {
@@ -227,7 +231,7 @@ func bridgeCommand(_ args: [String]) async {
             }
         case ("macro", 2...):
             let code = try String(contentsOfFile: args[1], encoding: .utf8)
-            let images = try args.dropFirst(2).map { path throws(MancoraIOError) in try TIFFImporter.read(path: path) }
+            let images = try args.dropFirst(2).map { path throws(MancoraIOError) in try ImageOpener.read(path: path) }
             let result = try await bridge.runMacro(code, images: images)
             printBridgeResult(result)
             for (k, image) in result.images.enumerated() {

@@ -27,17 +27,25 @@ public enum TIFFImporter {
         public var virtual: Bool
         /// Decoded planes a virtual stack keeps for reuse, in bytes.
         public var virtualCacheBytes: Int
+        /// Read MetaMorph STK, Zeiss LSM and OME-TIFF files as plain TIFF
+        /// pages, ignoring the metadata that gives them their planes,
+        /// channels and calibration. Off by default: such files throw
+        /// ``MancoraIOError/unsupported(_:)``, so callers hand them to
+        /// ImageJ or Bio-Formats rather than show them wrong.
+        public var ignoresVendorMetadata: Bool
 
         public init(
             maximumDecodedBytes: Int = 4 << 30,
             maximumFileBytes: Int = 4 << 30,
             virtual: Bool = false,
-            virtualCacheBytes: Int = 256 << 20
+            virtualCacheBytes: Int = 256 << 20,
+            ignoresVendorMetadata: Bool = false
         ) {
             self.maximumDecodedBytes = maximumDecodedBytes
             self.maximumFileBytes = maximumFileBytes
             self.virtual = virtual
             self.virtualCacheBytes = virtualCacheBytes
+            self.ignoresVendorMetadata = ignoresVendorMetadata
         }
     }
 
@@ -80,6 +88,11 @@ public enum TIFFImporter {
             throw .invalidFormat("not a TIFF file")
         }
 
+        if !options.ignoresVendorMetadata,
+            let vendor = try VendorTIFF(TIFFDirectory(reader: reader, offset: firstOffset, bigTIFF: bigTIFF), reader)
+        {
+            throw .unsupported("\(vendor.rawValue) files (\(vendor.missing)); ImageJ or Bio-Formats can open them")
+        }
         let pages = try readPages(reader: reader, firstOffset: firstOffset, bigTIFF: bigTIFF)
         guard let first = pages.first else { throw .invalidFormat("no images in file") }
         let description = first.description.flatMap(ImageJDescription.init)
@@ -205,6 +218,39 @@ public enum TIFFImporter {
     }
 
     // MARK: Pages
+
+    /// TIFF-based formats whose own metadata defines the image, which a plain
+    /// TIFF reading gets wrong.
+    enum VendorTIFF: String {
+        case metaMorph = "MetaMorph STK"
+        case lsm = "Zeiss LSM"
+        case ome = "OME-TIFF"
+
+        /// What reading the pages alone would miss.
+        var missing: String {
+            switch self {
+            case .metaMorph: "planes after the first"
+            case .lsm: "channels, dimensions and calibration from CZ_LSMINFO"
+            case .ome: "dimensions, channels and physical sizes from the OME-XML"
+            }
+        }
+
+        /// The vendor format a first IFD belongs to, if any: CZ_LSMINFO (tag
+        /// 34412); MetaMorph's UIC2 table (tag 33629) listing more than one
+        /// plane, all stored after the single IFD; or OME-XML in an
+        /// ImageDescription that ImageJ didn't write.
+        init?(_ d: TIFFDirectory, _ r: ByteReader) throws(MancoraIOError) {
+            if d.entries[34412] != nil {
+                self = .lsm
+            } else if let uic2 = d.entries[33629], uic2.count > 1 {
+                self = .metaMorph
+            } else if let text = try d.string(TIFFTag.imageDescription, r), !text.hasPrefix("ImageJ="), text.contains("<OME") {
+                self = .ome
+            } else {
+                return nil
+            }
+        }
+    }
 
     private static func readPages(reader: ByteReader, firstOffset: Int, bigTIFF: Bool) throws(MancoraIOError) -> [TIFFPage] {
         var pages: [TIFFPage] = []

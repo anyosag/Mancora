@@ -34,3 +34,4 @@ java -Djava.awt.headless=true -cp "$ij_jar" "$root/Tools/fixtures/ConvertFixture
 java -Djava.awt.headless=true -cp "$ij_jar" "$root/Tools/fixtures/RoiFixtures.java" "$root"
 "$cache/venv/bin/python" -I "$root/Tools/fixtures/make_tiffs.py" "$root"
 python3 -I "$root/Tools/fixtures/make_deflate.py" "$root"
+python3 -I "$root/Tools/fixtures/make_formats.py" "$root"

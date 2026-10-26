@@ -37,6 +37,11 @@ public struct ResultsTable: Sendable, Hashable {
     /// those that have held a value that isn't an int, and the shape
     /// descriptors (ImageJ's `decimalPlaces[column]` other than AUTO_FORMAT).
     public private(set) var decimalColumns: Set<String> = []
+    /// ImageJ's `showRowNumbers` once something has set it (opening a file,
+    /// `Table.showRowNumbers`), or `nil` for the default of the window the
+    /// table is shown in: row numbers in "Results", none elsewhere. Saved
+    /// tables start with a " " column of row numbers when this is on.
+    public var showsRowNumbers: Bool?
 
     public init() {}
 
