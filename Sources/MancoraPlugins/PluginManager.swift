@@ -333,7 +333,6 @@ public enum KnownSites {
         Site(name: "CSBDeep", url: "https://sites.imagej.net/CSBDeep/", description: "Deep-learning restoration (CARE)."),
         Site(name: "StarDist", url: "https://sites.imagej.net/StarDist/", description: "Star-convex object detection."),
         Site(name: "3D ImageJ Suite", url: "https://sites.imagej.net/Tboudier/", description: "3D segmentation and analysis."),
-        Site(name: "PTBIOP", url: "https://biop.epfl.ch/Fiji-Update/", description: "EPFL BIOP's plugins."),
     ]
 
     public static func url(for name: String) -> String? { all.first { $0.name == name }?.url }

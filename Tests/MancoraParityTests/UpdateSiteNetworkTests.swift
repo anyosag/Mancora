@@ -111,15 +111,26 @@ struct UpdateSiteNetworkTests {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("mancora-bf-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
-        // Bio-Formats' "fake" reader makes up an image from its file name.
-        let fake = folder.appendingPathComponent("test&sizeX=64&sizeY=32&pixelType=uint16.fake")
-        try Data().write(to: fake)
+        // NRRD: plain ImageJ can't read it, Bio-Formats can.
+        let nrrd = folder.appendingPathComponent("ramp.nrrd")
+        var bytes = Array("NRRD0004\ntype: uint16\ndimension: 2\nsizes: 64 32\nendian: little\nencoding: raw\n\n".utf8)
+        for i in 0..<(64 * 32) { bytes += [UInt8(i & 0xFF), UInt8(i >> 8)] }
+        try Data(bytes).write(to: nrrd)
+        let installed = ((try? FileManager.default.subpathsOfDirectory(atPath: home.root.path)) ?? []).filter { $0.hasSuffix(".jar") }.sorted()
         let bridge = Self.bridge(home)
-        let result = try await bridge.open(fake.path)
+        let result: BridgeRunResult
+        do {
+            result = try await bridge.open(nrrd.path)
+        } catch {
+            await bridge.stop()
+            Issue.record("\(error)\ninstalled: \(installed.joined(separator: ", "))")
+            return
+        }
         await bridge.stop()
         let opened = try #require(result.images.first, "log: \(result.log)")
         #expect(result.value == "Bio-Formats")
         #expect(opened.image.width == 64 && opened.image.height == 32)
         #expect(opened.image.pixelType == .gray16)
+        #expect(opened.image.stack[0] == .gray16((0..<(64 * 32)).map { UInt16($0) }))
     }
 }
