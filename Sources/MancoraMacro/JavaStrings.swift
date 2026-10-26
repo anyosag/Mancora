@@ -134,12 +134,23 @@ extension String {
 /// is close to Java's for the patterns macros use.
 enum JavaRegex {
     struct Failure: Error, CustomStringConvertible {
-        let pattern: String
-        var description: String { "java.util.regex.PatternSyntaxException: Invalid pattern \"\(pattern)\"" }
+        /// The exception as `"" + e` shows it.
+        let description: String
+
+        init(pattern: String) {
+            description = "java.util.regex.PatternSyntaxException: Invalid pattern \"\(pattern)\""
+        }
+
+        init(_ exception: String, _ message: String) {
+            description = "java.lang." + exception + ": " + message
+        }
     }
 
     static func compile(_ pattern: String) throws(Failure) -> NSRegularExpression {
-        do { return try NSRegularExpression(pattern: pattern) } catch { throw Failure(pattern: pattern) }
+        // Java's empty pattern matches everywhere; ICU rejects it.
+        do { return try NSRegularExpression(pattern: pattern.isEmpty ? "(?:)" : pattern) } catch {
+            throw Failure(pattern: pattern)
+        }
     }
 
     /// `s.matches(regex)`: the whole string.
@@ -152,12 +163,133 @@ enum JavaRegex {
         return m.range.location == 0 && m.range.length == ns.length
     }
 
-    /// `s.replaceAll(regex, replacement)`.
+    /// `s.replaceAll(regex, replacement)`, expanding the replacement as
+    /// `Matcher.appendReplacement` does (ICU's templates differ: a lone `$`
+    /// or a missing group is literal there, an exception in Java).
     static func replaceAll(_ s: String, _ pattern: String, _ replacement: String) throws(Failure) -> String {
         let re = try compile(pattern)
-        let ns = s as NSString
-        return re.stringByReplacingMatches(
-            in: s, range: NSRange(location: 0, length: ns.length), withTemplate: javaTemplate(replacement))
+        let text = Array(s.utf16)
+        let matches = re.matches(in: s, range: NSRange(location: 0, length: text.count))
+        if matches.isEmpty { return s }
+        let r = Array(replacement.utf16)
+        let names = namedGroups(pattern)
+        var out: [UInt16] = []
+        var tail = 0
+        func group(_ m: NSTextCheckingResult, _ n: Int) {
+            let range = m.range(at: n)
+            if range.location != NSNotFound { out += text[range.location..<(range.location + range.length)] }
+        }
+        for m in matches {
+            out += text[tail..<m.range.location]
+            var cursor = 0
+            while cursor < r.count {
+                var c = r[cursor]
+                if c == 92 {  // backslash
+                    cursor += 1
+                    if cursor == r.count { throw Failure("IllegalArgumentException", "character to be escaped is missing") }
+                    out.append(r[cursor])
+                    cursor += 1
+                } else if c == 36 {  // $
+                    cursor += 1
+                    if cursor == r.count {
+                        throw Failure("IllegalArgumentException", "Illegal group reference: group index is missing")
+                    }
+                    c = r[cursor]
+                    var refNum: Int
+                    if c == 123 {  // {name}
+                        cursor += 1
+                        var name: [UInt16] = []
+                        while cursor < r.count, isASCIIAlphanumeric(r[cursor]) {
+                            name.append(r[cursor])
+                            cursor += 1
+                        }
+                        let gname = utf16String(name)
+                        if name.isEmpty {
+                            throw Failure("IllegalArgumentException", "named capturing group has 0 length name")
+                        }
+                        if cursor == r.count || r[cursor] != 125 {
+                            throw Failure("IllegalArgumentException", "named capturing group is missing trailing '}'")
+                        }
+                        if name[0] >= 48 && name[0] <= 57 {
+                            throw Failure(
+                                "IllegalArgumentException", "capturing group name {\(gname)} starts with digit character")
+                        }
+                        guard let n = names[gname] else {
+                            throw Failure("IllegalArgumentException", "No group with name {\(gname)}")
+                        }
+                        refNum = n
+                        cursor += 1
+                    } else {
+                        // The first digit is always a group; more digits while the number is a group.
+                        guard c >= 48 && c <= 57 else { throw Failure("IllegalArgumentException", "Illegal group reference") }
+                        refNum = Int(c - 48)
+                        cursor += 1
+                        while cursor < r.count, r[cursor] >= 48, r[cursor] <= 57 {
+                            let newRefNum = refNum * 10 + Int(r[cursor] - 48)
+                            if re.numberOfCaptureGroups < newRefNum { break }
+                            refNum = newRefNum
+                            cursor += 1
+                        }
+                    }
+                    if refNum > re.numberOfCaptureGroups {
+                        throw Failure("IndexOutOfBoundsException", "No group \(refNum)")
+                    }
+                    group(m, refNum)
+                } else {
+                    out.append(c)
+                    cursor += 1
+                }
+            }
+            tail = m.range.location + m.range.length
+        }
+        out += text[tail...]
+        return utf16String(out)
+    }
+
+    private static func isASCIIAlphanumeric(_ c: UInt16) -> Bool {
+        (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
+    }
+
+    /// The named groups of `pattern` (`(?<name>...)`), numbered as capturing groups are.
+    private static func namedGroups(_ pattern: String) -> [String: Int] {
+        let p = Array(pattern.utf16)
+        var names: [String: Int] = [:]
+        var count = 0
+        var i = 0
+        var inClass = 0
+        while i < p.count {
+            let c = p[i]
+            if c == 92 {  // \Q...\E quotes; any other escape is two characters
+                if i + 1 < p.count && p[i + 1] == 81 {
+                    i += 2
+                    while i + 1 < p.count && !(p[i] == 92 && p[i + 1] == 69) { i += 1 }
+                }
+                i += 2
+                continue
+            }
+            if c == 91 {
+                inClass += 1
+            } else if c == 93 && inClass > 0 {
+                inClass -= 1
+            } else if c == 40 && inClass == 0 {
+                if i + 1 < p.count && p[i + 1] == 63 {  // (?
+                    if i + 2 < p.count && p[i + 2] == 60 && i + 3 < p.count && p[i + 3] != 61 && p[i + 3] != 33 {
+                        count += 1
+                        var j = i + 3
+                        var name: [UInt16] = []
+                        while j < p.count && p[j] != 62 {
+                            name.append(p[j])
+                            j += 1
+                        }
+                        names[utf16String(name)] = count
+                    }
+                } else {
+                    count += 1
+                }
+            }
+            i += 1
+        }
+        return names
     }
 
     /// `s.split(regex, -1)`: keeps trailing empty strings; a match at the
@@ -178,10 +310,6 @@ enum JavaRegex {
         parts.append(ns.substring(from: index))
         return parts
     }
-
-    /// Java replacement strings use `$n` and `\` escapes, as ICU templates do;
-    /// `${name}` isn't supported by ICU.
-    private static func javaTemplate(_ r: String) -> String { r }
 
     /// `str.contains(regex)` as `FolderOpener.containsRegex` uses it: a match anywhere.
     static func find(_ s: String, _ pattern: String, caseSensitive: Bool = true) throws(Failure) -> Bool {

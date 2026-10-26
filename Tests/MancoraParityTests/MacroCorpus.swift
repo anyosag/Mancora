@@ -274,6 +274,27 @@ enum MacroCorpus {
             print(s);
             eval("print('printed inside')");
             """#),
+        .init("regular expressions in replace", #"""
+            print(replace("abc", "", "-"), replace("", "", "x"), replace("aaa", "a*?", "-"));
+            print(replace("ab", "(a)b", "$10"), replace("abc", "(a)(b)", "$2$1$0"), replace("x-y", "(\\w)-(\\w)", "$2\\$$1"));
+            print(replace("ab", "(?<n>a)b", "${n}!"), replace("a1", "(?<first>[a-z])(?<second>\\d)", "${second}${first}"));
+            print(replace("ab", "(?:a)(b)", "<$1>"), replace("ab", "(x)?ab", "[$1]"), replace("no match", "xyz", "$"));
+            """#),
+        .init("a lone $ in a replacement", #"""
+            print(replace("ab", "ab", "$"));
+            """#),
+        .init("a backslash ending a replacement", #"""
+            print(replace("ab", "ab", "\\"));
+            """#),
+        .init("a replacement's missing group", #"""
+            print(replace("ab", "(a)b", "$2"));
+            """#),
+        .init("a replacement's group that isn't a number", #"""
+            print(replace("ab", "ab", "$x"));
+            """#),
+        .init("a replacement's missing named group", #"""
+            print(replace("ab", "(?<n>a)b", "${m}"));
+            """#),
     ]
 
     /// Images: the current image, pixels, selections, statistics,
