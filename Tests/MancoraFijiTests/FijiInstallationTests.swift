@@ -93,6 +93,43 @@ struct FijiInstallationTests {
         #expect(!fiji.isComplete)
     }
 
+    /// A Fiji without Java of its own (one put together from its update
+    /// sites, or Fiji's no-Java download) runs on JAVA_HOME's JDK.
+    @Test(.disabled(if: onWindows, "Fiji runs on macOS and Linux")) func withoutBundledJavaJavaHomeRunsIt() throws {
+        let folder = FakeFiji.temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let root = folder.appendingPathComponent("Fiji")
+        try FakeFiji.make(at: root)
+        try FileManager.default.removeItem(at: root.appendingPathComponent("java"))
+        func jdk(_ name: String, version: String) throws -> URL {
+            let home = folder.appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: home.appendingPathComponent("bin"), withIntermediateDirectories: true)
+            for tool in ["java", "javac"] {
+                let url = home.appendingPathComponent("bin/\(tool)")
+                try Data("#!/bin/sh\n".utf8).write(to: url)
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+            }
+            try Data("JAVA_VERSION=\"\(version)\"\n".utf8).write(to: home.appendingPathComponent("release"))
+            return home
+        }
+        let jdk21 = try jdk("jdk-21", version: "21.0.9"), jdk17 = try jdk("jdk-17", version: "17.0.2")
+        let jdk8 = try jdk("jdk-8", version: "1.8.0_392")
+        #expect(!FijiInstallation(root: root, environment: [:]).isComplete)
+        let fiji = FijiInstallation(root: root, environment: ["JAVA_HOME": jdk21.path])
+        #expect(fiji.isComplete)
+        #expect(fiji.bundledJavaHome == nil)
+        #expect(fiji.javaExecutable?.path == jdk21.appendingPathComponent("bin/java").path)
+        #expect(fiji.javaCompiler?.path == jdk21.appendingPathComponent("bin/javac").path)
+        #expect(fiji.version.java == "21.0.9")
+        // MANCORA_JAVA_HOME first; Java 8 is too old for the helper.
+        #expect(FijiInstallation(root: root, environment: ["JAVA_HOME": jdk21.path, "MANCORA_JAVA_HOME": jdk17.path]).version.java == "17.0.2")
+        #expect(!FijiInstallation(root: root, environment: ["JAVA_HOME": jdk8.path]).isComplete)
+        // Fiji's own Java wins when it has one.
+        let bundled = try FakeFiji.make(at: folder.appendingPathComponent("Bundled"))
+        let withBoth = FijiInstallation(root: bundled.root, environment: ["JAVA_HOME": jdk17.path])
+        #expect(withBoth.version.java == "21.0.7")
+    }
+
     @Test(.disabled(if: onWindows, "Fiji runs on macOS and Linux")) func javaOptionsMirrorFijisLauncher() throws {
         let root = FakeFiji.temporaryFolder()
         defer { try? FileManager.default.removeItem(at: root) }

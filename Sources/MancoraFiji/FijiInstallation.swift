@@ -13,14 +13,37 @@ public import MancoraPlugins
 ///     plugins/*.jar, plugins/*/*.jar   ImageJ 1.x plugins
 ///     lib/<platform>/              native libraries
 ///     db.xml.gz                    the update sites and what they installed, as Fiji's updater keeps it
+///
+/// A Fiji without Java of its own (`fiji-latest-portable-nojava.zip`, or
+/// one put together from its update sites, which don't carry Java) runs on
+/// the JDK `MANCORA_JAVA_HOME` or `JAVA_HOME` names, if it is Java 11 or newer.
 public struct FijiInstallation: Sendable, Hashable {
     public let root: URL
     /// The updater's name for the platform it runs on (``Platforms/current``).
     public let platform: String
+    /// The Java home used when Fiji has none bundled: `MANCORA_JAVA_HOME`,
+    /// else `JAVA_HOME`, when it holds Java 11 or newer.
+    public let fallbackJavaHome: URL?
 
-    public init(root: URL, platform: String = Platforms.current) {
+    public init(
+        root: URL, platform: String = Platforms.current, environment: [String: String] = ProcessInfo.processInfo.environment
+    ) {
         self.root = root
         self.platform = platform
+        fallbackJavaHome = Self.javaHome(environment: environment)
+    }
+
+    /// `MANCORA_JAVA_HOME` or `JAVA_HOME`, if it holds a `java` of version 11 or newer.
+    static func javaHome(environment: [String: String]) -> URL? {
+        for key in ["MANCORA_JAVA_HOME", "JAVA_HOME"] {
+            guard let path = environment[key], !path.isEmpty else { continue }
+            let home = URL(fileURLWithPath: path)
+            guard FileManager.default.isExecutableFile(atPath: java(in: home).path),
+                let major = javaVersion(home: home).flatMap({ Int($0.prefix { $0.isNumber }) }), major >= 11
+            else { continue }
+            return home
+        }
+        return nil
     }
 
     public var jars: URL { root.appendingPathComponent("jars") }
@@ -30,7 +53,7 @@ public struct FijiInstallation: Sendable, Hashable {
     public var icon: URL? { existing(root.appendingPathComponent("images/icon.png")) }
 
     /// Whether this is a Fiji Mancora can run: Fiji's ImageJ 1.x, the
-    /// legacy layer that lets ImageJ2 run it, and a bundled Java.
+    /// legacy layer that lets ImageJ2 run it, and Java (bundled, or the fallback).
     public var isComplete: Bool { imageJJar != nil && jar(named: "imagej-legacy") != nil && javaExecutable != nil }
 
     // MARK: Jars
@@ -100,9 +123,12 @@ public struct FijiInstallation: Sendable, Hashable {
 
     // MARK: Java
 
+    /// The JDK the helper runs on: the bundled one, else ``fallbackJavaHome``.
+    public var javaHome: URL? { bundledJavaHome ?? fallbackJavaHome }
+
     /// The bundled JDK's home: `java/<platform>/<jdk>/` (on macOS, the
     /// `.jdk` bundle's `Contents/Home` inside it), the newest if several.
-    public var javaHome: URL? {
+    public var bundledJavaHome: URL? {
         let fm = FileManager.default
         let folder = root.appendingPathComponent("java").appendingPathComponent(platform)
         let jdks = ((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).filter { !$0.hasPrefix(".") }

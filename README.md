@@ -110,7 +110,9 @@ unpacked into a staging folder and renamed into place, in
 `~/Library/Application Support/Mancora/Fiji` on macOS and
 `$XDG_DATA_HOME/mancora/Fiji` (`~/.local/share/mancora/Fiji`) on Linux, or
 `MANCORA_FIJI_HOME`. Fiji is downloaded on the user's computer, not
-shipped with Mancora.
+shipped with Mancora. A Fiji without Java of its own (Fiji's no-Java
+download, say) runs on the JDK in `MANCORA_JAVA_HOME` or `JAVA_HOME`
+(Java 11 or newer).
 
 Updates come from the update sites Fiji's own `db.xml.gz` enables, read
 by Mancora's port of Fiji's updater. They're applied to a copy of the
