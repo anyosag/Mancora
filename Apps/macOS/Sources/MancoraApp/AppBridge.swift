@@ -78,9 +78,14 @@ final class AppBridge {
     }
 
     func runMacro(_ code: String, on image: Hyperstack?) async throws -> BridgeRunResult {
+        try await runMacro(code, images: image.map { [$0] } ?? [])
+    }
+
+    /// Runs a macro on `images`, the last one current.
+    func runMacro(_ code: String, images: [Hyperstack]) async throws -> BridgeRunResult {
         if !isReady { await start() }
         guard let bridge else { throw BridgeError.helperExited(status: -1) }
-        return try await bridge.runMacro(code, images: image.map { [$0] } ?? [])
+        return try await bridge.runMacro(code, images: images)
     }
 
     /// The dialogs `command` would show for `image`, to ask for its options natively.

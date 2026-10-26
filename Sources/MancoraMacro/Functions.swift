@@ -22,12 +22,24 @@ final class Functions {
     /// The file `File.open` opened, which `print(f, ...)` writes to.
     var writer: FileHandle?
     var writerPath: String?
+    /// The dialog `Dialog.create` made (ImageJ's `gd`).
+    var dialog: MacroDialog?
+    /// The font `setFont` chose (text is drawn by ImageJ); ImageProcessor's default is SansSerif.
+    var fontName = "SansSerif"
+    /// The table title-less `Table.*` calls last used (ImageJ's `currentTable`).
+    var currentTable: String?
     /// The image whose processor `getProcessor()` last set up (ImageJ's `defaultIP`).
     var cachedProcessor: Int?
     /// The drawing position `moveTo` and `lineTo` use.
     var pen: (x: Int, y: Int) = (0, 0)
     /// `snapshot()`'s copy of a plane, for `reset()`.
     var snapshot: (id: Int, index: Int, plane: Plane)?
+    /// The shift and alt keys `setKeyDown` held for the next selection
+    /// function (ImageJ's `shiftKeyDown`, `altKeyDown`), and whether it was
+    /// called (`Interpreter.keysSet`: the keys are released at the end).
+    var selectionShift = false
+    var selectionAlt = false
+    var keysSet = false
 
     init(interp: Interpreter) {
         self.interp = interp
@@ -47,6 +59,11 @@ final class Functions {
             try? writer.close()
             self.writer = nil
         }
+        if keysSet {
+            session.keys.alt = false
+            session.keys.shift = false
+            session.keys.space = false
+        }
         session.finishMacro()
     }
 
@@ -54,7 +71,9 @@ final class Functions {
 
     func doFunction(_ type: Int) throws(MacroSignal) {
         switch type {
-        case RUN: try doRun()
+        case RUN:
+            try doRun()
+            releaseKeys()
         case SELECT: try selectWindow()
         case WAIT:
             let ms = try getArg()
@@ -74,8 +93,9 @@ final class Functions {
         case SET_BACKGROUND: try setBackgroundColor()
         case SET_COLOR: try setColor()
         case MAKE_LINE: try makeLine()
-        case MAKE_OVAL: try makeOval()
-        case MAKE_RECTANGLE: try makeRectangle()
+        case MAKE_OVAL: try makingSelection("makeOval", releasingKeys: true) { () throws(MacroSignal) in try makeOval() }
+        case MAKE_RECTANGLE:
+            try makingSelection("makeRectangle", releasingKeys: true) { () throws(MacroSignal) in try makeRectangle() }
         case DO_WAND: try doWand()
         case DUMP: try interp.getParens()
         case MOVE_TO: try moveTo()
@@ -99,10 +119,14 @@ final class Functions {
         case SET_LOCATION: try skipArgs()
         case GET_VOXEL_SIZE: try getVoxelSize()
         case GET_HISTOGRAM: try getHistogram()
+        case GET_LINE: try getLine()
         case GET_BOUNDING_RECT, GET_BOUNDS: try getBounds()
         case GET_LUT: try getLut()
         case GET_COORDINATES: try getCoordinates()
-        case MAKE_SELECTION: try makeSelection()
+        case MAKE_SELECTION:
+            try makingSelection("makeSelection", combines: { $0.kind == .polygon || $0.kind == .freehand }) {
+                () throws(MacroSignal) in try makeSelection()
+            }
         case SET_RESULT: try setResult()
         case UPDATE_RESULTS: try interp.getParens()
         case SET_BATCH_MODE: try setBatchMode()
@@ -112,7 +136,7 @@ final class Functions {
         case SAVE_SETTINGS: try saveSettings()
         case RESTORE_SETTINGS: try restoreSettings()
         case OPEN: try open()
-        case SET_FONT: try skipArgs()
+        case SET_FONT: try setFont()
         case GET_MIN_AND_MAX: try getMinAndMax()
         case CLOSE: try close()
         case SET_SLICE: try setSlice()
@@ -127,17 +151,27 @@ final class Functions {
         case GET_DATE_AND_TIME: try getDateAndTime()
         case SET_METADATA: try setMetadata()
         case CALCULATOR: try imageCalculator()
-        case MAKE_POLYGON: try makePolygon()
+        case MAKE_POLYGON: try makingSelection("makePolygon") { () throws(MacroSignal) in try makePolygon() }
         case SET_SELECTION_NAME: try setSelectionName()
         case DRAW_RECT, FILL_RECT, DRAW_OVAL, FILL_OVAL: try drawOrFill(type)
         case SET_OPTION: try setOption()
         case SET_SELECTION_LOC: try setSelectionLocation()
         case GET_DIMENSIONS: try getDimensions()
-        case MAKE_POINT: try makePoint()
-        case MAKE_ELLIPSE: try makeEllipse()
+        case MAKE_POINT:
+            // IJ.makePoint adds (shift) or removes (alt) a point of a point selection.
+            if session.keys.shift || session.keys.alt, session.context.current?.roi?.kind == .point {
+                try unsupported("makePoint with the shift or alt key down")
+            }
+            try makePoint()
+            (selectionShift, selectionAlt) = (false, false)
+        case MAKE_ELLIPSE: try makingSelection("makeEllipse") { () throws(MacroSignal) in try makeEllipse() }
+        case MAKE_ROTATED_RECT: try makeRotatedRectangle()
+        case MAKE_ARROW: try makeArrow()
         case TO_SCALED: try toScaled()
         case TO_UNSCALED: try toUnscaled()
-        case SET_JUSTIFICATION, SET_Z_COORDINATE, SET_KEY_DOWN, RESTORE_PREVIOUS_TOOL, SET_RGB_WEIGHTS:
+        case WAIT_FOR_USER: try waitForUser()
+        case SET_KEY_DOWN: try setKeyDown()
+        case SET_JUSTIFICATION, RESTORE_PREVIOUS_TOOL:
             try skipArgs()
         default:
             try unsupported(type)
@@ -197,9 +231,7 @@ final class Functions {
             return 1
         case PARSE_FLOAT: return parseDouble(try getStringArg())
         case PARSE_INT: return try parseInt()
-        case IS_KEY_DOWN:
-            _ = try getStringArg()
-            return 0
+        case IS_KEY_DOWN: return try isKeyDown()
         case GET_SLICE_NUMBER:
             try interp.getParens()
             return Double(try image().currentSliceNumber)
@@ -215,6 +247,7 @@ final class Functions {
         case GET_VALUE: return try getValue()
         case STACK: return try doStack()
         case MATCHES: return try matches(nil)
+        case SELECTION_CONTAINS: return try selectionContains()
         default:
             try unsupported(type)
         }
@@ -691,6 +724,20 @@ final class Functions {
         }
     }
 
+    /// `setFont(name, size, style)` or `setFont("user")`: only the name is
+    /// kept, for `getInfo("font.name")`.
+    private func setFont() throws(MacroSignal) {
+        let name = try getFirstString()
+        if name == "user" {
+            fontName = "SansSerif"  // TextRoi's default font
+            try interp.getRightParen()
+            return
+        }
+        fontName = name
+        _ = try getNextArg()
+        if interp.nextToken() == ch(",") { _ = try getLastString() } else { try interp.getRightParen() }
+    }
+
     private func showStatus() throws(MacroSignal) {
         try interp.getLeftParen()
         _ = try getString()
@@ -737,38 +784,6 @@ final class Functions {
         }
         interp.finishUp()
         throw .exit(message: msg)
-    }
-
-    // MARK: - Dialogs (macros run without a person to answer them)
-
-    private func getNumber() throws(MacroSignal) -> Double {
-        let prompt = try getFirstString()
-        let defaultValue = try getLastArg()
-        return session.askNumber(prompt, defaultValue: defaultValue) ?? defaultValue
-    }
-
-    private func getBoolean() throws(MacroSignal) -> Double {
-        try interp.getLeftParen()
-        let prompt = try getString()
-        if interp.nextToken() == ch(",") {
-            _ = try getNextString()
-            _ = try getNextString()
-        }
-        try interp.getRightParen()
-        return session.askYesNo(prompt) ? 1 : 0
-    }
-
-    private func getStringDialog() throws(MacroSignal) -> String {
-        try interp.getLeftParen()
-        let prompt = try getString()
-        try interp.getComma()
-        let defaultString = try getString()
-        try interp.getRightParen()
-        return session.askString(prompt, defaultValue: defaultString) ?? defaultString
-    }
-
-    private func doDialog() throws(MacroSignal) -> String? {
-        try unsupported("Dialog functions")
     }
 
     // MARK: - Strings
@@ -1421,7 +1436,10 @@ final class Functions {
             return VariableArray(elements)
         case "getVertexAngles": return try vertexAngles()
         case "findMaxima", "findMinima": return try findArrayMaxima(minima: name == "findMinima")
-        case "show", "fourier":
+        case "show":
+            try showArray()
+            return nil
+        case "fourier":
             try unsupported("Array." + name)
         default:
             try interp.error("Unrecognized Array function")
@@ -1658,8 +1676,17 @@ final class Functions {
 
     // MARK: - Files and directories
 
+    /// The names `getDirectory` knows (lowercased) that Mancora answers; others are a chooser's title.
+    static let directoryKeys: Set<String> = [
+        "plugins", "macros", "luts", "home", "downloads", "startup", "imagej", "current", "default", "temp", "image",
+        "file", "cwd",
+    ]
+
     private func getDirectory() throws(MacroSignal) -> String {
-        session.directory(try getStringArg()) ?? ""
+        let title = try getStringArg()
+        if Self.directoryKeys.contains(javaToLowerCase(title)) { return session.directory(title) ?? "" }
+        if javaToLowerCase(title) == "preferences" { try unsupported("getDirectory(\"preferences\")") }
+        return try chooseDirectory(title)
     }
 
     private func doFile() throws(MacroSignal) -> String? {
@@ -1754,7 +1781,9 @@ final class Functions {
             return nil
         case "getDefaultDir":
             return session.defaultDirectory ?? ""
-        case "openSequence", "openDialog", "openUrlAsString":
+        case "openDialog":
+            return try openDialog()
+        case "openSequence", "openUrlAsString":
             try unsupported("File." + name)
         default:
             break
@@ -1933,6 +1962,16 @@ final class Functions {
         case "window.type": return session.context.current == nil ? "" : "Image"
         case "window.title", "window.name": return session.context.current?.title ?? ""
         case "command.name": return ""
+        case "overlay":
+            // Overlay.toString(); Mancora keeps overlays as their encoded bytes only.
+            if try image().image.encodedOverlay.isEmpty { return "" }
+            try unsupported("getInfo(\"overlay\") of an image with an overlay")
+        case "selection.color", "roi.color":
+            guard let roi = try image().roi else { try interp.fail("No selection") }
+            return Self.colorToString(roi.strokeColor)
+        case "font.name":
+            _ = try image()
+            return fontName
         default: break
         }
         if let value = try imageInfo(forKey: key, lowercaseKey: lowercaseKey) { return value }
@@ -1987,8 +2026,19 @@ final class Functions {
             if arg != nil && ["script", "js", "bsh", "python"].contains(name) { try unsupported("eval(\"\(name)\", ...)") }
             return try session.runMacro(code: name, argument: arg)
         }
+        if let ext = Self.fileExtension(name), ["js", "bsh", "py", "groovy", "clj", "rb", "java"].contains(ext) {
+            try unsupported("runMacro(\"\(Self.javaFileName(name))\")")
+        }
         return try session.runMacroFile(name, argument: arg)
     }
+
+    /// The `call()` targets Mancora runs itself; others are ImageJ's (or a plugin's) Java.
+    static let nativeCalls: Set<String> = [
+        "ij.IJ.pad", "java.lang.System.getProperty", "ij.IJ.freeMemory", "ij.IJ.maxMemory", "java.lang.Thread.sleep",
+        "ij.IJ.wait", "ij.Prefs.get", "ij.Prefs.set", "ij.IJ.log", "java.lang.System.currentTimeMillis",
+        "java.lang.System.gc", "ij.gui.ImageWindow.setNextLocation", "ij.gui.ImageWindow.centerNextImage",
+        "ij.Macro.getOptions", "ij.Macro.setOptions",
+    ]
 
     private func call() throws(MacroSignal) -> String? {
         let fullName = try getFirstString()
@@ -1996,6 +2046,27 @@ final class Functions {
         while interp.nextToken() == ch(",") { args.append(try getNextString()) }
         try interp.getRightParen()
         switch fullName {
+        case "ij.Macro.getOptions":
+            guard args.isEmpty else { break }
+            return session.macroOptions.map { $0 + " " }
+        case "ij.Macro.setOptions":
+            guard args.count == 1 else { break }
+            session.macroOptions = args[0].isEmpty ? nil : args[0]
+            return nil
+        case "ij.IJ.log":
+            guard args.count == 1 else { break }
+            session.log(args[0])
+            return nil
+        case "java.lang.System.currentTimeMillis":
+            guard args.isEmpty else { break }
+            return String(Int64(currentTimeMillis()))
+        case "java.lang.System.gc":
+            guard args.isEmpty else { break }
+            return nil
+        case "ij.gui.ImageWindow.setNextLocation", "ij.gui.ImageWindow.centerNextImage":
+            // Where the next image window opens: there are no windows.
+            guard args.count == (fullName.hasSuffix("setNextLocation") ? 2 : 0) else { break }
+            return nil
         case "ij.IJ.pad":
             guard args.count == 2 else { break }
             return ImageJFormat.pad(args[0], jIntI(toolsParseDouble(args[1])))

@@ -101,8 +101,36 @@ struct MacroParityTests {
         try await MacroParity.check(MacroCorpus.images)
     }
 
+    @Test func filesAndOptions() async throws {
+        try await MacroParity.check(MacroCorpus.filesAndOptions)
+    }
+
+    @Test func dialogs() async throws {
+        try await MacroParity.check(MacroCorpus.dialogs)
+    }
+
+    @Test func tables() async throws {
+        try await MacroParity.check(MacroCorpus.tables)
+    }
+
+    @Test func rois() async throws {
+        try await MacroParity.check(MacroCorpus.rois)
+    }
+
+    @Test func roiManager() async throws {
+        try await MacroParity.check(MacroCorpus.roiManager)
+    }
+
     @Test func commandState() async throws {
         try await MacroParity.check(MacroCorpus.commandState)
+    }
+
+    @Test func profiles() async throws {
+        try await MacroParity.check(MacroCorpus.profiles)
+    }
+
+    @Test func histograms() async throws {
+        try await MacroParity.check(MacroCorpus.histograms)
     }
 }
 

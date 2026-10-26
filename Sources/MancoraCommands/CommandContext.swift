@@ -60,6 +60,14 @@ public struct CommandSettings: Sendable, Hashable {
     public var binaryMedianRadius = 3.0
     /// Process ▸ Noise ▸ Add Specified Noise's standard deviation, kept between runs.
     public var noiseStandardDeviation = 25.0
+    /// Process ▸ Binary ▸ Options ▸ EDM output: where Distance Map, Ultimate
+    /// Points and Voronoi put their result.
+    public var edmOutput = EDMOutput.overwrite
+    /// Process ▸ Find Maxima's prominence and output type, which ImageJ
+    /// keeps from one run to the next: a macro that leaves them out gets
+    /// the last ones.
+    public var maximaProminence = 10.0
+    public var maximaOutput = MaximaOutput.pointSelection
     /// Edit ▸ Options ▸ Conversions ▸ Scale when converting.
     public var scaleConversions = true
     /// Analyze ▸ Set Measurements ▸ Decimal places.
@@ -76,6 +84,12 @@ public struct CommandSettings: Sendable, Hashable {
     /// macro drawing functions use instead of the foreground color.
     public var fillValue: Double?
     public var fillColor: UInt32?
+    /// Edit ▸ Options ▸ Plots ▸ Interpolate line profiles (on by default;
+    /// the macro's `setOption("InterpolateLines", …)`).
+    public var interpolateLineProfiles = true
+    /// Edit ▸ Options ▸ Plots ▸ Vertical profile: Plot Profile averages the
+    /// rows of a rectangle rather than its columns.
+    public var verticalProfile = false
 
     public init() {}
 }

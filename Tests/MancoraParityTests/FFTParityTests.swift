@@ -52,6 +52,7 @@ struct FFTParityTests {
                 run("Select None");
                 run("Redisplay Power Spectrum");
                 """#, on: .gray8),
+            MacroParityCase("is fft", #"print(is("fft"));\#nrun("FFT");\#nprint(is("fft"));"#, on: .gray8),
             MacroParityCase("measuring a point", #"""
                 run("FFT");
                 makePoint(40, 20);

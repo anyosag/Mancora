@@ -18,7 +18,7 @@ extension Analyzer {
     /// straight line its midpoint as centroid.
     public static func measureLine(
         _ roi: Roi, in image: Hyperstack, channel: Int, slice: Int, frame: Int, options: Measurements,
-        threshold: ClosedRange<Double>?, label: String?, into table: inout ResultsTable
+        threshold: ClosedRange<Double>?, label: String?, interpolate: Bool = true, into table: inout ResultsTable
     ) throws(SelectionError) {
         let cal = image.calibration
         guard cal.valueFunction == nil else { throw .unsupported }
@@ -56,7 +56,7 @@ extension Analyzer {
                 plane: plane, width: image.width, region: region, options: statsOptions, calibration: cal,
                 threshold: limit ? threshold : nil)
         } else {
-            stats = try profileStatistics(roi, plane, image, statsOptions, limit ? threshold : nil)
+            stats = try profileStatistics(roi, plane, image, statsOptions, limit ? threshold : nil, interpolate: interpolate)
         }
         if case .line(let line) = roi.shape, options.contains(.centroid) {
             let x1 = Double(Float(line.x1)), x2 = Double(Float(line.x2))
@@ -69,13 +69,23 @@ extension Analyzer {
             into: &table)
     }
 
-    /// The statistics of a one-pixel-wide line's profile: one value per
-    /// pixel of length, as an n×1 float image (or, limited to the
-    /// threshold, converted back to the image's 8 or 16 bits).
+    /// The statistics of a one-pixel-wide line's profile (`ProfilePlot`,
+    /// interpolated unless Edit ▸ Options ▸ Plots says otherwise): one
+    /// value per pixel of length, as an n×1 float image (or, limited to
+    /// the threshold, converted back to the image's 8 or 16 bits).
     static func profileStatistics(
-        _ roi: Roi, _ plane: Plane, _ image: Hyperstack, _ statsOptions: Measurements, _ threshold: ClosedRange<Double>?
+        _ roi: Roi, _ plane: Plane, _ image: Hyperstack, _ statsOptions: Measurements, _ threshold: ClosedRange<Double>?,
+        interpolate: Bool
     ) throws(SelectionError) -> MeasurementStatistics {
-        guard let profile = roi.lineProfile(of: plane, width: image.width) else { throw .unsupported }
+        let profile: [Double]
+        do {
+            profile = try ProfilePlot.profile(
+                of: plane, width: image.width, roi: roi, calibration: image.calibration,
+                options: ProfilePlot.Options(interpolate: interpolate)
+            ).yValues
+        } catch {
+            throw .unsupported  // spline-fitted lines
+        }
         let cal = image.calibration
         let limit = statsOptions.contains(.limitToThreshold)
         var values: Plane = .gray32Float(profile.map { Float($0) })

@@ -80,6 +80,8 @@ extension Functions {
             arg2 = try getString()
             try interp.getRightParen()
         }
+        // IJ.run leaves no macro options behind, the macro's own included.
+        defer { session.macroOptions = nil }
         try runCommand(arg1, options: arg2)
     }
 
@@ -90,8 +92,12 @@ extension Functions {
             session.activate(match.id)
             return
         }
-        // Results, Log and other non-image windows: nothing to activate here.
-        if title == "Results" || title == "Log" || session.context.tables[title] != nil { return }
+        // Results and Log: nothing to activate here; a table comes to the front.
+        if title == "Results" || title == "Log" { return }
+        if session.context.tables[title] != nil {
+            session.showTable(title)
+            return
+        }
         try interp.fail("No window with the title \"\(title)\" found.")
     }
 
@@ -195,14 +201,25 @@ extension Functions {
 
     func open() throws(MacroSignal) {
         try interp.getLeftParen()
-        if interp.nextToken() == ch(")") { try unsupported("open() with a file dialog") }
-        let path = try getString()
         var n = Double.nan
+        if interp.nextToken() == ch(")") {
+            // IJ.open(): the file an "Open" dialog gives.
+            try interp.getRightParen()
+            guard let file = chooseFile("Open") else { throw .exit(message: nil) }
+            try open(file.directory + file.name, n)
+            return
+        }
+        let path = try getString()
         if interp.nextToken() == ch(",") {
             try interp.getComma()
             if isStringArg() { _ = try getString() } else { n = try interp.getExpression() }
         }
         try interp.getRightParen()
+        try open(path, n)
+    }
+
+    /// Opens `path`: an image (at plane `n` when given), a selection or a ROI set.
+    private func open(_ path: String, _ n: Double) throws(MacroSignal) {
         let lower = path.lowercased()
         // Opener.open sends text files and macros to the editor.
         if lower.hasSuffix(".ijm") || lower.hasSuffix(".txt") { try unsupported("open(\"\(Self.javaFileName(path))\")") }
@@ -236,7 +253,8 @@ extension Functions {
             do { try modifyImage { $0.roi = nil } } catch {}
             try modifyImage { $0.roi = roi }
         case .table(let table, let title):
-            setTable(title, table)
+            // Opener.openTable: shown under the file's name ("Results" for "Results.*").
+            showOpenedTable(table, as: title)
         }
         session.lastDirectory = (Self.javaParent(path) ?? "") + Self.separator
         session.lastName = Self.javaFileName(path)
@@ -368,7 +386,35 @@ extension Functions {
             try save(format)
             return
         }
-        try saveImage(path ?? "", format: format.lowercased())
+        try saveImage(path ?? "", format: format)
+    }
+
+    /// What `IJ.saveAs` makes of a format name: the first of these words it contains.
+    enum SaveFormat: Equatable {
+        case tiff, jpeg, gif, textImage, text, zip, raw, avi, bmp, fits, png, pgm, lut, results, selection
+        case xyCoordinates, unsupported
+
+        init(_ formatIn: String) {
+            let format = javaToLowerCase(formatIn)
+            func has(_ s: String) -> Bool { javaContains(format, s) }
+            let formats: [(Bool, SaveFormat)] = [
+                (has("tif"), .tiff), (has("jpeg") || has("jpg"), .jpeg), (has("gif"), .gif),
+                (has("text image"), .textImage), (has("text") || has("txt"), .text), (has("zip"), .zip),
+                (has("raw"), .raw), (has("avi"), .avi), (has("bmp"), .bmp), (has("fits"), .fits), (has("png"), .png),
+                (has("pgm"), .pgm), (has("lut"), .lut), (has("results") || has("measurements") || has("table"), .results),
+                (has("selection") || has("roi"), .selection), (has("xy") || has("coordinates"), .xyCoordinates),
+            ]
+            self = formats.first { $0.0 }?.1 ?? .unsupported
+        }
+
+        /// Whether Mancora saves this format (an unknown one is ImageJ's error either way).
+        var isNative: Bool { [.tiff, .gif, .zip, .png, .results, .selection, .unsupported].contains(self) }
+    }
+
+    /// The format `save(path)` uses: the extension's, TIFF without one.
+    static func saveFormat(forPath path: String) -> SaveFormat {
+        let dot = javaLastIndexOf(path, ".")
+        return dot < 0 ? .tiff : SaveFormat(javaSubstring(path, dot + 1))
     }
 
     /// `IJ.updateExtension`: replaces a short extension (unless it starts
@@ -399,38 +445,37 @@ extension Functions {
                 try interp.fail("\(error)")
             }
         }
-        if format.contains("tif") {
+        switch SaveFormat(format) {
+        case .tiff:
             if !path.hasSuffix(".tiff") { path = Self.updateExtension(path, ".tif") }
             let title = try write(.tiff)
             try modifyImage { $0.image.title = title }
-        } else if format.contains("jpeg") || format.contains("jpg") {
+        case .jpeg:
             try unsupported("saveAs(\"Jpeg\")")
-        } else if format.contains("gif") {
+        case .gif:
             // GifWriter.save leaves the title as it was.
             path = Self.updateExtension(path, ".gif")
             _ = try write(.gif)
-        } else if format.contains("text image") {
+        case .textImage:
             try unsupported("saveAs(\"Text Image\")")
-        } else if format.contains("text") || format.contains("txt") {
+        case .text:
             try unsupported("saveAs(\"Text\")")
-        } else if format.contains("zip") {
+        case .zip:
             path = Self.updateExtension(path, ".zip")
             let title = try write(.zip)
             try modifyImage { $0.image.title = title }
-        } else if ["raw", "avi", "bmp", "fits"].contains(where: format.contains) {
-            try unsupported("saveAs(\"\(format)\")")
-        } else if format.contains("png") {
+        case .png:
             path = Self.updateExtension(path, ".png")
             let title = try write(.png)
             try modifyImage { $0.image.title = title }
-        } else if format.contains("pgm") || format.contains("lut") {
-            try unsupported("saveAs(\"\(format)\")")
-        } else if format.contains("results") || format.contains("measurements") || format.contains("table") {
+        case .raw, .avi, .bmp, .fits, .pgm, .lut:
+            try unsupported("saveAs(\"\(javaToLowerCase(format))\")")
+        case .results:
             // MeasurementsWriter: the Results table, as ResultsTable.saveAs writes it; nothing when it's empty.
             let rt = session.context.results
             if rt.isEmpty && rt.columns.isEmpty { return }
             try saveTable(rt, to: path, rowNumbers: rt.showsRowNumbers ?? true)
-        } else if format.contains("selection") || format.contains("roi") {
+        case .selection:
             let open = try image()
             guard let roi = open.roi else { try interp.fail("Selection required") }
             path = Self.updateExtension(path, ".roi")
@@ -439,18 +484,25 @@ extension Functions {
             } catch {
                 try interp.fail("\(error)")
             }
-        } else if format.contains("xy") || format.contains("coordinates") {
+        case .xyCoordinates:
             try unsupported("saveAs(\"XY Coordinates\")")
-        } else {
-            try interp.fail("Unsupported save() or saveAs() file format: \"\(format)\"\n \n\"\(path)\"")
+        case .unsupported:
+            try interp.fail("Unsupported save() or saveAs() file format: \"\(javaToLowerCase(format))\"\n \n\"\(path)\"")
         }
     }
 
-    /// `ResultsTable.saveAs`, numbers as the table shows them.
-    func saveTable(_ rt: ResultsTable, to path: String, rowNumbers: Bool) throws(MacroSignal) {
-        let places = session.context.settings.decimalPlaces
+    /// `ResultsTable.saveAs`, numbers as the table shows them: `places`
+    /// decimals (Set Measurements' by default) for fractions and in the
+    /// `fixed` columns (by default, ``ResultsTableIO/fixedColumns(_:)``).
+    func saveTable(
+        _ rt: ResultsTable, to path: String, rowNumbers: Bool, firstRowNumber: Int = 1, columnHeadings: Bool = true,
+        fixed: Set<String>? = nil, places: Int? = nil
+    ) throws(MacroSignal) {
+        let places = places ?? session.context.settings.decimalPlaces
         do {
-            try ResultsTableIO.save(rt, to: path, rowNumbers: rowNumbers) { value, fixed in
+            try ResultsTableIO.save(
+                rt, to: path, rowNumbers: rowNumbers, firstRowNumber: firstRowNumber, columnHeadings: columnHeadings, fixed: fixed
+            ) { value, fixed in
                 if value.isNaN { return "NaN" }
                 if !fixed && Double(jInt(value)) == value { return ImageJFormat.d2s(value, 0) }
                 return ImageJFormat.resultsTableD2S(value, places)
@@ -458,6 +510,16 @@ extension Functions {
         } catch {
             try interp.fail("\(error)")
         }
+    }
+
+    /// The extensions `open(path)` reads natively.
+    static let nativeOpenExtensions: Set<String> = ["tif", "tiff", "zip", "png", "gif", "roi", "csv", "xls", "tsv"]
+
+    /// A path's extension, lowercased, as ImageJ's `Opener` compares them.
+    static func fileExtension(_ path: String) -> String? {
+        let dot = javaLastIndexOf(path, ".")
+        guard dot >= 0, dot > max(javaLastIndexOf(path, "/"), javaLastIndexOf(path, separator)) else { return nil }
+        return javaToLowerCase(javaSubstring(path, dot + 1))
     }
 
     // MARK: - Stack position
@@ -1463,12 +1525,18 @@ extension Functions {
         case _ where option.hasPrefix("std"): measurement(.standardDeviation)
         case _ where option.hasPrefix("expandablearrays"): expandableArrays = state
         case "scaleconversions": session.context.settings.scaleConversions = state
-        case "changes", "debugmode", "openusingplugins", "queuemacros", "disableundo", "showrowindexes",
-            "antialiasedtext", "savebatchoutput", "waitforcompletion", "interpolatelines", "flipfitsimages",
-            "disablepopupmenu", "inverty":
+        case "inverty":
+            try modifyImage { $0.image.calibration.invertY = state }
+        case "changes", "disablepopupmenu":
+            // The image's unsaved-changes flag and its canvas menu: neither is kept.
+            _ = try image()
+        case "interpolatelines": session.context.settings.interpolateLineProfiles = state
+        case _ where option.hasPrefix("bicubic"): session.bicubic = state
+        case "debugmode", "openusingplugins", "queuemacros", "disableundo", "showrowindexes", "antialiasedtext",
+            "savebatchoutput", "waitforcompletion", "flipfitsimages":
             break
         case _
-        where option.hasPrefix("show") || option.hasPrefix("openashyper") || option.hasPrefix("bicubic")
+        where option.hasPrefix("show") || option.hasPrefix("openashyper")
             || option.hasPrefix("wand") || option.contains("points") || option.hasPrefix("loop")
             || option.hasPrefix("jfilechooser") || option.hasPrefix("auto") || option.hasPrefix("converttomicrons")
             || option.hasPrefix("supportmacroundo") || option.hasPrefix("copyhead") || option.hasPrefix("monospaced")
@@ -1492,8 +1560,11 @@ extension Functions {
             state = try image().image.dimensions.isHyperstack
         } else if arg.contains("batch") {
             state = session.batchMode
-        } else if arg.contains("applet") || arg.contains("caps") || arg.contains("animated") || arg.hasPrefix("fft") {
+        } else if arg.contains("applet") || arg.contains("caps") || arg.contains("animated") {
             state = false
+        } else if arg.hasPrefix("fft") {
+            // A frequency-domain image: one Process ▸ FFT made ("FHT" property).
+            state = try image().image.frequencyDomain != nil
         } else if arg.contains("virtual") {
             state = try image().image.stack.isVirtual
         } else if arg.contains("composite") {
@@ -1585,106 +1656,11 @@ extension Functions {
     }
 
     /// The 256-bin histogram `ImageStatistics` gives for `region`: by value
-    /// for 8-bit and RGB (the mean of R, G and B); from the minimum to the
+    /// for 8-bit and RGB (the rounded luminance); from the minimum to the
     /// maximum in the region for 16-bit (`ShortStatistics`) and 32-bit
     /// (`FloatStatistics`) planes.
     static func histogram(_ plane: Plane, width: Int, region: MeasurementRegion?) -> [Int]? {
-        let height = plane.count / max(width, 1)
-        let r = region ?? MeasurementRegion(x: 0, y: 0, width: width, height: height)
-        var histogram = [Int](repeating: 0, count: 256)
-        func forEach(_ body: (Int) -> Void) {
-            for y in max(r.y, 0)..<max(max(r.y, 0), min(r.y + r.height, height)) {
-                for x in max(r.x, 0)..<max(max(r.x, 0), min(r.x + r.width, width)) where r.contains(x, y) { body(y * width + x) }
-            }
-        }
-        switch plane {
-        case .gray8(let p): forEach { histogram[Int(p[$0])] += 1 }
-        case .rgb8(let p):
-            forEach {
-                let c = p[$0]
-                histogram[(Int((c >> 16) & 0xFF) + Int((c >> 8) & 0xFF) + Int(c & 0xFF)) / 3] += 1
-            }
-        case .gray16(let p):
-            var counts = [Int](repeating: 0, count: 65536)
-            forEach { counts[Int(p[$0])] += 1 }
-            guard let lo = counts.firstIndex(where: { $0 > 0 }), let hi = counts.lastIndex(where: { $0 > 0 }) else { return histogram }
-            let binSize = Double(hi - lo + 1) / 256
-            let scale = 1 / binSize
-            for i in lo...hi where counts[i] > 0 {
-                histogram[min(255, jIntI(scale * Double(i - lo)))] += counts[i]
-            }
-        case .gray32Float(let p):
-            var lo = Double.greatestFiniteMagnitude, hi = -Double.greatestFiniteMagnitude
-            forEach {
-                let v = Double(p[$0])
-                if v < lo { lo = v }
-                if v > hi { hi = v }
-            }
-            let scale = 256 / (hi - lo)
-            forEach {
-                let v = Double(p[$0])
-                guard v >= lo && v <= hi else { return }
-                histogram[min(255, jIntI(scale * (v - lo)))] += 1
-            }
-        }
-        return histogram
-    }
-
-    func getHistogram() throws(MacroSignal) {
-        try interp.getLeftParen()
-        var values: Variable?
-        if interp.nextToken() == NUMBER { _ = try interp.getExpression() } else { values = try getArrayVariable() }
-        try interp.getComma()
-        let counts = try getArrayVariable()
-        try interp.getComma()
-        let nBins = jIntI(try interp.getExpression())
-        let open = try image()
-        let bitDepth = open.image.pixelType.bitDepth
-        if interp.nextToken() == ch(",") {
-            _ = try getNextArg()
-            _ = try getLastArg()
-            if bitDepth == 8 || bitDepth == 24 { try interp.error("16 or 32-bit image required to set histMin and histMax") }
-            try unsupported("getHistogram with histMin and histMax")
-        }
-        try interp.getRightParen()
-        var region: MeasurementRegion?
-        if let roi = open.roi {
-            guard roi.isArea else { try unsupported("getHistogram with a line selection") }
-            do { region = try roi.measurementRegion(width: open.image.width, height: open.image.height) } catch {
-                try interp.fail("\(error)")
-            }
-        }
-        var histogram: [Int]
-        if nBins == 65536 && bitDepth == 16, case .gray16(let p) = open.currentPlane {
-            histogram = [Int](repeating: 0, count: 65536)
-            let width = open.image.width, height = open.image.height
-            let r = region ?? MeasurementRegion(x: 0, y: 0, width: width, height: height)
-            for y in max(r.y, 0)..<min(r.y + r.height, height) {
-                for x in max(r.x, 0)..<min(r.x + r.width, width) where r.contains(x, y) { histogram[Int(p[y * width + x])] += 1 }
-            }
-        } else if nBins == 256, (bitDepth == 8 || bitDepth == 24),
-            let h = Self.histogram(open.currentPlane, width: open.image.width, region: region)
-        {
-            histogram = h
-            if let values {
-                let cal = open.image.calibration
-                var array: [Double] = []
-                var value = cal.calibratedValue(0)
-                let increment = cal.valueFunction != nil ? (cal.calibratedValue(256) - cal.calibratedValue(0)) / 256 : 1
-                for _ in 0..<256 {
-                    array.append(value)
-                    value += increment
-                }
-                values.setArray(VariableArray(array.map { Variable($0) }))
-            }
-        } else {
-            try unsupported("getHistogram with \(nBins) bins on \(bitDepth)-bit images")
-        }
-        if let array = counts.getArray(), array.count == histogram.count {
-            for (i, v) in histogram.enumerated() { array[i].setValue(Double(v)) }
-        } else {
-            counts.setArray(VariableArray(histogram.map { Variable(Double($0)) }))
-        }
+        HistogramData(plane: plane, width: width, region: region).counts
     }
 
     func getLut() throws(MacroSignal) {
@@ -1784,7 +1760,7 @@ extension Functions {
         case .rectangle(_, let corner): corner > 0 ? roi.outline()?.xs.count ?? 0 : 4
         case .oval: roi.outline()?.xs.count ?? 0
         case .polygon(let p): p.vertices.count
-        case .line: 2
+        case .line: roi.strokeWidth <= 1 ? 2 : 4
         case .points(let p): p.vertices.count
         case .opaque: 0
         }
@@ -1793,25 +1769,21 @@ extension Functions {
     // MARK: - Lists
 
     func getList() throws(MacroSignal) -> VariableArray {
-        let key = try getStringArg()
+        let key = javaToLowerCase(try getStringArg())
         switch key {
         case "image.titles":
             return VariableArray(session.context.images.map { Variable($0.title) })
-        case "window.titles", "window.list":
+        case "window.titles":
             return VariableArray(session.context.tables.keys.sorted().map { Variable($0) })
         case "threshold.methods":
             return VariableArray(AutoThresholder.Method.allCases.map { Variable($0.rawValue) })
-        case "LUTs":
+        case "luts":
             return VariableArray(LUT.builtIn.map { Variable($0.name) })
         case "java.properties":
             return VariableArray(["os.name", "file.separator", "line.separator", "user.home", "user.dir"].map { Variable($0) })
         default:
             try interp.fail("Unvalid key")
         }
-    }
-
-    func getProfile() throws(MacroSignal) -> VariableArray? {
-        try unsupported("getProfile")
     }
 }
 

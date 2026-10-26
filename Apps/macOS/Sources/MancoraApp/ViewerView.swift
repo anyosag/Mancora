@@ -186,6 +186,8 @@ struct ImageCanvas: View {
             .background(Color(nsColor: .underPageBackgroundColor))
             .focusable()
             .focusEffectDisabled()
+            .modifier(NavigationKeys(model: model))
+            .onChange(of: scale, initial: true) { model.displayedScale = scale }
             .onKeyPress(.escape) {
                 guard !model.vertices.isEmpty else { return .ignored }
                 model.cancelVertices()

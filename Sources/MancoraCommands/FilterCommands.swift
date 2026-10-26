@@ -317,10 +317,10 @@ enum FilterCommands {
         }
     }
 
-    /// Process ▸ Binary ▸ Options: iterations, count, Black background and
-    /// Pad edges, then `do=` one of the binary commands. Iterations or a
-    /// count out of range are limited, and then `dialogItemChanged` stops
-    /// before it reads `do=`.
+    /// Process ▸ Binary ▸ Options: iterations, count, Black background, Pad
+    /// edges and EDM output, then `do=` one of the binary commands.
+    /// Iterations or a count out of range are limited, and then
+    /// `dialogItemChanged` stops before it reads `do=`.
     static let binaryOptions = CommandDefinition("Options...", menu: "Process>Binary") { context, options in
         let name = "Options..."
         var settings = context.settings
@@ -331,6 +331,12 @@ enum FilterCommands {
         settings.binaryCount = min(max(count, 1), 8)
         settings.blackBackground = options.flag(forLabel: "Black background")
         settings.padEdges = options.flag(forLabel: "Pad edges when eroding")
+        if let edm = options.value(forLabel: "EDM output:") {
+            guard let index = EDMOutput.names.firstIndex(of: edm), let output = EDMOutput(rawValue: index) else {
+                throw CommandError.invalidOption(command: name, detail: "\"\(edm)\" is not a valid choice for \"EDM output:\"")
+            }
+            settings.edmOutput = output
+        }
         context.settings = settings
         guard (1...100).contains(iterations), (1...8).contains(count) else { return }
         let operations: [String: (String, BinaryOperation)] = [

@@ -57,6 +57,11 @@ public struct ResultsTable: Sendable, Hashable {
 
     public init() {}
 
+    /// An empty table whose columns stay in the order they are first used,
+    /// as every new table of ImageJ's (the default headings come with
+    /// Analyze ▸ Measure).
+    public static func custom() -> ResultsTable { ResultsTable() }
+
     public var count: Int { rows }
     public var isEmpty: Bool { rows == 0 }
 
@@ -252,5 +257,36 @@ public struct ResultsTable: Sendable, Hashable {
         rowLabels = []
         rows = 0
         decimalColumns = []
+    }
+
+    /// `renameColumn(old, new)`: the column keeps its slot, values and format.
+    public mutating func renameColumn(_ old: String, to new: String) {
+        guard let i = slot(of: old) else { return }
+        headings[i] = new
+        if decimalColumns.remove(old) != nil { decimalColumns.insert(new) }
+    }
+
+    /// `deleteColumn(column)`: its values go and its slot is headed "-",
+    /// so a column added later by that name gets a new slot.
+    public mutating func removeColumn(_ column: String) {
+        guard let i = slot(of: column) else { return }
+        removeColumn(slot: i)
+        headings[i] = "-"
+        decimalColumns.remove(column)
+    }
+
+    /// `deleteRows(first, last)`, rows outside the table ignored.
+    public mutating func removeRows(_ first: Int, _ last: Int) {
+        let lo = max(0, first)
+        for _ in 0..<min(max(last - lo + 1, 0), rows) { removeRow(lo) }
+    }
+
+    /// Puts the rows in the order `order` lists them (each row once), as `sort(column)` does.
+    public mutating func reorderRows(_ order: [Int]) {
+        let (oldCells, oldLabels) = (cells, rowLabels)
+        for (row, from) in order.enumerated() {
+            cells[row] = oldCells[from]
+            rowLabels[row] = oldLabels[from]
+        }
     }
 }

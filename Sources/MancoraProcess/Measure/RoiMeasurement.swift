@@ -261,9 +261,13 @@ extension Roi {
             let b = rect.intBounds
             let (x, y, w, h) = (Double(b.x), Double(b.y), Double(b.width), Double(b.height))
             let high = ph * h > pw * w
+            let points = [
+                x + (high ? 0.5 * w : 0), y + (high ? h : 0.5 * h), x + (high ? 0.5 * w : w), y + (high ? 0 : 0.5 * h),
+                x + (high ? 0 : 0.5 * w), y + (high ? 0.5 * h : h), x + (high ? w : 0.5 * w), y + (high ? 0.5 * h : 0),
+            ]
             return FeretValues(
                 diameter: high ? h * ph : w * pw, angle: high ? 90 : 0, minimum: high ? w * pw : h * ph,
-                startX: (x + (high ? 0.5 * w : 0)) * pw, startY: (y + (high ? h : 0.5 * h)) * ph)
+                startX: (x + (high ? 0.5 * w : 0)) * pw, startY: (y + (high ? h : 0.5 * h)) * ph, points: points)
         }
         return outline().flatMap { FeretValues(polygon: $0, pixelWidth: pw, pixelHeight: ph) }
     }

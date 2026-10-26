@@ -52,6 +52,8 @@ final class ViewerModel {
     /// The size and position of the selection being drawn, for the status bar.
     var selectionText: String?
     @ObservationIgnored var gesture: SelectionGesture?
+    /// The scale the canvas shows the image at (for Zoom to Fit, the fitted one).
+    @ObservationIgnored var displayedScale = 1.0
 
     /// The image's threshold (raw values), shown in red; commands use it.
     var threshold: ThresholdLevels?
@@ -182,16 +184,16 @@ final class ViewerModel {
 
     /// File ▸ Save As ▸ ZIP, PNG or GIF: the format ImageJ writes (PNG and
     /// GIF save the plane shown).
-    func presentSavePanel(as format: ImageOpener.Format, extension ext: String) {
+    func presentSavePanel(as format: ImageSaver.Format, extension ext: String) {
         guard let image else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType(filenameExtension: ext) ?? .data]
         let base = (image.title as NSString).deletingPathExtension
         panel.nameFieldStringValue = (base.isEmpty ? "Untitled" : base) + "." + ext
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let position = ImageOpener.Position(channel: channel, slice: slice, frame: frame)
+        let position = ImageSaver.Position(channel: channel, slice: slice, frame: frame)
         do throws(MancoraIOError) {
-            try ImageOpener.write(image, to: url.path, format: format, position: position)
+            try ImageSaver.write(image, to: url.path, format: format, position: position)
             AppRecorder.shared.recordLine("saveAs(\"\(ext == "zip" ? "ZIP" : ext.uppercased())\", \"\(MacroRecorder.escape(url.path))\");")
         } catch {
             errorMessage = error.description
@@ -304,14 +306,26 @@ final class ViewerModel {
         name.trimmingCharacters(in: .whitespaces).hasSuffix("...")
     }
 
+    /// In [+] (`factor` above 1) and Out [-]: the next of ImageJ's zoom levels.
     func zoom(by factor: Double) {
         let current: Double
         switch zoom {
         case .scale(let s): current = s
-        case .fit: current = 1
+        case .fit: current = displayedScale
         }
-        zoom = .scale(min(max(current * factor, 1.0 / 32), 64))
+        let levels = Self.zoomLevels
+        if factor > 1 {
+            zoom = .scale(levels.first { $0 > current * (1 + 1e-9) } ?? levels[levels.count - 1])
+        } else {
+            zoom = .scale(levels.last { $0 < current * (1 - 1e-9) } ?? levels[0])
+        }
     }
+
+    /// `ImageCanvas.zoomLevels`.
+    static let zoomLevels: [Double] = [
+        1 / 72.0, 1 / 48.0, 1 / 32.0, 1 / 24.0, 1 / 16.0, 1 / 12.0, 1 / 8.0, 1 / 6.0, 1 / 4.0, 1 / 3.0, 1 / 2.0, 0.75, 1, 1.5,
+        2, 3, 4, 6, 8, 12, 16, 24, 32,
+    ]
 
     /// File ▸ Revert: the file as saved.
     func revert() {
@@ -412,7 +426,9 @@ final class ViewerModel {
         }
     }
 
-    func runMacro(_ code: String, bridge: AppBridge) async -> [URL] {
+    /// Runs macro code. `onError` hears of a failure, with the text of `errorMessage` and
+    /// the line it happened on if known (the macro editor shows both).
+    func runMacro(_ code: String, bridge: AppBridge, onError: ((String, Int?) -> Void)? = nil) async -> [URL] {
         isBusy = true
         defer { isBusy = false }
         if MacroSupport.unsupported(in: code, registry: .standard).isEmpty {
@@ -423,7 +439,7 @@ final class ViewerModel {
             // what the macro left (results, settings, log, the ROI Manager), its return
             // value and error, the input as the macro left it, and new images
             let outcome = await Task.detached(priority: .userInitiated) {
-                () -> (CommandContext, RoiManagerList, String?, String?, Hyperstack?, [Hyperstack]) in
+                () -> (CommandContext, RoiManagerList, String?, MacroError?, Hyperstack?, [Hyperstack]) in
                 let session = MacroSession()
                 session.batchMode = false
                 session.context.results = startResults
@@ -437,8 +453,8 @@ final class ViewerModel {
                     }
                 }
                 var value: String?
-                var failure: String?
-                do throws(MacroError) { value = try session.run(code) } catch { failure = error.description }
+                var failure: MacroError?
+                do throws(MacroError) { value = try session.run(code) } catch { failure = error }
                 var changed: Hyperstack?
                 var created: [Hyperstack] = []
                 for open in session.context.images {
@@ -457,13 +473,18 @@ final class ViewerModel {
             shared.absorb(left)
             shared.roiManager = manager
             if let value { report = "Returned: \(value)" }
-            if let failure { errorMessage = "Macro Error: " + failure }
+            if let failure {
+                let text = "Macro Error: " + failure.description
+                errorMessage = text
+                onError?(text, failure.lineNumber > 0 ? failure.lineNumber : nil)
+            }
             return saveForNewWindows(created)
         }
         do {
-            return handle(try await bridge.runMacro(code, on: image))
+            return handle(try await bridge.runMacro(code, on: image), onError: onError)
         } catch {
             errorMessage = "\(error)"
+            onError?("\(error)", nil)
             return []
         }
     }
@@ -471,7 +492,9 @@ final class ViewerModel {
     /// What ImageJ gave back: results and log lines go to the session, a
     /// changed current image (the last input) updates this window, new
     /// images open in their own.
-    private func handle(_ result: BridgeRunResult, inputCount: Int = 1, hasImage: Bool = true) -> [URL] {
+    private func handle(
+        _ result: BridgeRunResult, inputCount: Int = 1, hasImage: Bool = true, onError: ((String, Int?) -> Void)? = nil
+    ) -> [URL] {
         AppSession.shared.absorb(result)
         var created: [Hyperstack] = []
         for output in result.images {
@@ -482,7 +505,9 @@ final class ViewerModel {
             }
         }
         if let error = result.macroError {
-            errorMessage = "Macro Error: " + error + (result.macroErrorLine.map { " in line \($0)" } ?? "")
+            let text = "Macro Error: " + error + (result.macroErrorLine.map { " in line \($0)" } ?? "")
+            errorMessage = text
+            onError?(text, result.macroErrorLine)
         } else if let value = result.value {
             report = "Returned: \(value)"
         }

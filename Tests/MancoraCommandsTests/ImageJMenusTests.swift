@@ -31,12 +31,20 @@ struct ImageJMenusTests {
         #expect(new.entries.first == .command("Image...", shortcut: "n"))
     }
 
+    /// A checkout with Windows line endings reads the same menus.
+    @Test func windowsLineEndingsReadTheSame() throws {
+        let table = try Self.resource("imagej-menus.tsv")
+        let crlf = table.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\n", with: "\r\n")
+        #expect(ImageJMenu.parse(crlf) == ImageJMenu.parse(table))
+        #expect(!ImageJMenu.parse(crlf).isEmpty)
+    }
+
     /// Every menu item is a command ImageJ 1.54p knows, by its exact name
     /// (Repeat Command is ImageJ's own, not a plugin).
     @Test func everyItemIsAnImageJCommand() throws {
         let menus = ImageJMenu.parse(try Self.resource("imagej-menus.tsv"))
         let table = Set(
-            try Self.resource("imagej-commands.tsv").split(separator: "\n").filter { !$0.hasPrefix("#") }
+            try Self.resource("imagej-commands.tsv").split(whereSeparator: \.isNewline).filter { !$0.hasPrefix("#") }
                 .map { String($0.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)[0]) })
         let commands = menus.flatMap(\.commands)
         #expect(commands.count > 400)

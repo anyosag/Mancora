@@ -104,7 +104,8 @@ enum AnalyzeCommands {
                 default:
                     try Analyzer.measureLine(
                         roi, in: open.image, channel: open.channel, slice: open.slice, frame: open.frame, options: options,
-                        threshold: thresholdRange(open), label: label, into: &context.results)
+                        threshold: thresholdRange(open), label: label,
+                        interpolate: context.settings.interpolateLineProfiles, into: &context.results)
                 }
                 return
             }
