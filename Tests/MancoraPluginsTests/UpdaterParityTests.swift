@@ -9,7 +9,11 @@ import Testing
 /// own updater (imagej-updater, run by Tools/parity/updater/UpdaterOracle.java)
 /// decided at each step. Mancora replays the steps and must agree.
 enum UpdaterFixture {
-    static let folder = Bundle.module.resourceURL!.appendingPathComponent("Fixtures/updater")
+    static let folder: URL = {
+        var parts = #filePath.split(omittingEmptySubsequences: false, whereSeparator: { $0 == "/" || $0 == "\\" })
+        parts.removeLast()
+        return URL(fileURLWithPath: parts.joined(separator: "/") + "/Fixtures/updater")
+    }()
     static let base = "https://sites.test/"
 
     static var expected: [String: Any] {

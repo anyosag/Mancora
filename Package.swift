@@ -89,7 +89,7 @@ let package = Package(
         .testTarget(
             name: "MancoraPluginsTests",
             dependencies: ["MancoraIO", "MancoraPlugins", "MancoraSupport", "MancoraUpdate"],
-            resources: [.copy("Fixtures")],
+            exclude: ["Fixtures"],
             swiftSettings: strictness
         ),
         .testTarget(
