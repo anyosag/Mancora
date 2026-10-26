@@ -20,6 +20,13 @@ jobs:
     container: swift:6.2-noble
     steps:
       - uses: actions/checkout@v4
+      - name: No file names that differ only in case
+        # Their object files collide on macOS and Windows file systems.
+        run: |
+          for dir in Sources/* Tests/*; do
+            dups=$(find "$dir" -name '*.swift' -exec basename {} \; | tr 'A-Z' 'a-z' | sort | uniq -d)
+            if [ -n "$dups" ]; then echo "$dir: $dups"; exit 1; fi
+          done
       - name: Build
         run: swift build --build-tests -Xswiftc -warnings-as-errors
       - name: Test

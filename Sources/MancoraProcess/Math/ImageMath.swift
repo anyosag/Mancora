@@ -145,7 +145,7 @@ public enum ImageMath {
     /// ImageJ leaves the data unchanged.
     static func byteTable(_ operation: Operation) -> [UInt8]? {
         // Java int arithmetic, which wraps.
-        let scale = 255.0 / LibM.naturalLog(255.0)
+        let scale = 255.0 / Libm.logarithm(255.0)
         let int = { (x: Double) in JavaNumerics.int32(x) }
         let f: (Int32) -> Int32
         switch operation {
@@ -163,9 +163,9 @@ public enum ImageMath {
         case .xor(let v): f = { $0 ^ Int32(truncatingIfNeeded: v) }
         case .gamma(let v):
             guard (0.05...5.0).contains(v) else { return nil }
-            f = { int(LibM.exponential(LibM.naturalLog(Double($0) / 255.0) * v) * 255.0) }
-        case .log: f = { $0 == 0 ? 0 : int(LibM.naturalLog(Double($0)) * scale) }
-        case .exp: f = { int(LibM.exponential(Double($0) / scale)) }
+            f = { int(Libm.exponential(Libm.logarithm(Double($0) / 255.0) * v) * 255.0) }
+        case .log: f = { $0 == 0 ? 0 : int(Libm.logarithm(Double($0)) * scale) }
+        case .exp: f = { int(Libm.exponential(Double($0) / scale)) }
         case .square: f = { $0 * $0 }
         case .squareRoot: f = { int(Double($0).squareRoot()) }
         case .min(let v): f = { Double($0) < v ? int(v) : $0 }
@@ -224,15 +224,15 @@ public enum ImageMath {
             guard (0.05...5.0).contains(v) else { return pixels }
             f = { v1 in
                 if range <= 0 || v1 == min2 { return v1 }
-                let x = LibM.exponential(v * LibM.naturalLog(Double(v1 &- min2) / range)) * range + Double(min2)
+                let x = Libm.exponential(v * Libm.logarithm(Double(v1 &- min2) / range)) * range + Double(min2)
                 return JavaNumerics.int32(x)
             }
         case .log:
-            let factor = Double(max2) / LibM.naturalLog(Double(max2))
-            f = { $0 <= 0 ? 0 : JavaNumerics.int32(LibM.naturalLog(Double($0)) * factor) }
+            let factor = Double(max2) / Libm.logarithm(Double(max2))
+            f = { $0 <= 0 ? 0 : JavaNumerics.int32(Libm.logarithm(Double($0)) * factor) }
         case .exp:
-            let factor = LibM.naturalLog(Double(max2)) / Double(max2)
-            f = { JavaNumerics.int32(LibM.exponential(Double($0) * factor)) }
+            let factor = Libm.logarithm(Double(max2)) / Double(max2)
+            f = { JavaNumerics.int32(Libm.exponential(Double($0) * factor)) }
         case .square: f = { JavaNumerics.int32(Double($0) * Double($0)) }
         case .squareRoot: f = { JavaNumerics.int32(Double($0).squareRoot()) }
         case .abs:
@@ -280,11 +280,11 @@ public enum ImageMath {
         case .gamma(let v):
             guard (0.05...5.0).contains(v) else { return pixels }
             let c = Double(Float(v))
-            return pixels.map { $0 <= 0 ? 0 : Float(LibM.exponential(c * LibM.naturalLog(Double($0)))) }
+            return pixels.map { $0 <= 0 ? 0 : Float(Libm.exponential(c * Libm.logarithm(Double($0)))) }
         case .log:
-            return pixels.map { Float(LibM.naturalLog(Double($0))) }
+            return pixels.map { Float(Libm.logarithm(Double($0))) }
         case .exp:
-            return pixels.map { Float(LibM.exponential(Double($0))) }
+            return pixels.map { Float(Libm.exponential(Double($0))) }
         case .square:
             return pixels.map { $0 * $0 }
         case .squareRoot:
