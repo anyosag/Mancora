@@ -294,122 +294,7 @@ extension Functions {
         return roi
     }
 
-    // MARK: - Results
-
-    /// The table a results function works on: "Results", or the named table.
-    private func table(_ title: String?) throws(MacroSignal) -> ResultsTable {
-        guard let title, title != "Results" else { return session.context.results }
-        guard let table = session.context.tables[title] else { try interp.fail("\"\(title)\" table not found") }
-        return table
-    }
-
-    private func setTable(_ title: String?, _ table: ResultsTable) {
-        if let title, title != "Results" { session.context.tables[title] = table } else { session.context.results = table }
-    }
-
-    func getResult() throws(MacroSignal) -> Double {
-        try interp.getLeftParen()
-        let column = try getString()
-        var row = -1
-        if interp.nextToken() == ch(",") {
-            try interp.getComma()
-            row = jIntI(try interp.getExpression())
-        }
-        var title: String?
-        if interp.nextToken() == ch(",") {
-            try interp.getComma()
-            title = try getString()
-        }
-        let rt = try table(title)
-        if title == nil && rt.count == 0 { try interp.fail("No results found") }
-        try interp.getRightParen()
-        let counter = rt.count
-        if row == -1 { row = counter - 1 }
-        if row < 0 || row >= counter { try interp.fail("Row (\(row)) out of range") }
-        guard rt.columns.contains(column) else { return .nan }
-        switch rt.value(column, row: row) {
-        case .number(let n)?: return n
-        case .text(let s)?: return s == "NaN" ? .nan : toolsParseDouble(s)
-        case nil: return rt.number(column, row: row)
-        }
-    }
-
-    func getResultString() throws(MacroSignal) -> String {
-        try interp.getLeftParen()
-        let column = try getString()
-        var row = -1
-        if interp.nextToken() == ch(",") {
-            try interp.getComma()
-            row = jIntI(try interp.getExpression())
-        }
-        var title: String?
-        if interp.nextToken() == ch(",") {
-            try interp.getComma()
-            title = try getString()
-        }
-        try interp.getRightParen()
-        let rt = try table(title)
-        if title == nil && rt.count == 0 { try interp.fail("No results found") }
-        if row == -1 { row = rt.count - 1 }
-        if row < 0 || row >= rt.count { try interp.fail("Row (\(row)) out of range") }
-        if rt.columns.contains(column) {
-            switch rt.value(column, row: row) {
-            case .text(let s)?: return s
-            case .number(let n)?: return ResultsFormatter.cell(n, decimalPlaces: session.context.settings.decimalPlaces)
-            case nil: return ResultsFormatter.cell(rt.number(column, row: row), decimalPlaces: session.context.settings.decimalPlaces)
-            }
-        }
-        if column == "Label" { return rt.labels[row] ?? "null" }
-        return "null"
-    }
-
-    func getResultLabel() throws(MacroSignal) -> String {
-        let row = jIntI(try getArg())
-        let rt = session.context.results
-        if rt.count == 0 { try interp.fail("No results found") }
-        if row < 0 || row >= rt.count { try interp.fail("Row (\(row)) out of range") }
-        if let label = rt.labels[row] { return label }
-        if case .text(let s)? = rt.value("Label", row: row) { return s }
-        return ""
-    }
-
-    func setResult() throws(MacroSignal) {
-        try interp.getLeftParen()
-        let column = try getString()
-        try interp.getComma()
-        let row = jIntI(try interp.getExpression())
-        try interp.getComma()
-        var value = 0.0
-        var stringValue: String?
-        let isLabel = column == "Label"
-        if isStringArg() || isLabel { stringValue = try getString() } else { value = try interp.getExpression() }
-        var title: String?
-        if interp.nextToken() == ch(",") {
-            try interp.getComma()
-            title = try getString()
-        }
-        try interp.getRightParen()
-        var rt = title.map { session.context.tables[$0] ?? ResultsTable() } ?? session.context.results
-        if title == "Results" { rt = session.context.results }
-        if row < 0 || row > rt.count { try interp.fail("Row (\(row)) out of range") }
-        if row == rt.count { rt.addRow() }
-        if let stringValue {
-            if isLabel { rt.setLabel(stringValue, row: row) } else { rt.set(column, row: row, .text(stringValue)) }
-        } else {
-            rt.set(column, row: row, value)
-        }
-        setTable(title, rt)
-    }
-
-    func renameResults() throws(MacroSignal) {
-        let arg1 = try getFirstString()
-        var arg2: String?
-        if interp.nextToken() == ch(")") { try interp.getRightParen() } else { arg2 = try getLastString() }
-        let (from, to) = arg2 == nil ? ("Results", arg1) : (arg1, arg2!)
-        let rt = try table(from)
-        if from == "Results" { session.context.results = ResultsTable() } else { session.context.tables[from] = nil }
-        setTable(to, rt)
-    }
+    // MARK: - Measurements
 
     /// `List.setMeasurements`: every measurement of the current image and selection.
     func setListMeasurements() throws(MacroSignal) {
@@ -631,123 +516,11 @@ extension Functions {
     // MARK: - Variable functions
 
     /// The name after `X.` in `X.name(...)`.
-    private func memberName() throws(MacroSignal) -> String {
+    func memberName() throws(MacroSignal) -> String {
         interp.getToken()
         if interp.token != ch(".") { try interp.error("'.' expected") }
         interp.getToken()
         return interp.tokenString ?? ""
-    }
-
-    func doTable() throws(MacroSignal) -> Variable? {
-        let name = try memberName()
-        /// The optional last argument naming the table.
-        func optionalTitle() throws(MacroSignal) -> String? {
-            if interp.nextToken() == ch(",") {
-                try interp.getComma()
-                return try getString()
-            }
-            return nil
-        }
-        switch name {
-        case "size":
-            var title: String?
-            if interp.nextToken() == ch("(") {
-                try interp.getLeftParen()
-                if interp.nextToken() != ch(")") { title = try getString() }
-                try interp.getRightParen()
-            }
-            return Variable(Double(try table(title).count))
-        case "title":
-            try interp.getParens()
-            return Variable("Results")
-        case "headings":
-            var title: String?
-            if interp.nextToken() == ch("(") {
-                try interp.getLeftParen()
-                if interp.nextToken() != ch(")") { title = try getString() }
-                try interp.getRightParen()
-            }
-            let rt = try table(title)
-            return Variable((rt.labels.contains { $0 != nil } ? ["Label"] : []).joined() + (rt.labels.contains { $0 != nil } ? "\t" : "") + rt.columns.joined(separator: "\t"))
-        case "get", "getString":
-            let column = try getFirstString()
-            try interp.getComma()
-            let row = jIntI(try interp.getExpression())
-            let title = try optionalTitle()
-            try interp.getRightParen()
-            let rt = try table(title)
-            if row < 0 || row >= rt.count { try interp.fail("Row (\(row)) out of range") }
-            if column == "Label", rt.labels[row] != nil || !rt.columns.contains("Label") {
-                return Variable(rt.labels[row] ?? "")
-            }
-            guard rt.columns.contains(column) else { try interp.fail("\"\(column)\" column not found") }
-            if name == "getString" {
-                switch rt.value(column, row: row) {
-                case .text(let s)?: return Variable(s)
-                default: return Variable(ResultsFormatter.cell(rt.number(column, row: row), decimalPlaces: session.context.settings.decimalPlaces))
-                }
-            }
-            if case .text(let s)? = rt.value(column, row: row) { return Variable(toolsParseDouble(s)) }
-            return Variable(rt.number(column, row: row))
-        case "set":
-            let column = try getFirstString()
-            try interp.getComma()
-            let row = jIntI(try interp.getExpression())
-            try interp.getComma()
-            var value: ResultsTable.Value
-            if isStringArg() { value = .text(try getString()) } else { value = .number(try interp.getExpression()) }
-            let title = try optionalTitle()
-            try interp.getRightParen()
-            var rt = try table(title)
-            if row < 0 || row > rt.count { try interp.fail("Row (\(row)) out of range") }
-            if row == rt.count { rt.addRow() }
-            if column == "Label", case .text(let s) = value { rt.setLabel(s, row: row) } else { rt.set(column, row: row, value) }
-            setTable(title, rt)
-            return nil
-        case "getColumn":
-            let column = try getFirstString()
-            let title = try optionalTitle()
-            try interp.getRightParen()
-            let rt = try table(title)
-            guard rt.columns.contains(column) else { try interp.fail("\"\(column)\" column not found") }
-            return Variable(VariableArray((0..<rt.count).map { row -> Variable in
-                if case .text(let s)? = rt.value(column, row: row) { return Variable(s) }
-                return Variable(rt.number(column, row: row))
-            }))
-        case "setColumn":
-            let column = try getFirstString()
-            try interp.getComma()
-            let values = try getArray()
-            let title = try optionalTitle()
-            try interp.getRightParen()
-            var rt = try table(title)
-            while rt.count < values.count { rt.addRow() }
-            for (row, v) in values.elements.enumerated() {
-                if let s = v.getString() { rt.set(column, row: row, .text(s)) } else { rt.set(column, row: row, v.getValue()) }
-            }
-            setTable(title, rt)
-            return nil
-        case "columnExists":
-            let column = try getFirstString()
-            let title = try optionalTitle()
-            try interp.getRightParen()
-            return Variable(try table(title).columns.contains(column) ? 1 : 0)
-        case "create", "reset":
-            let title = try getStringArg()
-            setTable(title, ResultsTable())
-            return nil
-        case "update", "show", "showRowNumbers", "showRowIndexes", "setLocationAndSize", "applyMacro", "sort",
-            "deleteRows", "deleteColumn", "renameColumn", "save", "open", "rename", "setSelection", "getSelectionStart",
-            "getSelectionEnd", "list", "allHeadings":
-            if name == "update" || name == "show" {
-                if interp.nextToken() == ch("(") { try interp.skipParens() }
-                return nil
-            }
-            try unsupported("Table." + name)
-        default:
-            try interp.error("Unrecognized Table function")
-            return nil
-        }
     }
 
     func doRoi() throws(MacroSignal) -> Variable? {
@@ -1031,6 +804,14 @@ enum ResultsFormatter {
         return ImageJFormat.resultsTableD2S(value, decimalPlaces)
     }
 
+    /// A number cell: a column that ever held a fraction shows every number
+    /// with the decimal places (ResultsTable's per-column `decimalPlaces`).
+    static func cell(_ rt: ResultsTable, _ column: String, _ row: Int, decimalPlaces: Int) -> String {
+        let value = rt.number(column, row: row)
+        if rt.fractionColumns.contains(column) { return ImageJFormat.resultsTableD2S(value, decimalPlaces) }
+        return cell(value, decimalPlaces: decimalPlaces)
+    }
+
     /// `ResultsTable.saveAs(path.csv)`: a heading row (" " for the row
     /// numbers, then Label and the columns) and one line per row.
     static func csv(_ rt: ResultsTable, decimalPlaces: Int) -> String {
@@ -1046,7 +827,7 @@ enum ResultsFormatter {
             for column in rt.columns {
                 switch rt.value(column, row: row) {
                 case .text(let s)?: cells.append(s)
-                default: cells.append(cell(rt.number(column, row: row), decimalPlaces: decimalPlaces))
+                default: cells.append(cell(rt, column, row, decimalPlaces: decimalPlaces))
                 }
             }
             lines.append(cells.joined(separator: ","))

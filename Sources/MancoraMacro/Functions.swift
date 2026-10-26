@@ -24,6 +24,8 @@ final class Functions {
     var writerPath: String?
     /// The dialog `Dialog.create` made (ImageJ's `gd`).
     var dialog: MacroDialog?
+    /// The table title-less `Table.*` calls last used (ImageJ's `currentTable`).
+    var currentTable: String?
     /// The image whose processor `getProcessor()` last set up (ImageJ's `defaultIP`).
     var cachedProcessor: Int?
     /// The drawing position `moveTo` and `lineTo` use.
@@ -1389,7 +1391,10 @@ final class Functions {
             return VariableArray(elements)
         case "getVertexAngles": return try vertexAngles()
         case "findMaxima", "findMinima": return try findArrayMaxima(minima: name == "findMinima")
-        case "show", "fourier":
+        case "show":
+            try showArray()
+            return nil
+        case "fourier":
             try unsupported("Array." + name)
         default:
             try interp.error("Unrecognized Array function")

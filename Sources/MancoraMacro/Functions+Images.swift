@@ -92,8 +92,12 @@ extension Functions {
             session.activate(match.id)
             return
         }
-        // Results, Log and other non-image windows: nothing to activate here.
-        if title == "Results" || title == "Log" || session.context.tables[title] != nil { return }
+        // Results and Log: nothing to activate here; a table comes to the front.
+        if title == "Results" || title == "Log" { return }
+        if session.context.tables[title] != nil {
+            session.showTable(title)
+            return
+        }
         try interp.fail("No window with the title \"\(title)\" found.")
     }
 
@@ -217,6 +221,13 @@ extension Functions {
     /// Opens `path`: an image (at plane `n` when given), a selection or a ROI set.
     private func open(_ path: String, _ n: Double) throws(MacroSignal) {
         let lower = path.lowercased()
+        if lower.hasSuffix(".csv") || lower.hasSuffix(".xls") || lower.hasSuffix(".tsv") {
+            // Opener.openTable: shown under the file's name ("Results" for "Results.*").
+            var name = Self.javaFileName(path)
+            if javaStartsWith(name, "Results.") { name = "Results" }
+            try openTable(path, as: name)
+            return
+        }
         if lower.hasSuffix(".ijm") || lower.hasSuffix(".txt") || lower.hasSuffix(".csv") || lower.hasSuffix(".roi")
             || lower.hasSuffix(".zip")
         {
@@ -454,7 +465,7 @@ extension Functions {
     }
 
     /// The extensions `open(path)` reads natively.
-    static let nativeOpenExtensions: Set<String> = ["tif", "tiff", "roi", "zip"]
+    static let nativeOpenExtensions: Set<String> = ["tif", "tiff", "roi", "zip", "csv", "xls", "tsv"]
 
     /// A path's extension, lowercased, as ImageJ's `Opener` compares them.
     static func fileExtension(_ path: String) -> String? {

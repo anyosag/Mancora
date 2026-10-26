@@ -183,7 +183,7 @@ public enum MacroSupport {
         "Array": [
             "copy", "trim", "sort", "rankPositions", "getStatistics", "sequence", "getSequence", "fill", "reverse",
             "invert", "concat", "slice", "print", "resample", "rotate", "deleteValue", "delete", "deleteIndex", "filter",
-            "getVertexAngles", "findMaxima", "findMinima",
+            "getVertexAngles", "findMaxima", "findMinima", "show",
         ],
         "String": ["append", "resetBuffer", "buffer", "join", "trim", "pad", "format", "getResultsHeadings"],
         "Math": [
@@ -211,8 +211,13 @@ public enum MacroSupport {
             "setTUnit", "setXUnit", "setYUnit", "setZUnit", "getUnits", "setDimensions", "setDisplayMode",
             "getDisplayMode",
         ],
-        "Table": ["size", "title", "headings", "get", "getString", "set", "getColumn", "setColumn", "columnExists",
-            "create", "reset", "update", "show"],
+        "Table": [
+            "size", "title", "headings", "allHeadings", "get", "getString", "set", "getColumn", "setColumn",
+            "columnExists", "create", "reset", "update", "applyMacro", "deleteRows", "deleteColumn", "renameColumn",
+            "save", "open", "rename", "showRowNumbers", "showRowIndexes", "hideRowNumbers", "saveColumnHeader",
+            "saveColumnHeaders", "sort", "showArray", "showArrays", "getSelectionStart", "getSelectionEnd",
+            "setSelection", "setLocAndSize", "setLocationAndSize",
+        ],
         "Roi": ["size", "getBounds", "getCoordinates", "getName", "setName", "getType", "move", "translate",
             "remove", "contains"],
         "RoiManager": ["size", "selected", "getName", "getIndex", "select"],

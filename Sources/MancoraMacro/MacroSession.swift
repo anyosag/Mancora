@@ -74,6 +74,13 @@ public final class MacroSession {
 
     /// The ROI Manager.
     public var roiManager = RoiManagerList()
+    /// The windows of the tables other than Results, oldest first.
+    var tableWindows: [String] = []
+    /// The table window in front: `Table.*` calls without a title use it,
+    /// as ImageJ uses its front table window.
+    var frontTable: String?
+    /// How each table shows and saves its rows, by title.
+    var tableDisplay: [String: TableDisplay] = [:]
     /// Image IDs, most recently activated last (ImageJ's `imageActivations`).
     var activations: [Int] = []
     /// Settings `saveSettings()` keeps.

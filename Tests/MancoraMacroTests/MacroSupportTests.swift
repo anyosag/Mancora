@@ -1,4 +1,5 @@
 import MancoraCommands
+import MancoraCore
 import Testing
 
 @testable import MancoraMacro
@@ -65,5 +66,38 @@ struct MacroSupportTests {
         #expect(Functions.updateExtension("/tmp/a.png", ".tif") == "/tmp/a.tif")
         #expect(Functions.updateExtension("/tmp/a.12", ".tif") == "/tmp/a.12.tif")
         #expect(Functions.updateExtension("/tmp/a.longext", ".tif") == "/tmp/a.longext.tif")
+    }
+}
+
+/// Table helpers that follow ResultsTable.
+@Suite("Macro tables")
+struct MacroTableTests {
+    @Test func applyMacroVariableNames() {
+        #expect(Functions.variableNames(["Area", "%Area", "1st", "Area", "Area"]) == ["Area", "_Area", "_1st", "Area_0", "Area_1"])
+    }
+
+    @Test func readsImageJsTables() throws {
+        let csv = " ,Label,Area,Note\n1,a,1.5,\"x, y\"\n2,b,2,z\n"
+        let rt = try Functions.readTable(csv, path: "/tmp/Results.csv")
+        #expect(rt.columns == ["Area", "Note"])
+        #expect(rt.labels == ["a", "b"])
+        #expect(rt.value("Note", row: 0) == .text("x, y"))
+        #expect(rt.number("Area", row: 1) == 2)
+        let numeric = try Functions.readTable("1\t2\n3\t4\n", path: "/tmp/t.txt")
+        #expect(numeric.columns == ["C1", "C2"])
+        #expect(numeric.count == 2)
+        #expect(javaSplit("a,,b,,", ",") == ["a", "", "b"])
+    }
+
+    @Test func sessionTablesAndFrontWindow() throws {
+        let session = MacroSession()
+        try session.run(#"""
+            Table.create("One"); Table.set("A", 0, 1);
+            Table.create("Two"); Table.set("B", 0, 2);
+            print(Table.title, Table.size("One"));
+            selectWindow("One");
+            print(Table.title, Table.getString("A", 0));
+            """#)
+        #expect(session.logLines == ["Two 1", "One 1"])
     }
 }

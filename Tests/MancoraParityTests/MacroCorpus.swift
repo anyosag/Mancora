@@ -693,4 +693,117 @@ enum MacroCorpus {
             x = Dialog.getNumber();
             """#),
     ]
+
+    /// Tables: the current table, Table.* members, CSV and TSV files,
+    /// Array.show and Table.applyMacro. Each case closes the tables it
+    /// opened, since ImageJ keeps their windows from case to case.
+    static let tables: [MacroParityCase] = [
+        .init("Table calls without a title use the front table", #"""
+            Table.create("Mancora T1");
+            Table.set("A", 0, 1.5);
+            Table.set("B", 0, "x");
+            Table.set("A", 1, 2);
+            print(Table.size, Table.title, Table.headings);
+            print(Table.get("A", 1), Table.getString("B", 0), Table.getString("A", 0), Table.get("Missing", 0));
+            print(Table.columnExists("B"), Table.columnExists("C"), nResults);
+            Table.create("Mancora T2");
+            Table.set("C", 0, 3);
+            print(Table.title, Table.size, Table.size("Mancora T1"), Table.get("A", 0, "Mancora T1"));
+            Table.reset("Mancora T1");
+            print(Table.title, Table.size("Mancora T1"), Table.size("Mancora T2"));
+            selectWindow("Mancora T2");
+            print(Table.title);
+            close("Mancora T1");
+            close("Mancora T2");
+            """#),
+        .init("Table columns, sorting and deleting", #"""
+            Table.create("Mancora Sort");
+            Table.setColumn("Name", newArray("pear", "apple", "fig", "kiwi"));
+            Table.setColumn("Size", newArray(3, 1, 4, 1.5));
+            Table.sort("Size");
+            Array.print(Table.getColumn("Name"));
+            Array.print(Table.getColumn("Size"));
+            Table.sort("Name");
+            Array.print(Table.getColumn("Name"));
+            Table.renameColumn("Size", "Weight");
+            Table.deleteRows(0, 1);
+            print(Table.headings, Table.size);
+            Table.deleteColumn("Name");
+            print(Table.headings);
+            Table.setColumn("Extra", newArray(7));
+            Array.print(Table.getColumn("Extra"));
+            Table.setColumn("Longer", newArray(1, 2, 3));
+            print(Table.size, Table.getString("Weight", 2) + "|", Table.getString("Extra", 2) + "|", Table.get("Longer", 2));
+            Table.showRowNumbers(true);
+            print(Table.headings);
+            close("Mancora Sort");
+            """#),
+        .init("Table save and open", #"""
+            Table.create("Mancora Save");
+            Table.set("Area", 0, 12.5);
+            Table.set("Label", 0, "first");
+            Table.set("Count", 0, 3);
+            Table.set("Area", 1, 7);
+            Table.set("Count", 1, 4);
+            Table.set("Note", 1, "a, b");
+            dir = getDirectory("temp");
+            Table.save(dir + "mancora-table.csv");
+            print(File.openAsString(dir + "mancora-table.csv"));
+            Table.save(dir + "mancora-table.tsv");
+            print(File.openAsString(dir + "mancora-table.tsv"));
+            // ImageJ shows the tables Table.open and open() open without
+            // waiting for their windows to come to the front, so name them.
+            Table.open(dir + "mancora-table.csv", "Mancora Opened");
+            t = "Mancora Opened";
+            print(Table.title(t), Table.size(t), Table.headings(t));
+            print(Table.getString("Label", 0, t), Table.get("Area", 0, t), Table.getString("Note", 1, t), Table.get("Count", 1, t));
+            open(dir + "mancora-table.tsv");
+            t = "mancora-table.tsv";
+            print(Table.title(t), Table.size(t), Table.headings(t), Table.getString("Note", 1, t));
+            ok = File.delete(dir + "mancora-table.csv");
+            ok = File.delete(dir + "mancora-table.tsv");
+            close("Mancora Save");
+            close("Mancora Opened");
+            close("mancora-table.tsv");
+            """#),
+        .init("Array.show", #"""
+            a = newArray(1, 2.5, 3);
+            b = newArray("x", "y");
+            Array.show("Mancora Arrays (row numbers)", a, b);
+            print(Table.title, Table.size, Table.headings, Table.getString("b", 2) + "|", Table.get("a", 1));
+            Array.show(a);
+            print(Table.title, Table.headings);
+            Array.show("Mancora Idx (indexes)", b);
+            print(Table.title, Table.headings, Table.get("Index", 1));
+            close("Mancora Arrays");
+            close("a");
+            close("Mancora Idx");
+            """#),
+        .init("Table.applyMacro", #"""
+            Table.create("Mancora Apply");
+            Table.setColumn("X", newArray(1, 2, 3));
+            Table.setColumn("Y", newArray(10, 20, 30));
+            Table.applyMacro("Sum = X + Y; Y = Y * 2; z = row;");
+            print(Table.headings);
+            Array.print(Table.getColumn("Sum"));
+            Array.print(Table.getColumn("Y"));
+            close("Mancora Apply");
+            """#),
+        .init("results functions fall back to the front table", #"""
+            Table.create("Mancora Current");
+            Table.set("V", 0, 5);
+            print(getResult("V", 0), getResultString("V", 0), nResults);
+            setResult("Area", 0, 1);
+            print(nResults, getResult("Area", 0), getResultString("Area", 0));
+            updateResults();
+            close("Mancora Current");
+            """#),
+        .init("Table errors", #"""
+            Table.create("Mancora Err");
+            Table.set("A", 0, 1);
+            print(Table.get("A", 0, "Mancora Err"));
+            close("Mancora Err");
+            x = Table.get("A", 0, "Mancora Missing");
+            """#),
+    ]
 }

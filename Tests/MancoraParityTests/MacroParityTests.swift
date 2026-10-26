@@ -108,6 +108,10 @@ struct MacroParityTests {
     @Test func dialogs() async throws {
         try await MacroParity.check(MacroCorpus.dialogs)
     }
+
+    @Test func tables() async throws {
+        try await MacroParity.check(MacroCorpus.tables)
+    }
 }
 
 @Suite("Bundled macros give ImageJ's results", .enabled(if: Parity.available), .serialized)
