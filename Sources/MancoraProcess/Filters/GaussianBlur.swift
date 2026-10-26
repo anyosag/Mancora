@@ -37,36 +37,9 @@ extension Plane {
         let r = rect ?? .whole(width: width, height: height)
         guard !r.isEmpty else { return self }
         let accuracy = accuracy ?? (pixelType == .gray8 || pixelType == .rgb8 ? 0.002 : 0.0002)
-        let extraLines = Int(JavaNumerics.int32((5 * sigmaY).rounded(.up)))
-        let hasRoi = r.height != height && sigmaX > 0 && sigmaY > 0
         var channels = FloatChannels.split(self)
         for c in channels.indices {
-            let original = hasRoi ? channels[c] : []
-            if sigmaX > 0 {
-                let lineFrom = max(r.y - extraLines, 0), lineTo = min(r.y + r.height + extraLines, height)
-                channels[c].withUnsafeMutableBufferPointer { pixels in
-                    GaussianBlur.blurLines(
-                        pixels, length: width, lines: lineFrom..<max(lineTo, lineFrom), write: r.x..<(r.x + r.width),
-                        sigma: sigmaX, accuracy: accuracy)
-                }
-            }
-            if sigmaY > 0 {
-                // Columns are blurred as the rows of the transposed image:
-                // the same arithmetic as ImageJ's column pass, cache-friendly.
-                var columns = GaussianBlur.transposed(channels[c], width: width, height: height)
-                columns.withUnsafeMutableBufferPointer { pixels in
-                    GaussianBlur.blurLines(
-                        pixels, length: height, lines: r.x..<(r.x + r.width), write: r.y..<(r.y + r.height),
-                        sigma: sigmaY, accuracy: accuracy)
-                }
-                channels[c] = GaussianBlur.transposed(columns, width: height, height: width)
-            }
-            if hasRoi {  // resetOutOfRoi: the rows above and below that the x pass blurred
-                let rows = Array(max(r.y - extraLines, 0)..<r.y) + Array((r.y + r.height)..<min(r.y + r.height + extraLines, height))
-                for y in rows {
-                    for x in r.x..<(r.x + r.width) { channels[c][y * width + x] = original[y * width + x] }
-                }
-            }
+            GaussianBlur.blurChannel(&channels[c], width: width, sigmaX: sigmaX, sigmaY: sigmaY, accuracy: accuracy, rect: r)
         }
         return FloatChannels.merge(channels, as: pixelType)
     }
@@ -92,6 +65,43 @@ extension ImageStack {
 enum GaussianBlur {
     static let upscaleKernelRadius = 2
     static let minDownscaledSigma = 4.0
+
+    /// `blurFloat` on one float channel within `r`, then `resetOutOfRoi`:
+    /// the rows above and below `r` that the x pass blurred get their
+    /// values back.
+    static func blurChannel(
+        _ channel: inout [Float], width: Int, sigmaX: Double, sigmaY: Double, accuracy: Double, rect r: RoiBounds
+    ) {
+        let height = channel.count / width
+        let extraLines = Int(JavaNumerics.int32((5 * sigmaY).rounded(.up)))
+        let hasRoi = r.height != height && sigmaX > 0 && sigmaY > 0
+        let original = hasRoi ? channel : []
+        if sigmaX > 0 {
+            let lineFrom = max(r.y - extraLines, 0), lineTo = min(r.y + r.height + extraLines, height)
+            channel.withUnsafeMutableBufferPointer { pixels in
+                blurLines(
+                    pixels, length: width, lines: lineFrom..<max(lineTo, lineFrom), write: r.x..<(r.x + r.width),
+                    sigma: sigmaX, accuracy: accuracy)
+            }
+        }
+        if sigmaY > 0 {
+            // Columns are blurred as the rows of the transposed image:
+            // the same arithmetic as ImageJ's column pass, cache-friendly.
+            var columns = transposed(channel, width: width, height: height)
+            columns.withUnsafeMutableBufferPointer { pixels in
+                blurLines(
+                    pixels, length: height, lines: r.x..<(r.x + r.width), write: r.y..<(r.y + r.height),
+                    sigma: sigmaY, accuracy: accuracy)
+            }
+            channel = transposed(columns, width: height, height: width)
+        }
+        if hasRoi {
+            let rows = Array(max(r.y - extraLines, 0)..<r.y) + Array((r.y + r.height)..<min(r.y + r.height + extraLines, height))
+            for y in rows {
+                for x in r.x..<(r.x + r.width) { channel[y * width + x] = original[y * width + x] }
+            }
+        }
+    }
 
     /// `blur1Direction(ip, sigma, accuracy, xDirection: true, …)`: blurs
     /// rows `lines` of a `length`-wide image in place, writing points

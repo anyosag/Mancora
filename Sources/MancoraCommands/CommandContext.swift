@@ -56,6 +56,8 @@ public struct CommandSettings: Sendable, Hashable {
     public var binaryIterations = 1
     public var binaryCount = 1
     public var padEdges = false
+    /// Process ▸ Binary ▸ Median's radius, which ImageJ keeps between runs.
+    public var binaryMedianRadius = 3.0
     /// Edit ▸ Options ▸ Conversions ▸ Scale when converting.
     public var scaleConversions = true
     /// Analyze ▸ Set Measurements ▸ Decimal places.
