@@ -224,6 +224,27 @@ struct TIFFRobustnessTests {
         }
     }
 
+    /// A tile is decoded whole, so a tile far larger than its image needs a
+    /// buffer the image's size doesn't show; it counts against the budget.
+    @Test func oversizedTilesCountAgainstTheBudget() throws {
+        // A zlib stream of one stored block holding the byte 7.
+        let zlib: [UInt8] = [0x78, 0x01, 0x01, 0x01, 0x00, 0xFE, 0xFF, 0x07, 0x00, 0x08, 0x00, 0x08]
+        var b = TIFFBuilder.gray8(width: 1, height: 1, pixels: zlib + [UInt8](repeating: 0, count: 4096 - zlib.count))
+        b.entries.removeAll { [273, 278, 279].contains($0.tag) }
+        b.set(259, 3, [8])
+        b.set(322, 4, [2048])
+        b.set(323, 4, [2048])
+        b.set(324, 4, [8])
+        b.set(325, 4, [4096])
+        #expect(throws: MancoraIOError.tooLarge(bytes: 2048 * 2048, limit: 1 << 20)) {
+            try TIFFImporter.decode(b.build(), title: "x", options: .init(maximumDecodedBytes: 1 << 20))
+        }
+        #expect(throws: MancoraIOError.tooLarge(bytes: 2048 * 2048, limit: 1 << 20)) {
+            try TIFFImporter.decode(b.build(), title: "x", options: .init(maximumDecodedBytes: 1 << 20, virtual: true))
+        }
+        #expect(try TIFFImporter.decode(b.build(), title: "x").stack[0] == .gray8([7]))
+    }
+
     @Test func decompressionBombIsRejected() {
         var b = TIFFBuilder.gray8(width: 4, height: 4, pixels: [0xFE, 0x00])  // PackBits: 3 zeros
         b.set(256, 4, [4096])

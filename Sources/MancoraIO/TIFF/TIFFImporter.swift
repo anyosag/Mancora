@@ -114,6 +114,7 @@ public enum TIFFImporter {
 
         let stack: ImageStack
         do {
+            try checkChunkBudget(units, options: options)
             if options.virtual {
                 try checkBudget(planes: 1, page: first, options: options)
                 let source = TIFFPlaneSource(
@@ -248,6 +249,20 @@ public enum TIFFImporter {
         let (total, overflow) = page.decodedPlaneBytes.multipliedReportingOverflow(by: planes)
         guard !overflow, total <= options.maximumDecodedBytes else {
             throw .tooLarge(bytes: overflow ? .max : total, limit: options.maximumDecodedBytes)
+        }
+    }
+
+    /// Each strip or tile is decoded whole before its pixels are copied out,
+    /// and a tile can be far larger than its image: it counts too.
+    private static func checkChunkBudget(_ units: [TIFFPlaneSource.Unit], options: Options) throws(MancoraIOError) {
+        var checked = Set<[Int]>()
+        for unit in units {
+            let page = unit.page
+            guard checked.insert([page.chunkWidth, page.chunkHeight]).inserted else { continue }
+            let (bytes, overflow) = page.chunkRowBytes(page.chunkWidth).multipliedReportingOverflow(by: page.chunkHeight)
+            guard !overflow, bytes <= options.maximumDecodedBytes else {
+                throw .tooLarge(bytes: overflow ? .max : bytes, limit: options.maximumDecodedBytes)
+            }
         }
     }
 
