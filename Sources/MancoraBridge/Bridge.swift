@@ -47,8 +47,8 @@ public actor Bridge {
         public var commandTable: URL?
         /// The helper's heap limit (`-Xmx`), in megabytes.
         public var maximumHeapMegabytes: Int?
-        /// On Linux without a display, run the helper under `xvfb-run` when
-        /// it's installed: ImageJ 1.x builds dialogs even when a macro
+        /// On Linux without a display, give the helper a virtual one (Xvfb)
+        /// when it's installed: ImageJ 1.x builds dialogs even when a macro
         /// supplies every option, which AWT refuses to do headless.
         public var useVirtualDisplay = true
         /// How long one request may take.
@@ -80,6 +80,8 @@ public actor Bridge {
     private var nextID = 1
     private var recentLaunches: [Date] = []
     private let workRoot: URL
+    /// The Xvfb server the helper draws its (never shown) dialogs on, when there's no display.
+    private var virtualDisplay: (process: Process, name: String)?
     /// How many helper processes have been started, including restarts.
     public private(set) var launchCount = 0
 
@@ -130,7 +132,25 @@ public actor Bridge {
             connection.terminate()
         }
         connection = nil
+        if let display = virtualDisplay { Self.stopVirtualDisplay(display.process, name: display.name) }
+        virtualDisplay = nil
         try? FileManager.default.removeItem(at: workRoot)
+    }
+
+    /// Children inherit the signal mask of the thread that starts them, and
+    /// Swift's concurrency threads block SIGTERM, so Xvfb is killed outright
+    /// and its socket and lock file removed for it.
+    private static func stopVirtualDisplay(_ process: Process, name: String) {
+        guard process.isRunning else { return }
+        #if os(Windows)
+        process.terminate()
+        #else
+        kill(process.processIdentifier, SIGKILL)
+        process.waitUntilExit()
+        let number = name.dropFirst()
+        try? FileManager.default.removeItem(atPath: "/tmp/.X11-unix/X\(number)")
+        try? FileManager.default.removeItem(atPath: "/tmp/.X\(number)-lock")
+        #endif
     }
 
     /// Makes the helper exit without answering (for testing recovery).
@@ -242,20 +262,48 @@ public actor Bridge {
         #if os(macOS)
         arguments.append("-Dapple.awt.UIElement=true")  // no Dock icon or menu bar for the helper
         #endif
-        var executable = config.java.executable
+        var environment = config.environment
         #if os(Linux)
-        let display = (config.environment["DISPLAY"] ?? "") + (config.environment["WAYLAND_DISPLAY"] ?? "")
+        let display = (environment["DISPLAY"] ?? "") + (environment["WAYLAND_DISPLAY"] ?? "")
         if display.isEmpty {
-            if config.useVirtualDisplay, let xvfb = Self.findOnPath("xvfb-run", environment: config.environment) {
-                arguments = ["-a", executable.path] + arguments
-                executable = xvfb
+            if config.useVirtualDisplay, let name = startVirtualDisplay() {
+                environment["DISPLAY"] = name
             } else {
                 arguments.append("-Djava.awt.headless=true")
             }
         }
         #endif
         arguments += ["-cp", classPath, "MancoraBridgeHelper"]
-        return HelperLaunch(executable: executable, arguments: arguments, environment: config.environment)
+        return HelperLaunch(executable: config.java.executable, arguments: arguments, environment: environment)
+    }
+
+    /// Starts Xvfb on a free display number (once; helpers that restart
+    /// reuse it) and returns its name, e.g. `":99"`, or `nil` without Xvfb.
+    func startVirtualDisplay() -> String? {
+        if let display = virtualDisplay, display.process.isRunning { return display.name }
+        guard let xvfb = Self.findOnPath("Xvfb", environment: configuration.environment) else { return nil }
+        let sockets = "/tmp/.X11-unix"
+        for number in 99..<199 where !FileManager.default.fileExists(atPath: "\(sockets)/X\(number)")
+            && !FileManager.default.fileExists(atPath: "/tmp/.X\(number)-lock")
+        {
+            let process = Process()
+            process.executableURL = xvfb
+            process.arguments = [":\(number)", "-screen", "0", "1280x1024x24", "-nolisten", "tcp"]
+            process.standardInput = FileHandle.nullDevice
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            guard (try? process.run()) != nil else { return nil }
+            // Wait (up to 5 s) for the server's socket before handing it to Java.
+            for _ in 0..<100 where process.isRunning {
+                if FileManager.default.fileExists(atPath: "\(sockets)/X\(number)") {
+                    virtualDisplay = (process, ":\(number)")
+                    return ":\(number)"
+                }
+                usleep(50_000)
+            }
+            process.terminate()  // lost a race for this number, or Xvfb failed: try the next one
+        }
+        return nil
     }
 
     /// `<home>/helper/<hash of the source>/`, compiled with `javac` once.

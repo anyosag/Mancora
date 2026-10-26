@@ -108,7 +108,7 @@ struct BridgeIntegrationTests {
     static var hasDisplay: Bool {
         #if os(Linux)
         let env = ProcessInfo.processInfo.environment
-        return !(env["DISPLAY"] ?? "").isEmpty || Bridge.findOnPath("xvfb-run", environment: env) != nil
+        return !(env["DISPLAY"] ?? "").isEmpty || Bridge.findOnPath("Xvfb", environment: env) != nil
         #else
         return true
         #endif

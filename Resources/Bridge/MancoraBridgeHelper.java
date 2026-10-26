@@ -211,7 +211,7 @@ public class MancoraBridgeHelper {
             String log = new String(captured.toByteArray(), StandardCharsets.UTF_8);
             if (java.awt.GraphicsEnvironment.isHeadless() && log.contains("java.awt.HeadlessException"))
                 throw new IllegalStateException("\"" + command + "\" needs a display (ImageJ builds its dialog even "
-                    + "when the options are given); run Mancora with a display, or install xvfb-run");
+                    + "when the options are given); run Mancora with a display, or install Xvfb");
         } else {
             String value = IJ.runMacro((String) params.get("code"), params.get("argument") == null ? "" : (String) params.get("argument"));
             result.put("value", value);

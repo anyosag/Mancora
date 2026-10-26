@@ -1,5 +1,13 @@
 import Foundation
 
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
+
 /// How to start the helper process.
 struct HelperLaunch: Sendable {
     var executable: URL
@@ -79,8 +87,15 @@ final class HelperConnection: @unchecked Sendable {
         continuation?.resume(throwing: error)
     }
 
+    /// Stops the helper now. (A SIGTERM could sit blocked: children inherit
+    /// the blocked signals of the concurrency thread that launched them.)
     func terminate() {
-        if process.isRunning { process.terminate() }
+        guard process.isRunning else { return }
+        #if os(Windows)
+        process.terminate()
+        #else
+        kill(process.processIdentifier, SIGKILL)
+        #endif
     }
 
     private func received(_ chunk: Data) {
