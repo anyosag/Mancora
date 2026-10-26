@@ -16,7 +16,19 @@ Act as an orchestrator: classify each task, then do it yourself or hand it to a 
 - **Delegate with only the context the sub-task needs.** Pass the specific files, facts and goal, not the whole conversation history.
 - **Plan, act, verify.** State the approach, make the tool or sub-agent call, then check the result against the user's goal before moving on.
 
-In this repository:
-- **Opus:** porting ImageJ/Fiji code with exact parity, bug hunts, and reviews or merges of agent work.
-- **Sonnet:** ordinary features, fixes, and CI repairs.
-- **Haiku:** sweeps such as listing commands or extracting tables from ImageJ's sources.
+## Choosing a model for each agent
+
+Pick the model for the task; never give every agent Opus by default. Set `model` explicitly on every Agent call. The smallest model that can do the job well is the right one.
+
+| Model | Use it for, in this repository |
+| --- | --- |
+| **Haiku** | Extracting compiler errors or failing tests from CI logs; listing commands, macro functions or option keys from ImageJ's sources; turning gap reports into checklists; checking release assets; simple renames and formatting. |
+| **Sonnet** (the default) | Porting well-specified ImageJ commands, file formats and macro functions with parity tests; Mac app features; CI fixes; merges with ordinary conflicts; a gap audit of one area. |
+| **Opus** (only where depth pays off) | Bug hunts and adversarial reviews; the final comparison with Fiji; models that cut across modules, such as overlays, ShapeRoi or the app session; ports whose numbers are hard to match exactly, such as EDM, FFT or JPEG's IDCT; untangling two agents' overlapping work. |
+
+**Spending tokens well**
+- Brief an agent with only what its task needs: the goal, the files, the commands to run and the report wanted. Never the conversation.
+- Give each agent a scope that doesn't overlap another's, so no work is done twice or has to be merged by hand.
+- Continue an agent that stopped (SendMessage) instead of starting a new one.
+- Do a handful of tool calls yourself rather than delegating them.
+- Have agents return conclusions, not file dumps or logs.
