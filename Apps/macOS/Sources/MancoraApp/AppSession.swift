@@ -2,6 +2,7 @@ import Foundation
 import MancoraBridge
 import MancoraCommands
 import MancoraCore
+import MancoraMacro
 import Observation
 
 /// What all of Mancora's windows share, as ImageJ's do: the Results table
@@ -18,6 +19,12 @@ final class AppSession {
     var settings = CommandSettings()
     /// The toolbar's tool, the same for every window.
     var tool = CanvasTool.rectangle
+    /// The ROI Manager's list, which macros share.
+    var roiManager = RoiManagerList()
+    /// The ROI Manager's Show All: its ROIs drawn on every image.
+    var showsAllRois = false
+    /// The image window last in front, which tool windows such as the ROI Manager act on.
+    @ObservationIgnored private(set) weak var currentViewer: ViewerModel?
     /// Bumped when a command adds results or log lines, so their windows come forward.
     private(set) var resultsAdded = 0
     private(set) var logAdded = 0
@@ -31,6 +38,12 @@ final class AppSession {
     func register(_ viewer: ViewerModel) {
         viewers.removeAll { $0.model == nil || $0.model === viewer }
         viewers.append(WeakViewer(model: viewer))
+        currentViewer = viewer
+    }
+
+    /// A viewer window came to the front.
+    func activate(_ viewer: ViewerModel) {
+        if viewer.hasImage { currentViewer = viewer }
     }
 
     /// The windows with an image, in the order they were registered.

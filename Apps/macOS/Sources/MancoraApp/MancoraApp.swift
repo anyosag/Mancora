@@ -61,6 +61,10 @@ struct MancoraApp: App {
             LogWindow(session: AppSession.shared)
         }
         .defaultSize(width: 480, height: 300)
+        Window("ROI Manager", id: "roi-manager") {
+            RoiManagerView(session: AppSession.shared)
+        }
+        .defaultSize(width: 340, height: 360)
         Window("Update Sites", id: "update-sites") {
             UpdateSitesView(model: updateSites, bridge: bridge)
         }

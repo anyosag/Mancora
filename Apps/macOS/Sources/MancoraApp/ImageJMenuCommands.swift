@@ -131,7 +131,7 @@ enum AppMenuActions {
     /// ImageJ commands that open ImageJ's own windows (Java frames), which
     /// have no place next to Mancora's: these say so instead of opening one.
     static let javaWindows: Set<String> = [
-        "Window/Level...", "Color Balance...", "Threshold...", "Color Threshold...", "Channels Tool...", "ROI Manager...",
+        "Window/Level...", "Color Balance...", "Threshold...", "Color Threshold...", "Channels Tool...",
         "Color Picker...", "Line Width...", "Text Window", "Text Window...", "Control Panel...", "Monitor Memory...",
         "Startup Macros...", "Edit...", "Macro", "Macro Tool", "JavaScript", "BeanShell", "Python", "Plugin", "Plugin Filter",
         "Plugin Frame", "Plugin Tool", "Text File... ", "Table...", "Main Window [return]", "Put Behind [tab]",
@@ -183,6 +183,15 @@ enum AppMenuActions {
             viewer?.showsInspector = true
         case "Update...":
             openWindow(id: "update-sites")
+        case "ROI Manager...":
+            openWindow(id: "roi-manager")
+        case "Add to Manager":
+            do throws(AppSession.ManagerError) {
+                try AppSession.shared.addToManager(from: viewer)
+                openWindow(id: "roi-manager")
+            } catch {
+                viewer?.errorMessage = error.text
+            }
         default:
             if let link = links[name], let url = URL(string: link) {
                 NSWorkspace.shared.open(url)

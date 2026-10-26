@@ -333,15 +333,16 @@ final class ViewerModel {
             let input = image
             let position = (channel, slice, frame)
             let shared = AppSession.shared
-            let (startResults, startSettings) = (shared.results, shared.settings)
-            // what the macro left (results, settings, log), its return value and error,
-            // the input as the macro left it, and new images
+            let (startResults, startSettings, startManager) = (shared.results, shared.settings, shared.roiManager)
+            // what the macro left (results, settings, log, the ROI Manager), its return
+            // value and error, the input as the macro left it, and new images
             let outcome = await Task.detached(priority: .userInitiated) {
-                () -> (CommandContext, String?, String?, Hyperstack?, [Hyperstack]) in
+                () -> (CommandContext, RoiManagerList, String?, String?, Hyperstack?, [Hyperstack]) in
                 let session = MacroSession()
                 session.batchMode = false
                 session.context.results = startResults
                 session.context.settings = startSettings
+                session.roiManager = startManager
                 var inputID: Int?
                 if let input {
                     inputID = session.add(input)
@@ -363,11 +364,12 @@ final class ViewerModel {
                 }
                 var left = session.context
                 left.log = session.logLines
-                return (left, value, failure, changed, created)
+                return (left, session.roiManager, value, failure, changed, created)
             }.value
-            let (left, value, failure, changed, created) = outcome
+            let (left, manager, value, failure, changed, created) = outcome
             if let changed { replace(with: changed) }
             shared.absorb(left)
+            shared.roiManager = manager
             if let value { report = "Returned: \(value)" }
             if let failure { errorMessage = "Macro Error: " + failure }
             return saveForNewWindows(created)

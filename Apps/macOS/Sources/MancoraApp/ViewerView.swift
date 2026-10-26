@@ -9,6 +9,7 @@ struct ViewerWindow: View {
     @State private var model = ViewerModel()
     @Environment(\.openWindow) private var openWindow
     @Environment(\.undoManager) private var undoManager
+    @Environment(\.controlActiveState) private var activeState
 
     var body: some View {
         ViewerView(model: model, showsInspector: $model.showsInspector)
@@ -29,6 +30,9 @@ struct ViewerWindow: View {
                 }
             }
             .focusedSceneValue(\.viewer, model)
+            .onChange(of: activeState, initial: true) {
+                if activeState == .key { AppSession.shared.activate(model) }
+            }
             .task(id: request) {
                 model.bridge = bridge
                 model.undoManager = undoManager
@@ -149,7 +153,7 @@ struct ImageCanvas: View {
                     .overlay {
                         SelectionOverlay(
                             selection: model.selection, draft: model.draft, vertices: model.vertices,
-                            pointer: model.pointer, tool: tool, scale: scale)
+                            pointer: model.pointer, tool: tool, scale: scale, others: managerRois)
                     }
                     .contentShape(Rectangle())
                     .gesture(
@@ -189,6 +193,13 @@ struct ImageCanvas: View {
                 return .handled
             }
         }
+    }
+
+    /// The ROI Manager's ROIs for this plane, when Show All is on.
+    private var managerRois: [(index: Int, roi: Roi)] {
+        let session = AppSession.shared
+        guard session.showsAllRois, let image = model.image else { return [] }
+        return session.managerRois(on: image, channel: model.channel, slice: model.slice, frame: model.frame)
     }
 
     /// A point on the displayed image, in pixels.

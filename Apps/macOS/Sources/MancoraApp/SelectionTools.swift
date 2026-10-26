@@ -291,9 +291,18 @@ struct SelectionOverlay: View {
     let pointer: CGPoint?
     let tool: CanvasTool
     let scale: CGFloat
+    /// The ROI Manager's ROIs, numbered, for Show All.
+    var others: [(index: Int, roi: Roi)] = []
 
     var body: some View {
         Canvas { context, _ in
+            let cyan = GraphicsContext.Shading.color(.cyan)
+            for (index, roi) in others {
+                context.stroke(Self.path(roi, scale: scale), with: cyan, lineWidth: 1)
+                let b = roi.bounds
+                let center = CGPoint(x: (CGFloat(b.x) + CGFloat(b.width) / 2) * scale, y: (CGFloat(b.y) + CGFloat(b.height) / 2) * scale)
+                context.draw(Text("\(index + 1)").font(.caption2).foregroundStyle(.cyan), at: center)
+            }
             let yellow = GraphicsContext.Shading.color(.yellow)
             for roi in [draft ?? selection].compactMap({ $0 }) {
                 context.stroke(Self.path(roi, scale: scale), with: yellow, lineWidth: 1)
