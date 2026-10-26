@@ -247,18 +247,6 @@ public struct GeometryProcessor: Sendable, Equatable {
         }
     }
 
-    /// The value `getBicubicInterpolatedPixel` reads: `getf` for 32-bit, `get` otherwise.
-    @inline(__always)
-    func sample(_ u: Int, _ v: Int) -> Double {
-        let i = v * width + u
-        switch plane {
-        case .gray8(let p): return Double(Kernels.at(p, i))
-        case .gray16(let p): return Double(Kernels.at(p, i))
-        case .gray32Float(let p): return Double(Kernels.at(p, i))
-        case .rgb8(let p): return Double(Int32(bitPattern: Kernels.at(p, i)))
-        }
-    }
-
     // MARK: Interpolation
 
     /// `getInterpolatedPixel(x, y)` with the current method: bicubic, or
@@ -301,17 +289,13 @@ public struct GeometryProcessor: Sendable, Equatable {
         if u0 <= 0 || u0 >= width - 2 || v0 <= 0 || v0 >= height - 2 {
             return source.bilinearInterpolatedPixel(x: x0, y: y0)
         }
-        var q = 0.0
-        for j in 0...3 {
-            let v = v0 - 1 + j
-            var p = 0.0
-            for i in 0...3 {
-                let u = u0 - 1 + i
-                p = p + source.sample(u, v) * Kernels.cubic(x0 - Double(u))
-            }
-            q = q + p * Kernels.cubic(y0 - Double(v))
+        let w = source.width
+        switch source.plane {
+        case .gray8(let p): return Kernels.bicubic(x0, y0, u0, v0, p, w) { Double($0) }
+        case .gray16(let p): return Kernels.bicubic(x0, y0, u0, v0, p, w) { Double($0) }
+        case .gray32Float(let p): return Kernels.bicubic(x0, y0, u0, v0, p, w) { Double($0) }
+        case .rgb8(let p): return Kernels.bicubic(x0, y0, u0, v0, p, w) { Double(Int32(bitPattern: $0)) }
         }
-        return q
     }
 
     /// `getBilinearInterpolatedPixel`: bilinear within a pixel of the image,
@@ -465,6 +449,37 @@ enum Kernels {
             return UInt32(truncatingIfNeeded: v) & 0xFF
         }
         return 0xFF00_0000 | channel(16) << 16 | channel(8) << 8 | channel(0)
+    }
+
+    /// The 4×4 sum of `getBicubicInterpolatedPixel` around (`u0`, `v0`), each
+    /// neighbor read as `value` (`get` or `getf`) and summed in ImageJ's order.
+    /// The x weights are the same on every row, so they're computed once.
+    @inline(__always)
+    static func bicubic<T: Numeric>(
+        _ x0: Double, _ y0: Double, _ u0: Int, _ v0: Int, _ p: [T], _ width: Int, _ value: (T) -> Double
+    ) -> Double {
+        let wx0 = cubic(x0 - Double(u0 - 1)), wx1 = cubic(x0 - Double(u0))
+        let wx2 = cubic(x0 - Double(u0 + 1)), wx3 = cubic(x0 - Double(u0 + 2))
+        let first = (v0 - 1) * width + u0 - 1
+        let inBounds = first >= 0 && first + 3 * width + 3 < p.count
+        var q = 0.0
+        for j in 0...3 {
+            let row = first + j * width
+            var sum = 0.0
+            if inBounds {
+                sum = sum + value(p[row]) * wx0
+                sum = sum + value(p[row + 1]) * wx1
+                sum = sum + value(p[row + 2]) * wx2
+                sum = sum + value(p[row + 3]) * wx3
+            } else {
+                sum = sum + value(at(p, row)) * wx0
+                sum = sum + value(at(p, row + 1)) * wx1
+                sum = sum + value(at(p, row + 2)) * wx2
+                sum = sum + value(at(p, row + 3)) * wx3
+            }
+            q = q + sum * cubic(y0 - Double(v0 - 1 + j))
+        }
+        return q
     }
 
     /// `ImageProcessor.cubic(x)`: the Catmull-Rom kernel (a = 0.5).
