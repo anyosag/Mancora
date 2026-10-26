@@ -99,7 +99,7 @@ struct UpdateSiteNetworkTests {
         // Only Bio-Formats' ImageJ plugin (the current record, wherever the sites keep it), and what it needs.
         let candidates = manager.files.files.filter { $0.unversionedFilename.hasSuffix("/bio-formats_plugins.jar") }
         let records = manager.files.files.filter { $0.filename.contains("bio-formats") || $0.filename.contains("formats-") }
-            .map { "\($0.filename) [\($0.updateSite ?? "local")] \($0.status.rawValue) \($0.timestamp) overrides \($0.overriddenUpdateSites.map(\.site))" }
+            .map { "\($0.filename) [\($0.updateSite ?? "local")] \($0.status.rawValue) \($0.timestamp)" }
         let plugin = try #require(
             candidates.filter { $0.current != nil }.max { $0.timestamp < $1.timestamp }, "records: \(records)")
         try manager.select([plugin.filename])
