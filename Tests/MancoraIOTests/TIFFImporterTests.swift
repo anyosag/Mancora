@@ -130,6 +130,23 @@ struct ImageJTIFFTests {
         let expected = Plane.rgb8((0..<height).flatMap { y in (0..<width).map { x in Patterns.rgb(x, y) } })
         #expect(firstMismatch(image.stack[0], expected, width: width) == nil)
     }
+
+    /// ImageJ saves a 16-bit RGB composite as RGB48 with only its first slice
+    /// label; FileOpener names the channels Red, Green and Blue again.
+    @Test func rgb48() throws {
+        let image = try open("ij-rgb48.tif")
+        #expect(image.dimensions == HyperstackDimensions(channels: 3))
+        #expect(image.compositeMode == .composite)
+        #expect(image.stack.labels == ["Red", "Green", "Blue"])
+        for c in 1...3 {
+            var expected: [UInt16] = []
+            for y in 0..<height {
+                for x in 0..<width { expected.append(UInt16(1000 * c + x * 37 + y * 101 * c)) }
+            }
+            #expect(image.stack[c - 1] == .gray16(expected), "channel \(c)")
+        }
+        #expect(image.channels.map(\.displayRange) == [1000...4470, 1500...6000, 1000...4470])
+    }
 }
 
 @Suite("Malformed TIFFs fail safely")

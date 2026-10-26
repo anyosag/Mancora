@@ -44,6 +44,7 @@ public class ImageJFixtures {
         writeMetadata(new File(tiffDir, "ij-metadata-le.tif"), true);
         writeLut16(new File(tiffDir, "ij-16bit-lut-inverted.tif"));
         writeSigned16(new File(tiffDir, "ij-16bit-signed.tif"));
+        writeRGB48(new File(tiffDir, "ij-rgb48.tif"));
         System.out.println("ImageJ " + IJ.getVersion() + " fixtures written");
     }
 
@@ -223,6 +224,30 @@ public class ImageJFixtures {
         sp.setLut(fire.createInvertedLut());
         sp.setMinAndMax(100, 30000);
         new FileSaver(new ImagePlus("lut16", sp)).saveAsTiff(out.getPath());
+    }
+
+    /**
+     * 16-bit RGB as ImageJ opens a 48-bit RGB TIFF (a composite whose slices
+     * are labelled Red, Green and Blue) and saves it again: as RGB48, one IFD
+     * of interleaved samples, keeping only the first slice label.
+     */
+    static void writeRGB48(File out) {
+        ImageStack stack = new ImageStack(W, H);
+        String[] names = {"Red", "Green", "Blue"};
+        for (int c = 0; c < 3; c++) {
+            short[] px = new short[W * H];
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++)
+                    px[y * W + x] = (short) (1000 * (c + 1) + x * 37 + y * 101 * (c + 1));
+            stack.addSlice(names[c], px);
+        }
+        ImagePlus imp = new ImagePlus("rgb48", stack);
+        imp.setDimensions(3, 1, 1);
+        CompositeImage ci = new CompositeImage(imp, IJ.COMPOSITE);
+        ci.setPosition(2, 1, 1);
+        ci.setDisplayRange(1500, 6000);
+        ci.setPosition(1, 1, 1);
+        new FileSaver(ci).saveAsTiff(out.getPath());
     }
 
     /** Signed 16-bit data: ImageJ stores value + 32768 with a -32768 offset calibration. */

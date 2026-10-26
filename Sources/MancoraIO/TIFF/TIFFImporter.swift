@@ -104,11 +104,12 @@ public enum TIFFImporter {
 
         let metadata = first.imageJMetadata
         var labels = [String?](repeating: nil, count: planeCount)
-        if let saved = metadata?.labels, !saved.isEmpty, saved.count <= planeCount {
-            labels.replaceSubrange(0..<saved.count, with: saved)
-        } else if pages.count == 1, first.planesPerPage > 1 {
-            // ImageJ's FileOpener names the samples of a 16-bit RGB(A) image.
+        if pages.count == 1, first.planesPerPage > 1 {
+            // ImageJ's FileOpener names the samples of a 16-bit RGB(A) image,
+            // whatever labels it holds (ImageJ saves RGB48 with only the first).
             labels = Array(["Red", "Green", "Blue", "Gray"].prefix(planeCount))
+        } else if let saved = metadata?.labels, !saved.isEmpty, saved.count <= planeCount {
+            labels.replaceSubrange(0..<saved.count, with: saved)
         }
 
         let stack: ImageStack
