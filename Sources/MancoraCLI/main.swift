@@ -5,7 +5,8 @@
 //   mancora lut <file.lut>                 describe a LUT file
 //   mancora luts                           list the built-in LUTs
 //   mancora update [--download <dir>]      check for a newer release
-//   mancora bridge <setup|info|commands|run|macro|open> …   ImageJ and its plugins in a Java helper
+//   mancora bridge <setup|info|commands|menus|run|macro|command|script|open> …   ImageJ (in Fiji, once installed) in a Java helper
+//   mancora fiji <install|update|status|auto-update> …   the Fiji the bridge runs in
 //   mancora update-sites <list|add|enable|disable|status|update> …   Fiji update sites for the bridge
 //   mancora [--headless] -macro <macro.ijm> [arg]   run a macro, as ImageJ's -macro and -batch do
 //   mancora [--headless] -eval "<code>"             run macro code and print what it returns
@@ -15,6 +16,7 @@ import Foundation
 import MancoraBridge
 import MancoraCommands
 import MancoraCore
+import MancoraFiji
 import MancoraIO
 import MancoraMacro
 import MancoraSupport
@@ -26,11 +28,14 @@ let usage = """
            mancora lut <file.lut>
            mancora luts
            mancora update [--download <directory>]
-           mancora bridge setup                       install ImageJ for the Java bridge
-           mancora bridge info | commands [--plugins]
+           mancora bridge setup                       install plain ImageJ for the Java bridge
+           mancora bridge info | commands [--plugins] | menus
            mancora bridge run "<command>" "<options>" <in.tif> [<out.tif>]
            mancora bridge macro <macro.ijm> [<in.tif> …]
+           mancora bridge command "<class or menu path>" [<key>=<value> …] [<in.tif>]   a SciJava command (Fiji)
+           mancora bridge script <file.groovy|.py|.js|…> [<key>=<value> …] [<in.tif>]   a script in any Fiji language
            mancora bridge open <file> [<out.tif>]     open any format ImageJ or Bio-Formats reads
+           mancora fiji <install|update|status|auto-update> …   Fiji for the bridge (see mancora fiji help)
            mancora update-sites <command> …           Fiji update sites (see mancora update-sites help)
            mancora [--headless] -macro <macro.ijm> [<argument>]   (also -batch, or macro)
            mancora [--headless] -eval "<macro code>"
@@ -123,6 +128,8 @@ case ("bridge", 2...):
     await bridgeCommand(Array(args.dropFirst()))
 case ("update-sites", 1...):
     await updateSitesCommand(Array(args.dropFirst()))
+case ("fiji", 1...):
+    await fijiCommand(Array(args.dropFirst()))
 case ("luts", 1):
     for lut in LUT.builtIn { print(lut.name) }
 case ("--version", 1), ("version", 1):
@@ -202,7 +209,54 @@ func bridgeCommand(_ args: [String]) async {
         case ("info", 1):
             let hello = try await bridge.start()
             print("ImageJ \(hello.imagej) on Java \(hello.java) (helper pid \(hello.pid))")
-            print("home: \(configuration.home.root.path)")
+            if let fiji = configuration.fiji {
+                print("in Fiji \(hello.fiji?["Fiji"] ?? ""): \(fiji.root.path)")
+            } else {
+                print("home: \(configuration.home.root.path)")
+            }
+        case ("menus", 1):
+            for item in try await bridge.menus() {
+                switch item.kind {
+                case .separator: print(item.path.joined(separator: " > ") + " > -")
+                default:
+                    let path = item.path.isEmpty ? "(no menu) \(item.command ?? "")" : item.path.joined(separator: " > ")
+                    print("\(path)\t\(item.kind.rawValue)\t\(item.identifier ?? "")" + (item.shortcut.map { "\t\($0)" } ?? ""))
+                }
+            }
+        case ("command", 2...), ("script", 2...):
+            // key=value parameters, then optionally an image (the active one).
+            var rest = Array(args.dropFirst(2))
+            var images: [Hyperstack] = []
+            if let last = rest.last, !last.contains("="), FileManager.default.fileExists(atPath: last) {
+                images = [try ImageOpener.read(path: last)]
+                rest.removeLast()
+            }
+            var parameters: [String: BridgeValue] = [:]
+            for pair in rest {
+                guard let equals = pair.firstIndex(of: "=") else { fail(usage) }
+                let value = String(pair[pair.index(after: equals)...])
+                parameters[String(pair[..<equals])] = Double(value).map(BridgeValue.number) ?? .string(value)
+            }
+            let result: BridgeRunResult
+            if args[0] == "command" {
+                result = try await bridge.runCommand(args[1], parameters: parameters, images: images)
+            } else {
+                let code = try String(contentsOfFile: args[1], encoding: .utf8)
+                let language = URL(fileURLWithPath: args[1]).pathExtension
+                result = try await bridge.runScript(code, language: language.isEmpty ? "ijm" : language, parameters: parameters, images: images)
+            }
+            printBridgeResult(result)
+            for (name, value) in result.outputValues.sorted(by: { $0.key < $1.key }) { print("\(name) = \(value)") }
+            if let error = result.scriptError { FileHandle.standardError.write(Data("script error: \(error)\n".utf8)) }
+            for (k, image) in result.images.enumerated() {
+                let path = "\(args[0])-output-\(k + 1).tif"
+                try TIFFExporter.write(image.image, to: path)
+                print("saved \(image.title) to \(path)")
+            }
+            if result.scriptError != nil {
+                await bridge.stop()
+                exit(1)
+            }
         case ("commands", 1), ("commands", 2):
             let pluginsOnly = args.count == 2 && args[1] == "--plugins"
             for command in try await bridge.commands() where !pluginsOnly || command.isPlugin {
@@ -286,7 +340,7 @@ func runMacro(_ code: String, argument: String?, path: String?, printReturn: Boo
     let needsImageJ = MacroSupport.unsupported(in: code, registry: registry)
     if !needsImageJ.isEmpty, let resources = bridgeResources(),
         let configuration = try? Bridge.Configuration.standard(resources: resources),
-        configuration.home.hasImageJ
+        configuration.fiji != nil || configuration.home.hasImageJ
     {
         let bridge = Bridge(configuration: configuration)
         do {
@@ -308,7 +362,7 @@ func runMacro(_ code: String, argument: String?, path: String?, printReturn: Boo
     } catch {
         var message = "Macro Error: \(error)"
         if !needsImageJ.isEmpty {
-            message += "\n(\(needsImageJ.joined(separator: ", ")) needs ImageJ: run `mancora bridge setup` to install it.)"
+            message += "\n(\(needsImageJ.joined(separator: ", ")) needs ImageJ: run `mancora fiji install` (or `mancora bridge setup`).)"
         }
         fail(message)
     }
