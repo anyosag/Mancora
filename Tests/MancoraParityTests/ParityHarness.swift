@@ -188,6 +188,8 @@ enum ParityInput: String, Sendable {
     case binaryPolygon = "binary+polygon", binaryNearEdge = "binary+nearEdge", binaryStackOval = "binaryStack+oval"
     case calibratedOval = "calibrated+oval", calibratedRect = "calibrated+rect", hyperstackOval = "hyperstack+oval"
     case gray16Freehand = "gray16+freehand", gray32Subpixel = "gray32+subpixel", rgbLine = "rgb+line"
+    // Odd shapes for geometry: one pixel wide or high, and an RGB stack.
+    case column8, row16, row32, columnRGB, stackRGB
     case fixtureHyperstack = "ij-hyperstack-16bit.tif"
     case fixtureFire = "ij-8bit-fire.tif"
 
@@ -201,6 +203,11 @@ enum ParityInput: String, Sendable {
         case .stack8: made = try Self.make("stack8.tif", .gray8, slices: 5)
         case .stack16: made = try Self.make("stack16.tif", .gray16, slices: 5)
         case .stack32: made = try Self.make("stack32.tif", .gray32Float, slices: 5)
+        case .column8: made = try Self.make("column8.tif", .gray8, width: 1)
+        case .row16: made = try Self.make("row16.tif", .gray16, height: 1)
+        case .row32: made = try Self.make("row32.tif", .gray32Float, height: 1)
+        case .columnRGB: made = try Self.make("columnRGB.tif", .rgb8, width: 1)
+        case .stackRGB: made = try Self.make("stackRGB.tif", .rgb8, slices: 4)
         case .hyperstack:
             made = try Self.make("hyperstack.tif", .gray16, channels: 2, slices: 3, frames: 2, composite: true)
         case .calibrated:
@@ -268,7 +275,8 @@ enum ParityInput: String, Sendable {
     }
 
     static func make(
-        _ title: String, _ type: PixelType, channels: Int = 1, slices: Int = 1, frames: Int = 1, composite: Bool = false
+        _ title: String, _ type: PixelType, channels: Int = 1, slices: Int = 1, frames: Int = 1, composite: Bool = false,
+        width: Int = Self.width, height: Int = Self.height
     ) throws -> Hyperstack {
         var random = SeededRandom(seed: UInt64(title.utf8.reduce(0) { $0 &* 31 &+ UInt64($1) }))
         let count = width * height

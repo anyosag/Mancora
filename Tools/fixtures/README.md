@@ -16,6 +16,7 @@ be hidden by the same bug in a test helper.
 | `roi/golden.json` | `RoiFixtures.java`: each ROI as `RoiDecoder` reads it back, with `Roi.getMask()` and `ImageProcessor.fill(roi)` |
 | `roi/mancora/RoiSet.zip` | Mancora's `RoiSet.encode`, from the ROIs described in `golden.json` |
 | `roi/mancora/verified.json` | `RoiFixtures.java`: the ROI Manager's `openZip()` on Mancora's zip, compared ROI by ROI with its own |
+| `process/geometry.json` | ImageJ 1.54p `ImageProcessor` (`GeometryFixtures.java`): `resize` with and without averaging, `scale`, `rotate`, `translate` and the point interpolators of every processor type, on the inputs of `FilterFixtures.java` |
 
 ### ROI files in both directions
 

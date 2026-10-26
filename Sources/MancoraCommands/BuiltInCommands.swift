@@ -8,6 +8,7 @@ enum BuiltInCommands {
         lutCommands + [invertLUT, enhanceContrast, rename, close, closeAll, duplicate, properties, setScale]
             + [setMeasurements, measure, clearResults, analyzeParticles] + FilterCommands.all + ProcessCommands.all + ThresholdCommands.all + EditCommands.all
             + CropCommands.all + TransformCommands.all
+            + GeometryCommands.all
     }
 
     // MARK: Image ▸ Lookup Tables
