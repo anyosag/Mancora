@@ -174,6 +174,22 @@ struct TIFFRobustnessTests {
         #expect(try TIFFImporter.decode(two.build(), title: "loop2").stack.count == 2)
     }
 
+    /// ImageJ reads an ImageJ stack's planes back to back until the file
+    /// ends (FileOpener.openStack), so a truncated stack, or an `images=`
+    /// larger than the file, opens with the planes the file holds in full.
+    @Test func truncatedImageJStackKeepsItsCompletePlanes() throws {
+        for claimed in [5_000, 2_000_000_000] {
+            var b = TIFFBuilder.gray8(width: 4, height: 4, pixels: Array(1...16))
+            b.set(270, text: "ImageJ=1.54p\nimages=\(claimed)\nslices=\(claimed)\nloop=false\n")
+            let bytes = b.build()
+            let image = try TIFFImporter.decode(bytes, title: "x")
+            // The IFD after the pixels reads as further planes, as in ImageJ.
+            #expect(image.stack.count == (bytes.count - 8) / 16)
+            #expect(image.dimensions == HyperstackDimensions(slices: image.stack.count))
+            #expect(image.stack[0] == .gray8(Array(1...16)))
+        }
+    }
+
     @Test func stripPastEndOfFile() {
         var b = TIFFBuilder.gray8(width: 8, height: 8)
         b.set(273, 4, [100_000])

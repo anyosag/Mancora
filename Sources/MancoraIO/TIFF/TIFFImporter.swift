@@ -91,7 +91,10 @@ public enum TIFFImporter {
             first.bitsPerSample >= 8, let start = contiguousStart(of: first)
         {
             let planeBytes = first.chunkRowBytes(first.width) * first.height
-            units = (0..<n).map { .contiguous(first, offset: start + $0 * planeBytes) }
+            // Like FileOpener.openStack, keep the planes the file holds in full:
+            // a truncated stack, or an `images=` past the end, opens with fewer.
+            let complete = max(1, (reader.count - start) / planeBytes)
+            units = (0..<min(n, complete)).map { .contiguous(first, offset: start + $0 * planeBytes) }
         } else {
             units = pages.filter { !$0.isReducedResolution && $0.stackSignature == first.stackSignature }.map {
                 .page($0)
