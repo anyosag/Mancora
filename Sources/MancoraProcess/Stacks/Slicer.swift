@@ -91,6 +91,62 @@ public enum Slicer {
         }
     }
 
+    /// `resliceHyperstack` and `resliceTimeLapseHyperstack`: each channel of
+    /// each frame resliced along its slices (or, without slices, each
+    /// channel along its frames), in "Reslice of <title>". A composite
+    /// keeps its LUTs and mode; otherwise the result is gray, showing
+    /// `display`'s range. As in ImageJ 1.54p, every frame of a resliced
+    /// time lapse holds the first.
+    public static func resliceHyperstack(
+        _ image: Hyperstack, rect: RoiBounds?, start: Start, outputSpacing: Double, flip: Bool, rotate: Bool,
+        avoidInterpolation: Bool, display: ChannelDisplay
+    ) throws(StackEditError) -> Hyperstack {
+        let d = image.dimensions
+        let timeLapse = d.slices == 1
+        var parts: [[Plane]] = []  // by frame (one, for a time lapse), then channel
+        var first: Hyperstack?
+        for t in 0..<(timeLapse ? 1 : d.frames) {
+            for c in 0..<d.channels {
+                let indices = timeLapse
+                    ? (0..<d.frames).map { d.planeIndex(channel: c, slice: 0, frame: $0) }
+                    : (0..<d.slices).map { d.planeIndex(channel: c, slice: $0, frame: t) }
+                let tmp = ImageJRules.image(
+                    like: image, planes: indices.map { image.stack[$0] }, labels: nil,
+                    dimensions: HyperstackDimensions(slices: indices.count), channels: [display],
+                    calibration: image.calibration, compositeMode: .color, title: "tmp")
+                let resliced = try reslice(
+                    tmp, rect: rect, start: start, outputSpacing: outputSpacing, flip: flip, rotate: rotate,
+                    avoidInterpolation: avoidInterpolation, display: display)
+                if first == nil { first = resliced }
+                parts.append(resliced.stack.planes)
+            }
+        }
+        guard let first else { throw .unsupported }
+        let n2 = first.stack.count
+        var planes: [Plane] = []
+        for t in 0..<(timeLapse ? 1 : d.frames) {
+            for z in 0..<n2 {
+                // ImageJ fills every frame of a resliced time lapse with its first (getPixels(z), z = 1).
+                for c in 0..<d.channels { planes.append(parts[t * d.channels + c][timeLapse ? 0 : z]) }
+            }
+        }
+        let dims = timeLapse
+            ? HyperstackDimensions(channels: d.channels, frames: n2)
+            : HyperstackDimensions(channels: d.channels, slices: n2, frames: d.frames)
+        let composite = d.channels > 1 && ImageJRules.isComposite(image)
+        let channels = composite
+            ? image.channels
+            : Array(repeating: ChannelDisplay(lut: .grays, displayRange: first.channels[0].displayRange), count: d.channels)
+        let stack = ImageJRules.stack(planes, width: first.width, height: first.height, labels: nil)
+        do {
+            return try Hyperstack(
+                title: "Reslice of " + image.title, stack: stack, dimensions: dims, calibration: first.calibration,
+                channels: channels, compositeMode: composite ? image.compositeMode : .color)
+        } catch {
+            preconditionFailure("Reslice built an invalid hyperstack: \(error)")
+        }
+    }
+
     /// `getSlice`: the line from (x1, y1) to (x2, y2) in every plane, one
     /// row (or column, rotated) each, stretched by `zSpacing` along the planes.
     static func slice(

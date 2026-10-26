@@ -266,6 +266,18 @@ struct StackJoiningParityTests {
             M.make("a single image", #"run("Reslice [/]...", "output=2 start=Top"); state();"#, on: .gray8),
             M.make("old keys", #"run("Reslice [/]...", "slice=2 start=Top"); state();"#, on: .stack8),
             M.make("a time series", #"run("Properties...", "channels=1 slices=1 frames=5"); run("Reslice [/]...", "output=1 start=Top"); state();"#, on: .stack16),
+            M.make("a hyperstack", #"Stack.setChannel(2); run("Reslice [/]...", "output=1.000 start=Top"); state(); titles();"#, on: .hyperstack),
+            M.make("a hyperstack from the left, rotated", #"run("Reslice [/]...", "output=2 start=Left rotate"); state();"#, on: .hyperstack),
+            M.make(
+                "a time lapse of channels",
+                #"run("Reduce Dimensionality...", "channels frames"); run("Reslice [/]...", "output=1.000 start=Bottom"); state();"#,
+                on: .hyperstack),
+            // (ImageJ's processor still shows the blank first plane it made the result with.)
+            M.make(
+                "a hyperstack without channels",
+                #"run("Add Slice"); run("Properties...", "channels=1 slices=3 frames=2"); run("Reslice [/]...", "output=1.000 start=Right flip"); titles();"#,
+                on: .stack16),
+            M.make("the fixture", #"run("Reslice [/]...", "output=1.000 start=Top"); state();"#, on: .fixtureHyperstack),
         ])
     }
 

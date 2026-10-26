@@ -15,8 +15,8 @@ enum StackCommands {
 
     /// `Slicer` for the whole image or a rectangle: `output=` spacing
     /// (calibrated; the voxel depth by default), `start=` Top, Left, Bottom
-    /// or Right, `flip`, `rotate` and `avoid` (interpolation). Line
-    /// selections and hyperstacks are left to ImageJ.
+    /// or Right, `flip`, `rotate` and `avoid` (interpolation); a hyperstack
+    /// channel by channel. Line selections are left to ImageJ.
     static let reslice = CommandDefinition("Reslice [/]...", menu: "Image>Stacks") { context, options in
         let name = "Reslice [/]..."
         guard let open = context.current else { throw CommandError.noImage(name) }
@@ -29,7 +29,9 @@ enum StackCommands {
             }
             throw CommandError.notNative(name)  // lines: ImageJ samples along them
         }
-        if StackEditor.isHyperStack(image.dimensions) || StackEditor.isComposite(image) { throw CommandError.notNative(name) }
+        let hyper = StackEditor.isHyperStack(image.dimensions)
+        // A composite of channels only is resliced through its channels, shown as one: ImageJ.
+        if !hyper && StackEditor.isComposite(image) { throw CommandError.notNative(name) }
         // Older macros name the spacing "slice" (and the line count "input").
         var text = options.text
         if text.contains("input=") { text = text.replacing("slice=", with: "slice_count=") }
@@ -38,12 +40,13 @@ enum StackCommands {
         let starts = Slicer.Start.allCases.map(\.rawValue)
         let start = Slicer.Start(rawValue: try choice(macro, "Start at:", starts, default: starts[0], command: name)) ?? .top
         let result: Hyperstack
+        let reslice = hyper ? Slicer.resliceHyperstack : Slicer.reslice
         do throws(StackEditError) {
-            result = try Slicer.reslice(
-                image, rect: roi?.bounds, start: start,
-                outputSpacing: macro.number(forLabel: "Output spacing", default: abs(image.calibration.pixelDepth)),
-                flip: macro.flag(forLabel: "Flip vertically"), rotate: macro.flag(forLabel: "Rotate 90 degrees"),
-                avoidInterpolation: macro.flag(forLabel: "Avoid interpolation"), display: image.channels[0])
+            result = try reslice(
+                image, roi?.bounds, start,
+                macro.number(forLabel: "Output spacing", default: abs(image.calibration.pixelDepth)),
+                macro.flag(forLabel: "Flip vertically"), macro.flag(forLabel: "Rotate 90 degrees"),
+                macro.flag(forLabel: "Avoid interpolation"), image.channels[min(open.channel, image.channels.count - 1)])
         } catch {
             throw failure(name, error)
         }
