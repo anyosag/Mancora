@@ -211,24 +211,33 @@ enum FilterCommands {
         }
     }
 
-    /// `Convolver.decodeKernel` (and `decodeSquareKernel` for one line).
+    /// `Convolver.decodeKernel` (and, for one line, `decodeSquareKernel`,
+    /// which takes the largest square of the values, at least 3×3 and odd).
     static func parseKernel(_ text: String, command: String) throws(CommandError) -> ConvolutionKernel {
-        func split(_ s: Substring, _ separators: String) -> [Substring] {
+        // Tools.split's default delimiters.
+        func split(_ s: Substring, _ separators: String = " \t\n\r") -> [Substring] {
             s.split(whereSeparator: { separators.contains($0) })
         }
         func value(_ s: Substring) -> Float { Float(Double(String(s)) ?? 0) }
-        let trimmed = Substring(MacroOptions.trimmed(text))
+        // String.trim(): everything up to the space character.
+        let trimmed = text.drop { $0.asciiValue.map { $0 <= 32 } ?? false }
+            .reversed().drop { $0.asciiValue.map { $0 <= 32 } ?? false }.reversed()
         var width = 0, height = 0
         var values: [Float] = []
         if !text.contains("\n") {
-            values = split(trimmed, " \t\r,").map(value)
-            let n = Int(Double(values.count).squareRoot())
-            guard n * n == values.count else {
-                throw .invalidOption(command: command, detail: "a one-line kernel needs a square number of values")
+            let cells = split(Substring(text))
+            let n = Int(Double(cells.count).squareRoot())
+            guard n >= 3, n % 2 == 1 else {
+                throw .invalidOption(command: command, detail: "Kernel must be square with odd width. This one is \(n)x\(n).")
             }
+            // Tools.parseDouble(s): NaN for what isn't a number.
+            values = cells.prefix(n * n).map { Float(Double(String($0)) ?? .nan) }
             (width, height) = (n, n)
         } else {
-            let rows = split(trimmed, "\n")
+            // Tools.split(text, "\n") reads lines (BufferedReader.readLine), empty ones too.
+            var rows = String(trimmed).replacing("\r\n", with: "\n").replacing("\r", with: "\n")
+                .split(separator: "\n", omittingEmptySubsequences: false)
+            if rows.last?.isEmpty == true { rows.removeLast() }
             height = rows.count
             width = rows.first.map { split($0, " \t\r").count } ?? 0
             for row in rows {

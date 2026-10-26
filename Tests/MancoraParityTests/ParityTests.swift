@@ -194,6 +194,9 @@ struct FilterParityTests {
             ParityCase("Convolve...", "text1=[1 2 1 2 4 2 1 2 1] normalize", on: .gray32),
             ParityCase("Convolve...", "text1=[0 1 0\n1 1 1\n0 1 0]", on: .gray16),
             ParityCase("Convolve...", "text1=[1 1 1\n1 1 1\n1 1 1] normalize stack", on: .stack8),
+            // One line: the largest odd square of the values (here the first 9, then 25).
+            ParityCase("Convolve...", "text1=[1 2 1 2 4 2 1 2 1 7] normalize", on: .gray8),
+            ParityCase("Convolve...", "text1=[1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1]", on: .gray32),
         ])
     }
 
