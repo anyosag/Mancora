@@ -73,6 +73,123 @@ public enum HyperStackConverter {
     }
 }
 
+/// Image ▸ Hyperstacks ▸ Re-order Hyperstack: a port of Fiji's
+/// `fiji.stacks.Hyperstack_rearranger` (Fiji_Plugins, GPL-2.0-or-later).
+public enum HyperstackRearranger {
+    /// The dialog's choices, by dimension: channels, slices, frames.
+    public static let choices = ["Channels (c)", "Slices (z)", "Frames (t)"]
+
+    /// `reorderHyperstack(imp, targetChannels, targetSlices, targetFrames)`:
+    /// the new channels run along the dimension `channels` names (0, 1 or
+    /// 2 for channels, slices or frames), and likewise for slices and
+    /// frames. The result is a new composite in composite mode (color
+    /// beyond eight channels) with the title, calibration and labels; it
+    /// keeps the channel LUTs and ranges when channels stay channels, and
+    /// otherwise shows ImageJ's channel colors with the current channel's range.
+    public static func reorder(_ image: Hyperstack, channels tc: Int, slices tz: Int, frames tt: Int, current: Int = 0) -> Hyperstack {
+        let d = image.dimensions
+        let old = [d.channels, d.slices, d.frames]
+        let (c2, z2, t2) = (old[tc], old[tz], old[tt])
+        var planes: [Plane] = []
+        var labels: [String?] = []
+        var index = [0, 0, 0]
+        for t in 0..<t2 {
+            for z in 0..<z2 {
+                for c in 0..<c2 {
+                    index[tc] = c
+                    index[tz] = z
+                    index[tt] = t
+                    let i = d.planeIndex(channel: index[0], slice: index[1], frame: index[2])
+                    planes.append(image.stack[i])
+                    labels.append(image.stack.labels[i])
+                }
+            }
+        }
+        let channels: [ChannelDisplay]
+        if tc == 0 && ImageJRules.isComposite(image) {
+            channels = image.channels
+        } else {
+            let range = image.channels[Swift.min(current, image.channels.count - 1)].displayRange
+            channels = (0..<c2).map { ChannelDisplay(lut: CompositeConverter.channelLUT($0, of: c2), displayRange: range) }
+        }
+        let stack = ImageJRules.stack(planes, width: image.width, height: image.height, labels: labels)
+        do {
+            return try Hyperstack(
+                title: image.title, stack: stack, dimensions: HyperstackDimensions(channels: c2, slices: z2, frames: t2),
+                calibration: image.calibration, channels: channels, compositeMode: c2 > 8 ? .color : .composite)
+        } catch {
+            preconditionFailure("Re-order Hyperstack built an invalid image: \(error)")
+        }
+    }
+}
+
+/// Image ▸ Color ▸ Invert LUTs: a port of ImageJ's `InvertAllLuts` macro
+/// (by Kevin Terretaz and Nicolás De Francesco), which
+/// `SimpleCommands("invert")` runs.
+public enum LUTInverter {
+    /// One LUT made inverting (or back): each entry's complement has its
+    /// hue turned half way round, keeping saturation and brightness, so
+    /// black to red becomes white to red.
+    public static func inverted(_ lut: LUT) -> LUT {
+        var reds = [UInt8](repeating: 0, count: 256), greens = reds, blues = reds
+        for i in 0..<256 {
+            var (h, s, v) = hsv(255 - Double(lut.reds[i]), 255 - Double(lut.greens[i]), 255 - Double(lut.blues[i]))
+            h = (h + 128).truncatingRemainder(dividingBy: 256)
+            let (r, g, b) = rgb(h, s, v)
+            (reds[i], greens[i], blues[i]) = (byte(r), byte(g), byte(b))
+        }
+        do {
+            return try LUT(name: lut.name, reds: reds, greens: greens, blues: blues)
+        } catch {
+            preconditionFailure("Invert LUTs built an invalid LUT: \(error)")
+        }
+    }
+
+    /// The macro's `round()` stored by `setLut` as a byte.
+    static func byte(_ x: Double) -> UInt8 { UInt8(truncatingIfNeeded: ImageJRules.round(x)) }
+
+    /// The macro's `HSV_from_RGB`, on a 0–256 scale.
+    static func hsv(_ r: Double, _ g: Double, _ b: Double) -> (Double, Double, Double) {
+        let v = max(r, max(g, b))
+        let c = v - min(r, min(g, b))
+        var h = 0.0
+        if c > 0 {
+            if v == r { h = 256.0 / 6 * (0 + g - b) / c }
+            if v == g { h = 256.0 / 6 * (2 + (b - r) / c) }
+            if v == b { h = 256.0 / 6 * (4 + (r - g) / c) }
+        }
+        h = (h + 256).truncatingRemainder(dividingBy: 256)
+        let s = v > 0 ? c / v * 256 : 0
+        return (h, s, v)
+    }
+
+    /// The macro's `RGB_from_HSV`.
+    static func rgb(_ h: Double, _ s: Double, _ v: Double) -> (Double, Double, Double) {
+        func component(_ n: Double) -> Double {
+            let k = (n + h / 256 * 6).truncatingRemainder(dividingBy: 6)
+            return v - v * s / 256 * max(0, min(k, min(4 - k, 1)))
+        }
+        return (component(5), component(3), component(1))
+    }
+
+    /// The macro's switch of the `CompositeProjection` property once the
+    /// LUTs are inverted, given whether the first channel's now inverts.
+    public static func projection(after mode: String?, inverting: Bool) -> String? {
+        let mode = mode ?? ""
+        if inverting && (mode == "Min" || mode == "Invert") { return mode }
+        if !inverting && (mode == "Sum" || mode == "Max") { return mode }
+        switch mode {
+        case "Invert": return "Sum"
+        case "Min": return "Max"
+        case "Max": return "Min"
+        default: return "Invert"
+        }
+    }
+
+    /// `ImageProcessor.isInvertedLut`.
+    public static func isInverting(_ lut: LUT) -> Bool { ImageJRules.isInvertedLUT(lut) }
+}
+
 /// Image ▸ Color ▸ Make Composite: a port of ImageJ's
 /// `ij.plugin.CompositeConverter` and the `CompositeImage` constructor.
 public enum CompositeConverter {

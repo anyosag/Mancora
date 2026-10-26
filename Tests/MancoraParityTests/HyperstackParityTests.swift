@@ -143,6 +143,22 @@ struct HyperstackParityTests {
         ])
     }
 
+    /// The Channels tool's Invert LUTs, which runs the `InvertAllLuts` macro.
+    @Test func invertLUTs() async throws {
+        try await MacroParity.check([
+            M.make("gray", #"run("Invert LUTs"); state(); print(Property.get("CompositeProjection"));"#, on: .gray8),
+            M.make("fire", #"run("Invert LUTs"); state();"#, on: .fixtureFire),
+            M.make("a 16-bit stack", #"setSlice(3); run("Invert LUTs"); state();"#, on: .stack16),
+            M.make("a composite", #"Stack.setChannel(2); run("Invert LUTs"); state(); print(Property.get("CompositeProjection"));"#, on: .hyperstack),
+            // (ImageJ counts an image whose pixels didn't change as unchanged, so they change too.)
+            M.make(
+                "twice",
+                #"run("Invert LUTs"); run("Invert LUTs"); run("Add...", "value=1 stack"); state(); print(Property.get("CompositeProjection"));"#,
+                on: .hyperstack),
+            M.make("in color", #"Stack.setDisplayMode("color"); run("Invert LUTs"); state();"#, on: .fixtureHyperstack),
+        ])
+    }
+
     @Test func stackToRGB() async throws {
         try await MacroParity.check([
             M.make("three 8-bit slices", #"run("Delete Slice"); run("Delete Slice"); run("Stack to RGB"); state(); titles();"#, on: .stack8),

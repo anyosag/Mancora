@@ -6,8 +6,60 @@ import MancoraProcess
 /// without a window (a macro in batch mode).
 enum HyperstackCommands {
     static var all: [CommandDefinition] {
-        [stackToHyperstack, hyperstackToStack, makeSubset, makeComposite, stackToRGB]
+        [stackToHyperstack, hyperstackToStack, makeSubset, reorderHyperstack, makeComposite, stackToRGB, invertLUTs]
             + colorSpaceCommands
+    }
+
+    /// `SimpleCommands("invert")` (the `InvertAllLuts` macro, from the
+    /// Channels tool): every channel's LUT inverted, the first channel
+    /// shown, and the `CompositeProjection` property switched to match.
+    static let invertLUTs = CommandDefinition("Invert LUTs", menu: "Image>Color") { context, _ in
+        let name = "Invert LUTs"
+        try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in
+            // RGB images have no LUT; in grayscale mode the macro's setLut doesn't reach the channels.
+            guard open.image.pixelType != .rgb8, !(StackEditor.isComposite(open.image) && open.image.compositeMode == .grayscale)
+            else { throw .notNative(name) }
+            for c in open.image.channels.indices {
+                var display = open.image.channels[c]
+                display.lut = LUTInverter.inverted(display.lut)
+                open.image.setDisplay(display, forChannel: c)
+            }
+            open.channel = 0
+            let key = "CompositeProjection"
+            open.image.properties[key] = LUTInverter.projection(
+                after: open.image.properties[key], inverting: LUTInverter.isInverting(open.image.channels[0].lut))
+        }
+    }
+
+    /// Fiji's `Hyperstack_rearranger`: `channels=`, `slices=` and `frames=`
+    /// each name the dimension (`[Slices (z)]`, …) the new one runs along;
+    /// the result, a new composite, replaces the image. A mapping that
+    /// doesn't use each dimension once is reported in the log.
+    static let reorderHyperstack = CommandDefinition("Re-order Hyperstack ...", menu: "Image>Hyperstacks") { context, options in
+        let name = "Re-order Hyperstack ..."
+        guard let open = context.current else {
+            context.log.append("No images open.")
+            return
+        }
+        let image = open.image
+        let choices = HyperstackRearranger.choices
+        var targets: [Int] = []
+        for (label, fallback) in zip(["Channels (c) -> ", "Slices (z) -> ", "Frames (t) -> "], choices) {
+            let picked = try StackCommands.choice(options, label, choices, default: fallback, command: name)
+            targets.append(choices.firstIndex(of: picked) ?? 0)
+        }
+        guard Set(targets).count == 3 else {
+            context.log.append(
+                "Mapping is inconsistent: each - channel, slices and frames have to be assigned to an input dimension.")
+            return
+        }
+        let d = [image.dimensions.channels, image.dimensions.slices, image.dimensions.frames]
+        // An RGB stack can't be a composite; one channel would be a one-channel composite.
+        guard image.pixelType != .rgb8, d[targets[0]] > 1 else { throw CommandError.notNative(name) }
+        let result = HyperstackRearranger.reorder(
+            image, channels: targets[0], slices: targets[1], frames: targets[2], current: open.channel)
+        context.close(id: open.id)
+        context.add(result)
     }
 
     /// Replaces the image `id` with `image`, keeping its place and ID, and
