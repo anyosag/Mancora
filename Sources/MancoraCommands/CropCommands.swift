@@ -8,10 +8,13 @@ import MancoraProcess
 enum CropCommands {
     static var all: [CommandDefinition] { [crop, canvasSize] }
 
-    /// The selection, or `nil` for none; one Mancora can't read is left to ImageJ.
+    /// The selection, or `nil` for none. One Mancora can't read, or keeps
+    /// only as ImageJ's bytes (composite, text and image selections), is
+    /// left to ImageJ.
     static func selection(_ name: String, _ open: OpenImage) throws(CommandError) -> Roi? {
         guard open.image.encodedROI != nil else { return nil }
         guard let roi = open.roi else { throw .notNative(name) }
+        if case .opaque = roi.shape { throw .notNative(name) }
         return roi
     }
 

@@ -48,6 +48,8 @@ enum FilterCommands {
     static func selectionRegion(_ name: String, _ open: OpenImage) throws(CommandError) -> FilterRegion? {
         guard open.image.encodedROI != nil else { return nil }
         guard let roi = open.roi else { throw .notNative(name) }  // a selection Mancora can't read
+        // Text and image selections are rectangles to ImageJ; composite ones need their mask.
+        if case .opaque = roi.shape { throw .notNative(name) }
         do {
             return try FilterRegion(selection: roi, width: open.image.width, height: open.image.height)
         } catch {
