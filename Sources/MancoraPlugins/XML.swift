@@ -72,6 +72,12 @@ public enum XML {
         var entities: [String: String] = [:]
         var open: [String] = []
         var pendingText = ""
+        /// Entity references expanded so far; like the JDK's parser, a
+        /// document may expand at most `expansionLimit`.
+        var expansions = 0
+        static let expansionLimit = 64_000
+        /// The entities whose replacement text is being parsed, to catch recursion.
+        var expanding: [String] = []
 
         init(_ scalars: [Unicode.Scalar]) { s = scalars }
 
@@ -211,9 +217,14 @@ public enum XML {
                         let quote = p < s.count ? s[p] : " "
                         guard quote == "\"" || quote == "'" else { throw fail("only internal entities are supported") }
                         p += 1
-                        let value = try until(String(quote))
+                        let literal = try until(String(quote))
                         _ = try declarationBody()
-                        if !parameter { entities[entity] = value }
+                        // Character references are replaced now, entity references
+                        // where the entity is used (XML 1.0 §4.5).
+                        let value = try Self.replacingCharacterReferences(literal)
+                        // "If the same entity is declared more than once, the first
+                        // declaration encountered is binding" (§4.2).
+                        if !parameter, entities[entity] == nil { entities[entity] = value }
                     } else if peek("<!") {
                         p += 2
                         _ = try declarationBody()
@@ -292,9 +303,18 @@ public enum XML {
             guard p < s.count, s[p] == "\"" || s[p] == "'" else { throw fail("attribute values must be quoted") }
             let quote = s[p]
             p += 1
+            return try attributeCharacters(until: quote)
+        }
+
+        /// An attribute value up to its closing quote, or all of an entity's
+        /// replacement text (`quote` nil), normalized as XML 1.0 §3.3.3 says.
+        mutating func attributeCharacters(until quote: Unicode.Scalar?) throws(ParseError) -> String {
             var value = ""
             while true {
-                guard p < s.count else { throw fail("unterminated attribute value") }
+                guard p < s.count else {
+                    if quote == nil { return value }
+                    throw fail("unterminated attribute value")
+                }
                 let c = s[p]
                 if c == quote {
                     p += 1
@@ -302,17 +322,30 @@ public enum XML {
                 }
                 if c == "<" { throw fail("attribute values must not contain '<'") }
                 if c == "&" {
-                    value += try reference(inAttribute: true).text
+                    switch try reference() {
+                    case .character(let text), .predefined(let text): value += text
+                    case .entity(let name):
+                        var replacement = try entityParser(name)
+                        value += try replacement.attributeCharacters(until: nil)
+                        expansions = replacement.expansions
+                    }
                     continue
                 }
                 // Attribute-value normalization: literal whitespace becomes a space.
-                value.unicodeScalars.append(c == "\n" || c == "\t" ? " " : c)
+                value.unicodeScalars.append(c == "\n" || c == "\t" || c == "\r" ? " " : c)
                 p += 1
             }
         }
 
+        enum Reference {
+            case character(String)
+            case predefined(String)
+            /// A declared entity, by name: its replacement text is parsed where it's used.
+            case entity(String)
+        }
+
         /// A character or entity reference at `&`.
-        mutating func reference(inAttribute: Bool) throws(ParseError) -> (text: String, isCharacter: Bool) {
+        mutating func reference() throws(ParseError) -> Reference {
             p += 1
             if peek("#") {
                 p += 1
@@ -322,22 +355,53 @@ public enum XML {
                 guard let value = UInt32(digits, radix: hex ? 16 : 10), let scalar = Unicode.Scalar(value),
                     Self.isXMLChar(scalar)
                 else { throw fail("character reference \"&#\(hex ? "x" : "")\(digits)\" is an invalid XML character") }
-                return (String(Character(scalar)), true)
+                return .character(String(Character(scalar)))
             }
             let entity = try name()
             try expect(";")
             switch entity {
-            case "lt": return ("<", false)
-            case "gt": return (">", false)
-            case "amp": return ("&", false)
-            case "apos": return ("'", false)
-            case "quot": return ("\"", false)
+            case "lt": return .predefined("<")
+            case "gt": return .predefined(">")
+            case "amp": return .predefined("&")
+            case "apos": return .predefined("'")
+            case "quot": return .predefined("\"")
             default:
-                guard let value = entities[entity] else {
+                guard entities[entity] != nil else {
                     throw fail("the entity \"\(entity)\" was referenced, but not declared")
                 }
-                return (inAttribute ? value.replacingSpaces() : value, false)
+                return .entity(entity)
             }
+        }
+
+        /// A parser of an entity's replacement text, in this parser's context.
+        mutating func entityParser(_ name: String) throws(ParseError) -> Parser {
+            guard !expanding.contains(name) else { throw fail("recursive entity reference \"\(name)\"") }
+            expansions += 1
+            guard expansions <= Self.expansionLimit else {
+                throw fail("the document expands more than \(Self.expansionLimit) entity references")
+            }
+            var parser = Parser(Array((entities[name] ?? "").unicodeScalars))
+            parser.elementOnly = elementOnly
+            parser.entities = entities
+            parser.open = open
+            parser.expansions = expansions
+            parser.expanding = expanding + [name]
+            return parser
+        }
+
+        /// An entity value with its character references replaced.
+        static func replacingCharacterReferences(_ literal: String) throws(ParseError) -> String {
+            var parser = Parser(Array(literal.unicodeScalars))
+            var out = ""
+            while parser.p < parser.s.count {
+                if parser.peek("&#"), case .character(let text) = try parser.reference() {
+                    out += text
+                } else {
+                    out.unicodeScalars.append(parser.s[parser.p])
+                    parser.p += 1
+                }
+            }
+            return out
         }
 
         static func isXMLChar(_ c: Unicode.Scalar) -> Bool {
@@ -363,18 +427,27 @@ public enum XML {
             pendingText = ""
         }
 
-        mutating func content(ofElement current: String) throws(ParseError) {
+        /// The content of an element up to its end tag, or (`current` nil) all
+        /// of an entity's replacement text.
+        mutating func content(ofElement current: String?) throws(ParseError) {
             var run = ""
             func flushRun(_ parser: inout Parser) {
                 if !run.isEmpty { parser.addText(run, ignorableIfSpace: true) }
                 run = ""
             }
             while true {
-                guard p < s.count else { throw fail("element \"\(current)\" is not closed") }
+                guard p < s.count else {
+                    guard let current else {
+                        flushRun(&self)
+                        return
+                    }
+                    throw fail("element \"\(current)\" is not closed")
+                }
                 let c = s[p]
                 if c == "<" {
                     flushRun(&self)
                     if peek("</") {
+                        guard let current else { throw fail("an entity's replacement text must not end an element") }
                         p += 2
                         let closing = try name()
                         guard closing == current else {
@@ -395,8 +468,17 @@ public enum XML {
                     }
                 } else if c == "&" {
                     flushRun(&self)
-                    let (text, isCharacter) = try reference(inAttribute: false)
-                    addText(text, ignorableIfSpace: isCharacter)
+                    switch try reference() {
+                    case .character(let text): addText(text, ignorableIfSpace: true)
+                    case .predefined(let text): addText(text, ignorableIfSpace: false)
+                    case .entity(let name):
+                        var replacement = try entityParser(name)
+                        replacement.pendingText = pendingText
+                        try replacement.content(ofElement: nil)
+                        events += replacement.events
+                        pendingText = replacement.pendingText
+                        expansions = replacement.expansions
+                    }
                 } else {
                     if c == "]", peek("]]>") { throw fail("\"]]>\" must not appear in content") }
                     guard Self.isXMLChar(c) else { throw fail("an invalid XML character (U+\(String(c.value, radix: 16))) is in the content") }
@@ -415,10 +497,6 @@ extension String {
             let last = scalars.lastIndex(where: { !XML.Parser.isSpace($0) })
         else { return "" }
         return String(scalars[first...last])
-    }
-
-    fileprivate func replacingSpaces() -> String {
-        String(String.UnicodeScalarView(unicodeScalars.map { $0 == "\n" || $0 == "\t" ? " " : $0 }))
     }
 }
 

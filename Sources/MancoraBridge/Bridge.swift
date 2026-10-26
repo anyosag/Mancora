@@ -116,15 +116,15 @@ public actor Bridge {
     /// Runs an ImageJ command with an options string (as recorded by
     /// ImageJ's macro recorder) on `images`, the last one being active.
     public func run(_ command: String, options: String = "", images: [Hyperstack] = []) async throws -> BridgeRunResult {
-        try await withImages(images, method: "run") { inputs, outputDir in
-            RunParams(command: command, options: options, inputs: inputs, outputDir: outputDir)
+        try await withImages(images, method: "run") { inputs, titles, outputDir in
+            RunParams(command: command, options: options, inputs: inputs, titles: titles, outputDir: outputDir)
         }
     }
 
     /// Runs ImageJ macro code with `images` open, the last one active.
     public func runMacro(_ code: String, argument: String = "", images: [Hyperstack] = []) async throws -> BridgeRunResult {
-        try await withImages(images, method: "macro") { inputs, outputDir in
-            MacroParams(code: code, argument: argument, inputs: inputs, outputDir: outputDir)
+        try await withImages(images, method: "macro") { inputs, titles, outputDir in
+            MacroParams(code: code, argument: argument, inputs: inputs, titles: titles, outputDir: outputDir)
         }
     }
 
@@ -133,7 +133,7 @@ public actor Bridge {
     /// value names the reader: "ImageJ" or "Bio-Formats".
     public func open(_ path: String) async throws -> BridgeRunResult {
         let absolute = URL(fileURLWithPath: path).standardizedFileURL.path
-        return try await withImages([], method: "open") { _, outputDir in OpenParams(path: absolute, outputDir: outputDir) }
+        return try await withImages([], method: "open") { _, _, outputDir in OpenParams(path: absolute, outputDir: outputDir) }
     }
 
     /// The dialogs `command` shows for `images` (the last one active), so a
@@ -193,7 +193,7 @@ public actor Bridge {
     private struct EmptyResult: Decodable {}
 
     private func withImages<P: Encodable>(
-        _ images: [Hyperstack], method: String, params: (_ inputs: [String], _ outputDir: String) -> P
+        _ images: [Hyperstack], method: String, params: (_ inputs: [String], _ titles: [String], _ outputDir: String) -> P
     ) async throws -> BridgeRunResult {
         let request = workRoot.appendingPathComponent("request-\(nextID)")
         let outputs = request.appendingPathComponent("out")
@@ -201,14 +201,15 @@ public actor Bridge {
         defer { try? FileManager.default.removeItem(at: request) }
         var inputs: [String] = []
         for (k, image) in images.enumerated() {
-            // ImageJ titles images after their file, so keep each image's title.
+            // Named after its title as far as a file name can be (ImageJ keeps the
+            // file name too); the helper gives the image its title as it is.
             let folder = request.appendingPathComponent("input-\(k)")
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let path = folder.appendingPathComponent(Self.fileName(for: image.title)).path
             try TIFFExporter.write(image, to: path)
             inputs.append(path)
         }
-        let result = try await call(method, params(inputs, outputs.path), as: RunResult.self, retry: true)
+        let result = try await call(method, params(inputs, images.map(\.title), outputs.path), as: RunResult.self, retry: true)
         var produced: [BridgeImage] = []
         for output in result.outputs {
             var image = try TIFFImporter.read(path: output.path)
@@ -227,8 +228,8 @@ public actor Bridge {
         do {
             return try await attempt(method, params, as: type)
         } catch BridgeError.helperExited where retry {
-            // The helper died (or was killed): start a new one and try once more.
-            connection = nil
+            // The helper died (or was killed): try once more on a new one, which
+            // another request that was waiting on it may have started already.
             return try await attempt(method, params, as: type)
         }
     }
@@ -246,7 +247,21 @@ public actor Bridge {
             connection.terminate()
         }
         defer { timer.cancel() }
-        let data = try await connection.send(id: id, line: line)
+        let data: Data
+        do {
+            data = try await connection.send(id: id, line: line)
+        } catch let error as BridgeError {
+            switch error {
+            case .timedOut, .helperExited:
+                // A helper that timed out is still busy with the request, and
+                // answers in order: stop it, so the next request gets a new one.
+                connection.terminate()
+                // Forget this helper only, not one another request has started since.
+                if self.connection === connection { self.connection = nil }
+            default: break
+            }
+            throw error
+        }
         let header: ResponseHeader
         do {
             header = try JSONDecoder().decode(ResponseHeader.self, from: data)
@@ -301,6 +316,9 @@ public actor Bridge {
         #endif
         var environment = config.environment
         #if os(Linux)
+        // Java names files in the locale's encoding (sun.jnu.encoding): outside a
+        // UTF-8 locale it can't open a path, or an input titled, beyond ASCII.
+        if !Self.isUTF8Locale(environment) { environment["LC_ALL"] = "C.UTF-8" }
         let display = (environment["DISPLAY"] ?? "") + (environment["WAYLAND_DISPLAY"] ?? "")
         if display.isEmpty {
             if config.useVirtualDisplay, let name = startVirtualDisplay() {
@@ -392,10 +410,22 @@ public actor Bridge {
         return folder
     }
 
-    /// A file name that keeps `title` as ImageJ will show it.
+    /// A file name like `title`, valid on every platform: separators and
+    /// other reserved characters become `_`, and a name that is empty, `.`,
+    /// `..` or longer than file systems allow becomes `Untitled.tif`.
     static func fileName(for title: String) -> String {
-        let cleaned = String(title.map { "/\\:*?\"<>|".contains($0) || $0.isNewline ? "_" : $0 })
-        return cleaned.trimmingCharacters(in: .whitespaces).isEmpty ? "Untitled.tif" : cleaned
+        let cleaned = String(title.map { "/\\:*?\"<>|\0".contains($0) || $0.isNewline ? "_" : $0 })
+        let trimmed = cleaned.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, trimmed != ".", trimmed != "..", cleaned.utf8.count <= 255 else { return "Untitled.tif" }
+        return cleaned
+    }
+
+    /// Whether the locale `environment` selects for character types (`LC_ALL`,
+    /// else `LC_CTYPE`, else `LANG`) is a UTF-8 one.
+    static func isUTF8Locale(_ environment: [String: String]) -> Bool {
+        let locale = ["LC_ALL", "LC_CTYPE", "LANG"].lazy.compactMap { environment[$0] }.first { !$0.isEmpty } ?? ""
+        let lowered = locale.lowercased()
+        return lowered.contains("utf-8") || lowered.contains("utf8")
     }
 
     static func findOnPath(_ tool: String, environment: [String: String]) -> URL? {

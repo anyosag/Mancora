@@ -48,7 +48,8 @@ public enum TIFFExporter {
         let description = Array(descriptionString(image).utf8) + [0]
         var metadata = ImageJMetadata()
         metadata.info = image.info
-        metadata.labels = image.stack.labels
+        // TiffEncoder keeps a label per image in the file (one for RGB48).
+        metadata.labels = Array(image.stack.labels.prefix(layout.imageCount))
         metadata.roi = image.encodedROI
         metadata.overlay = image.encodedOverlay
         metadata.properties = image.properties.keys.sorted().flatMap { [$0, image.properties[$0] ?? ""] }
@@ -70,7 +71,8 @@ public enum TIFFExporter {
             .long(TIFFTag.imageWidth, UInt32(image.width)),
             .long(TIFFTag.imageLength, UInt32(image.height)),
             layout.samplesPerPixel == 3
-                ? .shorts(TIFFTag.bitsPerSample, [8, 8, 8]) : .short(TIFFTag.bitsPerSample, UInt16(layout.bitsPerSample)),
+                ? .shorts(TIFFTag.bitsPerSample, [UInt16](repeating: UInt16(layout.bitsPerSample), count: 3))
+                : .short(TIFFTag.bitsPerSample, UInt16(layout.bitsPerSample)),
             .short(TIFFTag.compression, 1),
             .short(TIFFTag.photometric, UInt16(layout.photometric)),
             .ascii(TIFFTag.imageDescription, description),
@@ -96,7 +98,7 @@ public enum TIFFExporter {
         w.header()
         let firstIFD = w.directory(entries)
         let imageOffset = w.count
-        let planeCount = image.stack.count
+        let planeCount = layout.imageCount
         let (stackBytes, overflow) = layout.planeBytes.multipliedReportingOverflow(by: planeCount)
         guard !overflow else { throw .tooLarge(bytes: .max, limit: .max) }
         // Like ImageJ, a stack whose IFDs can't all be addressed with 32-bit
@@ -104,7 +106,11 @@ public enum TIFFExporter {
         let writeAllIFDs = planeCount > 1 && imageOffset + stackBytes + planeCount * 512 < Int(UInt32.max)
         w.patch(firstIFD, tag: TIFFTag.stripOffsets, value: UInt32(imageOffset))
         w.reserve(stackBytes)
-        for k in 0..<image.stack.count { w.pixels(image.stack[k]) }
+        if layout.isRGB48 {
+            w.interleaved16((0..<3).map { image.stack[$0] })
+        } else {
+            for k in 0..<image.stack.count { w.pixels(image.stack[k]) }
+        }
         if writeAllIFDs {
             w.patchNextIFD(of: firstIFD, to: UInt32(w.count))
             for k in 1..<planeCount {
@@ -130,9 +136,13 @@ public enum TIFFExporter {
         /// A LUT to save as the ColorMap, for single-channel images.
         var colorMap: LUT?
         var planeBytes: Int
+        /// Images in the file, each with an IFD: one per plane, or one for RGB48.
+        var imageCount: Int
+        var isRGB48 = false
 
         init(_ image: Hyperstack) {
             planeBytes = image.width * image.height * image.pixelType.bytesPerPixel
+            imageCount = image.stack.count
             let lut = image.channels[0].lut
             let singleChannel = image.dimensions.channels == 1
             switch image.pixelType {
@@ -144,7 +154,13 @@ public enum TIFFExporter {
                 }
             case .gray16, .gray32Float:
                 bitsPerSample = image.pixelType == .gray16 ? 16 : 32
-                if singleChannel, !lut.hasSameColors(as: .grays) {
+                if Self.isRGB48(image) {
+                    isRGB48 = true
+                    samplesPerPixel = 3
+                    photometric = 2
+                    planeBytes = image.width * image.height * 6
+                    imageCount = 1
+                } else if singleChannel, !lut.hasSameColors(as: .grays) {
                     colorMap = lut
                     if Self.isInverted(lut) { photometric = 0 }
                 }
@@ -153,6 +169,14 @@ public enum TIFFExporter {
                 photometric = 2
                 planeBytes = image.width * image.height * 3
             }
+        }
+
+        /// `getFileInfo` saves a 16-bit composite of three planes as RGB48 (one
+        /// image of interleaved samples) when its first is labelled "Red", as
+        /// ImageJ labels the channels of a 48-bit RGB TIFF it opens.
+        static func isRGB48(_ image: Hyperstack) -> Bool {
+            image.pixelType == .gray16 && image.dimensions.channels == 3 && image.stack.count == 3
+                && image.stack.labels.first == "Red"
         }
 
         /// ImageJ's `ImageProcessor.isInvertedLut`: no step gets brighter.
@@ -174,7 +198,7 @@ public enum TIFFExporter {
         func escaped(_ key: String, _ value: String) {
             lines.append(key + "=" + Self.escapedForProperties(value))
         }
-        if planes > 1 { lines.append("images=\(planes)") }
+        if planes > 1, !Layout.isRGB48(image) { lines.append("images=\(planes)") }
         if dims.channels > 1 { lines.append("channels=\(dims.channels)") }
         if dims.slices > 1 { lines.append("slices=\(dims.slices)") }
         if dims.frames > 1 { lines.append("frames=\(dims.frames)") }
@@ -192,19 +216,18 @@ public enum TIFFExporter {
         } else if cal.valueUnit != Calibration().valueUnit {
             escaped("vunit", cal.valueUnit)
         }
-        if cal.frameInterval != 0 {
-            let whole = cal.frameInterval == cal.frameInterval.rounded(.towardZero) && abs(cal.frameInterval) < 2e9
-            lines.append("finterval=" + (whole ? String(Int(cal.frameInterval)) : number(cal.frameInterval)))
+        // `(int)v == v ? "" + (int)v : "" + v`: whole numbers within an int print as integers.
+        func javaIntOrDouble(_ v: Double) -> String {
+            let int = JavaNumerics.int32(v)
+            return Double(int) == v ? String(int) : number(v)
         }
+        if cal.frameInterval != 0 { lines.append("finterval=" + javaIntOrDouble(cal.frameInterval)) }
         if cal.timeUnit != "sec" { escaped("tunit", cal.timeUnit) }
         if let y = cal.yUnit, y != cal.unit { escaped("yunit", y) }
         if let z = cal.zUnit, z != cal.unit { escaped("zunit", z) }
         if planes > 1 {
             if cal.pixelDepth != 1 { lines.append("spacing=\(number(cal.pixelDepth))") }
-            if cal.fps != 0 {
-                let whole = cal.fps == cal.fps.rounded(.towardZero) && abs(cal.fps) < 2e9
-                lines.append("fps=" + (whole ? String(Int(cal.fps)) : number(cal.fps)))
-            }
+            if cal.fps != 0 { lines.append("fps=" + javaIntOrDouble(cal.fps)) }
             lines.append("loop=\(cal.loop)")
         }
 
@@ -373,6 +396,16 @@ struct TIFFWriter {
         case .rational(_, let (n, d)): return (5, 1, b32(n) + b32(d))
         case .ascii(_, let v): return (2, v.count, v)
         case .bytes(_, let v): return (1, v.count, v)
+        }
+    }
+
+    /// Appends 16-bit planes as one image of interleaved samples, as
+    /// `ImageWriter.writeRGB48Image` does.
+    mutating func interleaved16(_ planes: [Plane]) {
+        let samples: [[UInt16]] = planes.map { if case .gray16(let p) = $0 { p } else { [] } }
+        guard let count = samples.map(\.count).min() else { return }
+        for i in 0..<count {
+            for plane in samples { u16(plane[i]) }
         }
     }
 

@@ -91,7 +91,10 @@ public enum TIFFImporter {
             first.bitsPerSample >= 8, let start = contiguousStart(of: first)
         {
             let planeBytes = first.chunkRowBytes(first.width) * first.height
-            units = (0..<n).map { .contiguous(first, offset: start + $0 * planeBytes) }
+            // Like FileOpener.openStack, keep the planes the file holds in full:
+            // a truncated stack, or an `images=` past the end, opens with fewer.
+            let complete = max(1, (reader.count - start) / planeBytes)
+            units = (0..<min(n, complete)).map { .contiguous(first, offset: start + $0 * planeBytes) }
         } else {
             units = pages.filter { !$0.isReducedResolution && $0.stackSignature == first.stackSignature }.map {
                 .page($0)
@@ -101,15 +104,17 @@ public enum TIFFImporter {
 
         let metadata = first.imageJMetadata
         var labels = [String?](repeating: nil, count: planeCount)
-        if let saved = metadata?.labels, !saved.isEmpty, saved.count <= planeCount {
-            labels.replaceSubrange(0..<saved.count, with: saved)
-        } else if pages.count == 1, first.planesPerPage > 1 {
-            // ImageJ's FileOpener names the samples of a 16-bit RGB(A) image.
+        if pages.count == 1, first.planesPerPage > 1 {
+            // ImageJ's FileOpener names the samples of a 16-bit RGB(A) image,
+            // whatever labels it holds (ImageJ saves RGB48 with only the first).
             labels = Array(["Red", "Green", "Blue", "Gray"].prefix(planeCount))
+        } else if let saved = metadata?.labels, !saved.isEmpty, saved.count <= planeCount {
+            labels.replaceSubrange(0..<saved.count, with: saved)
         }
 
         let stack: ImageStack
         do {
+            try checkChunkBudget(units, options: options)
             if options.virtual {
                 try checkBudget(planes: 1, page: first, options: options)
                 let source = TIFFPlaneSource(
@@ -244,6 +249,20 @@ public enum TIFFImporter {
         let (total, overflow) = page.decodedPlaneBytes.multipliedReportingOverflow(by: planes)
         guard !overflow, total <= options.maximumDecodedBytes else {
             throw .tooLarge(bytes: overflow ? .max : total, limit: options.maximumDecodedBytes)
+        }
+    }
+
+    /// Each strip or tile is decoded whole before its pixels are copied out,
+    /// and a tile can be far larger than its image: it counts too.
+    private static func checkChunkBudget(_ units: [TIFFPlaneSource.Unit], options: Options) throws(MancoraIOError) {
+        var checked = Set<[Int]>()
+        for unit in units {
+            let page = unit.page
+            guard checked.insert([page.chunkWidth, page.chunkHeight]).inserted else { continue }
+            let (bytes, overflow) = page.chunkRowBytes(page.chunkWidth).multipliedReportingOverflow(by: page.chunkHeight)
+            guard !overflow, bytes <= options.maximumDecodedBytes else {
+                throw .tooLarge(bytes: overflow ? .max : bytes, limit: options.maximumDecodedBytes)
+            }
         }
     }
 

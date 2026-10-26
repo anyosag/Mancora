@@ -55,9 +55,9 @@ struct VirtualStackTests {
         #expect(stack.isVirtual)
     }
 
-    /// A virtual plane that can't be read shows blank (ImageJ's behaviour);
-    /// `loadPlane(at:)` reports why.
-    @Test func unreadablePlanesAreBlank() throws {
+    /// An ImageJ stack cut short keeps the planes the file holds in full, as
+    /// FileInfoVirtualStack.validateNImages counts them.
+    @Test func truncatedStacksKeepTheirCompletePlanes() throws {
         let bytes = [UInt8](try Data(contentsOf: URL(fileURLWithPath: path("ij-stack-8bit.tif"))))
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("mancora-truncated-\(UInt32.random(in: 0...UInt32.max)).tif")
         defer { try? FileManager.default.removeItem(at: scratch) }
@@ -67,11 +67,29 @@ struct VirtualStackTests {
             Patterns.p8($0 % 32, $0 / 32)
         }) ? imageOffset(bytes) : nil)
         try Data(bytes[0..<(firstPlane + 3 * planeBytes + 10)]).write(to: scratch)
-        let image = try TIFFImporter.read(path: scratch.path, options: .init(virtual: true))
-        #expect(image.stack.count == 5)
-        #expect(image.stack[3] == Plane(zeroed: .gray8, count: planeBytes))
-        #expect(throws: MancoraIOError.self) { try image.stack.loadPlane(at: 3) }
-        #expect(image.stack[2] != Plane(zeroed: .gray8, count: planeBytes))
+        for virtual in [true, false] {
+            let image = try TIFFImporter.read(path: scratch.path, options: .init(virtual: virtual))
+            #expect(image.stack.count == 3)
+            #expect(image.stack[2] != Plane(zeroed: .gray8, count: planeBytes))
+        }
+    }
+
+    /// A virtual plane that can't be read shows blank (ImageJ's behaviour);
+    /// `loadPlane(at:)` reports why.
+    @Test func unreadablePlanesAreBlank() throws {
+        // Two pages; the second one's strip is moved past the end of the file.
+        var two = TIFFBuilder.gray8(width: 2, height: 1, pixels: [5, 6])
+        two.secondIFDPointsBackToFirst = true
+        var file = two.build()
+        let reader = ByteReader(file)
+        let second = try TIFFDirectory(reader: reader, offset: Int(try reader.u32(at: 4))).nextOffset
+        let strip = try #require(try TIFFDirectory(reader: reader, offset: second).entries[TIFFTag.stripOffsets])
+        file.replaceSubrange(strip.valueOffset..<(strip.valueOffset + 4), with: [0xF0, 0xFF, 0, 0])
+        let image = try TIFFImporter.decode(file, title: "x", options: .init(virtual: true))
+        #expect(image.stack.count == 2)
+        #expect(image.stack[0] == .gray8([5, 6]))
+        #expect(image.stack[1] == Plane(zeroed: .gray8, count: 2))
+        #expect(throws: MancoraIOError.self) { try image.stack.loadPlane(at: 1) }
     }
 
     func imageOffset(_ file: [UInt8]) -> Int {

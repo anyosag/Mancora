@@ -12,6 +12,12 @@ final class TIFFPlaneSource: PlaneSource, @unchecked Sendable {
         case page(TIFFPage)
         case contiguous(TIFFPage, offset: Int)
 
+        var page: TIFFPage {
+            switch self {
+            case .page(let page), .contiguous(let page, _): page
+            }
+        }
+
         func decode(_ reader: ByteReader) throws(MancoraIOError) -> [Plane] {
             switch self {
             case .page(let page): try TIFFPlaneDecoder.decode(page, reader: reader)

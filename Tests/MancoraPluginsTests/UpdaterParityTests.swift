@@ -3,6 +3,7 @@ import MancoraSupport
 import MancoraUpdate
 import Testing
 
+@testable import MancoraIO
 @testable import MancoraPlugins
 
 /// The update-site fixtures: an installation, three sites and what Fiji's
@@ -121,6 +122,31 @@ enum UpdaterFixture {
     }
 }
 
+/// Update sites served from memory, laid out as the updater uploads them:
+/// each site's db.xml.gz and its files under `<name>-<timestamp>`.
+struct MemorySites: HTTPClient {
+    static let base = "https://sites.test/"
+    var files: [String: Data] = [:]
+
+    func data(from url: URL) async throws -> Data { try await dataAndLastModified(from: url).data }
+
+    func dataAndLastModified(from url: URL) async throws -> (data: Data, lastModified: Date?) {
+        guard let data = files[url.absoluteString] else { throw UpdateError.httpStatus(404, url: url.absoluteString) }
+        return (data, Date(timeIntervalSince1970: 1_719_835_200))
+    }
+
+    /// Makes `site` offer exactly these files.
+    mutating func publish(site: String, _ entries: [(filename: String, contents: [UInt8], timestamp: Int64)]) throws {
+        var xml = #"<?xml version="1.0" encoding="UTF-8"?><pluginRecords>"#
+        for entry in entries {
+            let checksum = try FijiChecksum.digest(path: entry.filename, contents: entry.contents)
+            xml += #"<plugin filename="\#(entry.filename)"><version checksum="\#(checksum)" timestamp="\#(entry.timestamp)" filesize="\#(entry.contents.count)"/></plugin>"#
+            files["\(Self.base)\(site)/\(entry.filename)-\(entry.timestamp)"] = Data(entry.contents)
+        }
+        files["\(Self.base)\(site)/db.xml.gz"] = Data(Deflate.gzip(Array((xml + "</pluginRecords>").utf8)))
+    }
+}
+
 @Suite("Update sites behave as Fiji's updater")
 struct UpdaterParityTests {
     typealias F = UpdaterFixture
@@ -196,6 +222,33 @@ struct UpdaterParityTests {
         #expect(F.records(manager.files) == F.expectedRecords("final"))
     }
 
+    /// Disabling a site plans removing its files; reading the sites again
+    /// starts a new plan, so a site enabled again keeps the files it installed.
+    @Test func reenablingASiteKeepsTheFilesItInstalled() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("mancora-updater-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        var sites = MemorySites()
+        // B, read after A, shadows A's version of jars/lib.jar with its own.
+        try sites.publish(site: "A", [("jars/lib-1.0.jar", ZipArchive.stored([("v", Array("1".utf8))]), 20240101000000)])
+        try sites.publish(site: "B", [("jars/lib-2.0.jar", ZipArchive.stored([("v", Array("2".utf8))]), 20240201000000)])
+        var manager = try PluginManager(root: root, activePlatforms: ["linux64"], timeZone: F.utc)
+        try manager.addSite(name: "A", url: MemorySites.base + "A/")
+        try manager.addSite(name: "B", url: MemorySites.base + "B/")
+        try await manager.refresh(client: sites)
+        try await manager.apply(client: sites)
+        let installed = root.appendingPathComponent("jars/lib-2.0.jar")
+        #expect(FileManager.default.fileExists(atPath: installed.path))
+
+        manager = try PluginManager(root: root, activePlatforms: ["linux64"], timeZone: F.utc)
+        try await manager.refresh(client: sites)
+        try manager.setActive("B", false)
+        try manager.setActive("B", true)
+        try await manager.refresh(client: sites)
+        #expect(manager.plan().changes.isEmpty)
+        try await manager.apply(client: sites)
+        #expect(FileManager.default.fileExists(atPath: installed.path))
+    }
+
     @Test func aDownloadThatDoesNotMatchChangesNothing() async throws {
         let root = try F.makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -257,6 +310,63 @@ struct UpdaterUnitTests {
         #expect(throws: XML.ParseError.self) { try XML.parse(Array("<r a='1' a='2'/>".utf8)) }
         #expect(throws: XML.ParseError.self) { try XML.parse(Array("<r>&unknown;</r>".utf8)) }
         #expect(throws: XML.ParseError.self) { try XML.parse(Array("<r/><s/>".utf8)) }
+    }
+
+    /// An internal entity's character references are expanded where it is
+    /// declared, and its replacement text is parsed where it is referenced
+    /// (XML 1.0 §4.4–4.5, as Xerces does).
+    @Test func xmlEntitiesExpandAsXercesDoes() throws {
+        let xml = """
+            <!DOCTYPE r [
+            <!ENTITY who "J&#246;rg"><!ENTITY amp2 "a&amp;b"><!ENTITY both "&who; and &amp2;">
+            <!ENTITY em "<i a='&who;'>x</i>">
+            ]>
+            <r><a>&who;</a><b>&amp2;</b><c>&both;</c><f>&em;</f><g v="&both;"/></r>
+            """
+        #expect(
+            try XML.parse(Array(xml.utf8)) == [
+                .start(name: "r", attributes: []),
+                .start(name: "a", attributes: []), .text("Jörg"), .end(name: "a"),
+                .start(name: "b", attributes: []), .text("a&b"), .end(name: "b"),
+                .start(name: "c", attributes: []), .text("Jörg and a&b"), .end(name: "c"),
+                .start(name: "f", attributes: []), .start(name: "i", attributes: [("a", "Jörg")]), .text("x"), .end(name: "i"),
+                .end(name: "f"),
+                .start(name: "g", attributes: [("v", "Jörg and a&b")]), .end(name: "g"),
+                .end(name: "r"),
+            ])
+        // Recursive entities and entity bombs are errors, as in the JDK's parser.
+        #expect(throws: XML.ParseError.self) { try XML.parse(Array("<!DOCTYPE r [<!ENTITY a \"x&a;\">]><r>&a;</r>".utf8)) }
+        var bomb = "<!DOCTYPE r [<!ENTITY l0 \"lol\">"
+        for i in 1...9 { bomb += "<!ENTITY l\(i) \"" + String(repeating: "&l\(i - 1);", count: 10) + "\">" }
+        bomb += "]><r a=\"&l9;\">&l9;</r>"
+        #expect(throws: XML.ParseError.self) { try XML.parse(Array(bomb.utf8)) }
+    }
+
+    /// A file's download URL names the file, whatever its name holds: `#`,
+    /// `?` and `%` would otherwise start a fragment, a query or an escape.
+    /// Spaces become `%20`, as in `FilesCollection.getURL`.
+    @Test func downloadURLsNameTheFile() throws {
+        let collection = PluginCollection(root: nil, activePlatforms: ["linux64"])
+        let site = UpdateSite(name: "S", url: "https://sites.test/S/")
+        site.isActive = true
+        collection.addSite(site)
+        for name in ["plugins/a#b.ijm", "macros/what?.ijm", "macros/50%25 off.txt", "plugins/Ünïcode [x].jar", "jars/x y.jar"] {
+            let file = PluginFile(updateSite: "S", filename: name, filesize: 1, checksum: "0", timestamp: 20240101000000, status: .new)
+            collection.add(file)
+            let address = try #require(collection.url(of: file))
+            let url = try #require(URL(string: address), "\(address)")
+            #expect(url.path == "/S/\(name)-20240101000000", "\(address)")
+            #expect(url.query == nil && url.fragment == nil, "\(address)")
+        }
+        let plain = PluginFile(updateSite: "S", filename: "jars/x y.jar", filesize: 1, checksum: "0", timestamp: 1, status: .new)
+        #expect(collection.url(of: plain) == "https://sites.test/S/jars/x%20y.jar-1")
+    }
+
+    /// "If the same entity is declared more than once, the first declaration
+    /// encountered is binding" (XML 1.0 §4.2).
+    @Test func xmlFirstEntityDeclarationIsBinding() throws {
+        let xml = "<!DOCTYPE r [<!ENTITY e \"first\"><!ENTITY e \"second\">]><r a=\"&e;\">&e;</r>"
+        #expect(try XML.parse(Array(xml.utf8)) == [.start(name: "r", attributes: [("a", "first")]), .text("first"), .end(name: "r")])
     }
 
     @Test func xmlIsWrittenAsTheJDKSerializes() {
