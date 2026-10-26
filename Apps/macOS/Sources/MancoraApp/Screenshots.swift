@@ -7,12 +7,12 @@ import MancoraMacro
 import SwiftUI
 
 // `Mancora --screenshots <folder>`: opens real windows, puts the app in each
-// state a design review wants to see (no image, the inspector, a threshold,
+// state a design review wants to see (the welcome window, no image, the inspector, a threshold,
 // selections, a hyperstack, the ROI Manager, Results, plots, the macro editor, the recorder,
 // a command dialog, Find Command, Update Sites, the Image menu), saves a PNG
 // of the window in light and in dark mode, writes `index.md`, and exits.
 //
-// How windows are opened: the first window's SwiftUI scene hands its
+// How windows are opened: the first window's (the welcome window's) SwiftUI scene hands its
 // `openWindow` action to the run (see `screenshotDriver`), and the run opens
 // the others as the menus do: `openWindow(id: "viewer", value:)` for an image,
 // `openWindow(id:)` for the tool windows, `PlotWindows.open` for plots,
@@ -166,12 +166,27 @@ final class ScreenshotRun {
     // MARK: States
 
     private func runStates() async {
-        await state("01", "no-image") {
-            guard let window = await poll(timeout: 30, { Self.window(titled: "Mancora") }) else {
-                throw Failure("the first window never appeared")
+        // The window the app opens at launch.
+        await state("00", "welcome") {
+            guard let window = await poll(timeout: 30, { Self.window(titled: "Welcome to Mancora") }) else {
+                throw Failure("the welcome window never appeared")
             }
             await settle(1.0)
-            await shoot("01", "no-image", "The app with no image open", window)
+            await shoot("00", "welcome", "The welcome window, shown at launch", window)
+        }
+
+        // An image window with no image, which a command that makes one opens first.
+        await state("01", "no-image") {
+            let before = Set(Self.contentWindows().map { ObjectIdentifier($0) })
+            openWindow(id: "viewer")
+            guard let window = await poll(timeout: 30, { Self.contentWindows().first { !before.contains(ObjectIdentifier($0)) } }) else {
+                throw Failure("no empty image window opened")
+            }
+            window.makeKeyAndOrderFront(nil)
+            await settle(1.0)
+            await shoot("01", "no-image", "An image window with no image open", window)
+            // The states after this open image windows of their own.
+            window.close()
         }
 
         await state("02", "inspector") {
