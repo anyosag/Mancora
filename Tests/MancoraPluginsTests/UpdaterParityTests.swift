@@ -3,6 +3,7 @@ import MancoraSupport
 import MancoraUpdate
 import Testing
 
+@testable import MancoraIO
 @testable import MancoraPlugins
 
 /// The update-site fixtures: an installation, three sites and what Fiji's
@@ -121,6 +122,31 @@ enum UpdaterFixture {
     }
 }
 
+/// Update sites served from memory, laid out as the updater uploads them:
+/// each site's db.xml.gz and its files under `<name>-<timestamp>`.
+struct MemorySites: HTTPClient {
+    static let base = "https://sites.test/"
+    var files: [String: Data] = [:]
+
+    func data(from url: URL) async throws -> Data { try await dataAndLastModified(from: url).data }
+
+    func dataAndLastModified(from url: URL) async throws -> (data: Data, lastModified: Date?) {
+        guard let data = files[url.absoluteString] else { throw UpdateError.httpStatus(404, url: url.absoluteString) }
+        return (data, Date(timeIntervalSince1970: 1_719_835_200))
+    }
+
+    /// Makes `site` offer exactly these files.
+    mutating func publish(site: String, _ entries: [(filename: String, contents: [UInt8], timestamp: Int64)]) throws {
+        var xml = #"<?xml version="1.0" encoding="UTF-8"?><pluginRecords>"#
+        for entry in entries {
+            let checksum = try FijiChecksum.digest(path: entry.filename, contents: entry.contents)
+            xml += #"<plugin filename="\#(entry.filename)"><version checksum="\#(checksum)" timestamp="\#(entry.timestamp)" filesize="\#(entry.contents.count)"/></plugin>"#
+            files["\(Self.base)\(site)/\(entry.filename)-\(entry.timestamp)"] = Data(entry.contents)
+        }
+        files["\(Self.base)\(site)/db.xml.gz"] = Data(Deflate.gzip(Array((xml + "</pluginRecords>").utf8)))
+    }
+}
+
 @Suite("Update sites behave as Fiji's updater")
 struct UpdaterParityTests {
     typealias F = UpdaterFixture
@@ -194,6 +220,33 @@ struct UpdaterParityTests {
         manager = try F.manager(root)
         try await manager.refresh(client: client)
         #expect(F.records(manager.files) == F.expectedRecords("final"))
+    }
+
+    /// Disabling a site plans removing its files; reading the sites again
+    /// starts a new plan, so a site enabled again keeps the files it installed.
+    @Test func reenablingASiteKeepsTheFilesItInstalled() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("mancora-updater-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        var sites = MemorySites()
+        // B, read after A, shadows A's version of jars/lib.jar with its own.
+        try sites.publish(site: "A", [("jars/lib-1.0.jar", ZipArchive.stored([("v", Array("1".utf8))]), 20240101000000)])
+        try sites.publish(site: "B", [("jars/lib-2.0.jar", ZipArchive.stored([("v", Array("2".utf8))]), 20240201000000)])
+        var manager = try PluginManager(root: root, activePlatforms: ["linux64"], timeZone: F.utc)
+        try manager.addSite(name: "A", url: MemorySites.base + "A/")
+        try manager.addSite(name: "B", url: MemorySites.base + "B/")
+        try await manager.refresh(client: sites)
+        try await manager.apply(client: sites)
+        let installed = root.appendingPathComponent("jars/lib-2.0.jar")
+        #expect(FileManager.default.fileExists(atPath: installed.path))
+
+        manager = try PluginManager(root: root, activePlatforms: ["linux64"], timeZone: F.utc)
+        try await manager.refresh(client: sites)
+        try manager.setActive("B", false)
+        try manager.setActive("B", true)
+        try await manager.refresh(client: sites)
+        #expect(manager.plan().changes.isEmpty)
+        try await manager.apply(client: sites)
+        #expect(FileManager.default.fileExists(atPath: installed.path))
     }
 
     @Test func aDownloadThatDoesNotMatchChangesNothing() async throws {
