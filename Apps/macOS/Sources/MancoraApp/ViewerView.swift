@@ -245,18 +245,39 @@ struct ImageCanvas: View {
 struct StatusBar: View {
     @Bindable var model: ViewerModel
     let image: Hyperstack
+    /// The dimension being animated; only one plays at a time.
+    @State private var playing: PlayAxis?
+
+    enum PlayAxis: Hashable {
+        case slice
+        case frame
+    }
+
+    /// ImageJ's default animation speed.
+    private static let framesPerSecond = 7.0
 
     var body: some View {
+        let dims = image.dimensions
+        // Counts of different widths would stagger the sliders; give every row the widest.
+        let digits = String(max(dims.channels, dims.slices, dims.frames)).count
         VStack(alignment: .leading, spacing: 6) {
-            let dims = image.dimensions
-            if dims.channels > 1 {
-                PositionSlider(label: "c", value: $model.channel, count: dims.channels)
-            }
-            if dims.slices > 1 {
-                PositionSlider(label: "z", value: $model.slice, count: dims.slices)
-            }
-            if dims.frames > 1 {
-                PositionSlider(label: "t", value: $model.frame, count: dims.frames)
+            if dims.channels > 1 || dims.slices > 1 || dims.frames > 1 {
+                VStack(spacing: 4) {
+                    if dims.channels > 1 {
+                        PositionSlider(label: "Channel", value: $model.channel, count: dims.channels, digits: digits)
+                    }
+                    if dims.slices > 1 {
+                        PositionSlider(
+                            label: "Slice", value: $model.slice, count: dims.slices, digits: digits,
+                            isPlaying: playbackBinding(.slice))
+                    }
+                    if dims.frames > 1 {
+                        PositionSlider(
+                            label: "Frame", value: $model.frame, count: dims.frames, digits: digits,
+                            isPlaying: playbackBinding(.frame))
+                    }
+                }
+                Divider()
             }
             HStack {
                 Text(model.selectionText ?? model.pointerText ?? summary)
@@ -272,6 +293,40 @@ struct StatusBar: View {
         .onChange(of: model.channel) { model.positionChanged() }
         .onChange(of: model.slice) { model.positionChanged() }
         .onChange(of: model.frame) { model.positionChanged() }
+        .task(id: playing) {
+            guard let axis = playing else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1.0 / Self.framesPerSecond))
+                if Task.isCancelled { break }
+                advance(axis)
+            }
+        }
+    }
+
+    private func playbackBinding(_ axis: PlayAxis) -> Binding<Bool> {
+        Binding(get: { playing == axis }, set: { playing = $0 ? axis : nil })
+    }
+
+    /// Steps the animated dimension on, from the last back to the first.
+    private func advance(_ axis: PlayAxis) {
+        guard let dims = model.image?.dimensions else {
+            playing = nil
+            return
+        }
+        switch axis {
+        case .slice:
+            if dims.slices > 1 {
+                model.slice = (model.slice + 1) % dims.slices
+            } else {
+                playing = nil
+            }
+        case .frame:
+            if dims.frames > 1 {
+                model.frame = (model.frame + 1) % dims.frames
+            } else {
+                playing = nil
+            }
+        }
     }
 
     private var summary: String {
@@ -282,29 +337,59 @@ struct StatusBar: View {
     }
 }
 
-/// An ImageJ-style position scrollbar with step buttons.
+/// A labelled position scrollbar with step buttons, its value as "2 / 3", and, for a dimension
+/// that can be animated, a play button.
 struct PositionSlider: View {
     let label: String
     @Binding var value: Int
     let count: Int
+    /// The widest count's digits, which sets the value column's width.
+    var digits = 1
+    /// Plays the dimension; nil where it can't be (channels).
+    var isPlaying: Binding<Bool>?
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text("\(label) \(value + 1)/\(count)")
-                .font(.callout.monospacedDigit())
-                .frame(width: 92, alignment: .leading)
-            Button("Previous", systemImage: "chevron.left") { value = max(value - 1, 0) }
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 48, alignment: .leading)
+            Button("Previous \(label)", systemImage: "chevron.left") { value = max(value - 1, 0) }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
+                .disabled(value <= 0)
+            // No `step:`, which draws a tick for every position; the binding rounds instead.
             Slider(
                 value: Binding(get: { Double(value) }, set: { value = Int($0.rounded()) }),
-                in: 0...Double(count - 1),
-                step: 1
+                in: 0...Double(max(count - 1, 1))
             )
-            Button("Next", systemImage: "chevron.right") { value = min(value + 1, count - 1) }
+            .controlSize(.small)
+            Button("Next \(label)", systemImage: "chevron.right") { value = min(value + 1, count - 1) }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
+                .disabled(value >= count - 1)
+            Text("\(value + 1) / \(count)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: CGFloat(digits) * 13 + 14, alignment: .trailing)
+            if let isPlaying {
+                playButton(isPlaying)
+            } else {
+                Color.clear.frame(width: 18, height: 1)
+            }
         }
+    }
+
+    private func playButton(_ isPlaying: Binding<Bool>) -> some View {
+        let playing = isPlaying.wrappedValue
+        let title: String = playing ? "Pause" : "Play"
+        let symbol: String = playing ? "pause.fill" : "play.fill"
+        let help: String = playing ? "Pause the animation" : "Play the animation at 7 frames per second"
+        return Button(title, systemImage: symbol) { isPlaying.wrappedValue = !playing }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .frame(width: 18)
+            .help(help)
     }
 }
 
