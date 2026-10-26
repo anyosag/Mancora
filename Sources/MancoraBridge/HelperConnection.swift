@@ -33,8 +33,11 @@ final class HelperConnection: @unchecked Sendable {
     /// The end of the helper's standard error, for the error when it stops.
     private var errorTail = Data()
     private static let errorTailLimit = 4096
+    /// Called once, when the process has ended (e.g. to release its hold on Fiji).
+    private var onExit: (@Sendable () -> Void)?
 
-    init(_ launch: HelperLaunch) throws {
+    init(_ launch: HelperLaunch, onExit: (@Sendable () -> Void)? = nil) throws {
+        self.onExit = onExit
         process.executableURL = launch.executable
         process.arguments = launch.arguments
         process.environment = launch.environment
@@ -149,7 +152,11 @@ final class HelperConnection: @unchecked Sendable {
         if first || status != nil { exitStatus = known }
         let stranded = waiting
         waiting = [:]
+        // The process has ended (not just its output): what it held is free.
+        let exit = status != nil ? onExit : nil
+        if status != nil { onExit = nil }
         lock.unlock()
+        exit?()
         if stranded.isEmpty { return }
         // Java's last words can trail the end of standard output a little.
         Thread.sleep(forTimeInterval: 0.2)
