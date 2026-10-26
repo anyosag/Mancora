@@ -91,13 +91,9 @@ final class MacroDialog {
     // MARK: Adding fields
 
     func addNumber(_ label: String, _ value: Double, decimalPlaces digitsIn: Int, columns: Int, units: String?) {
-        var digits = digitsIn
-        var scientific = false
-        if digits < 0 {
-            digits = -digits
-            scientific = true
-        }
-        var text = scientific ? ImageJFormat.resultsTableD2S(value, -digits) : ImageJFormat.d2s(value, digits)
+        // Negative decimal places: scientific notation where the number needs it.
+        let digits = abs(digitsIn)
+        var text = digitsIn < 0 ? ImageJFormat.resultsTableD2S(value, digits) : ImageJFormat.d2s(value, digits)
         if value.isNaN { text = "" }
         numbers.append(NumberField(key: saveLabel(label), text: text, defaultValue: value))
         fields.append(.number(label: label, value: value, decimalPlaces: digitsIn, columns: columns, units: units))

@@ -546,6 +546,16 @@ enum MacroCorpus {
 
     /// Saving, options and `call` targets that change what a macro gets.
     static let filesAndOptions: [MacroParityCase] = [
+        .init("getInfo keys for selections, overlays and fonts", #"""
+            makeRectangle(2, 2, 5, 5);
+            print(getInfo("selection.color"), getInfo("overlay") + "|", getInfo("font.name"));
+            Roi.setStrokeColor("magenta");
+            print(getInfo("roi.color"));
+            setFont("Serif", 14, "bold");
+            print(getInfo("font.name"));
+            setFont("user");
+            print(getInfo("font.name"));
+            """#, on: .gray8),
         .init("save and saveAs keep ImageJ's names", #"""
             dir = getDirectory("temp");
             save(dir + "mancora-save.tif");

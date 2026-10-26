@@ -24,6 +24,8 @@ final class Functions {
     var writerPath: String?
     /// The dialog `Dialog.create` made (ImageJ's `gd`).
     var dialog: MacroDialog?
+    /// The font `setFont` chose (text is drawn by ImageJ); ImageProcessor's default is SansSerif.
+    var fontName = "SansSerif"
     /// The table title-less `Table.*` calls last used (ImageJ's `currentTable`).
     var currentTable: String?
     /// The image whose processor `getProcessor()` last set up (ImageJ's `defaultIP`).
@@ -115,7 +117,7 @@ final class Functions {
         case SAVE_SETTINGS: try saveSettings()
         case RESTORE_SETTINGS: try restoreSettings()
         case OPEN: try open()
-        case SET_FONT: try skipArgs()
+        case SET_FONT: try setFont()
         case GET_MIN_AND_MAX: try getMinAndMax()
         case CLOSE: try close()
         case SET_SLICE: try setSlice()
@@ -692,6 +694,20 @@ final class Functions {
         } else {
             try interp.error("Window not found")
         }
+    }
+
+    /// `setFont(name, size, style)` or `setFont("user")`: only the name is
+    /// kept, for `getInfo("font.name")`.
+    private func setFont() throws(MacroSignal) {
+        let name = try getFirstString()
+        if name == "user" {
+            fontName = "SansSerif"  // TextRoi's default font
+            try interp.getRightParen()
+            return
+        }
+        fontName = name
+        _ = try getNextArg()
+        if interp.nextToken() == ch(",") { _ = try getLastString() } else { try interp.getRightParen() }
     }
 
     private func showStatus() throws(MacroSignal) {
@@ -1910,6 +1926,16 @@ final class Functions {
         case "window.type": return session.context.current == nil ? "" : "Image"
         case "window.title", "window.name": return session.context.current?.title ?? ""
         case "command.name": return ""
+        case "overlay":
+            // Overlay.toString(); Mancora keeps overlays as their encoded bytes only.
+            if try image().image.encodedOverlay.isEmpty { return "" }
+            try unsupported("getInfo(\"overlay\") of an image with an overlay")
+        case "selection.color", "roi.color":
+            guard let roi = try image().roi else { try interp.fail("No selection") }
+            return Self.colorToString(roi.strokeColor)
+        case "font.name":
+            _ = try image()
+            return fontName
         default: break
         }
         if let value = try imageInfo(forKey: key, lowercaseKey: lowercaseKey) { return value }
