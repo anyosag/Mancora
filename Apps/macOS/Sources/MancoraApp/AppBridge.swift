@@ -76,6 +76,13 @@ final class AppBridge {
         return try await bridge.runMacro(code, images: image.map { [$0] } ?? [])
     }
 
+    /// The dialogs `command` would show for `image`, to ask for its options natively.
+    func describeDialog(_ command: String, on image: Hyperstack?) async throws -> BridgeDialogs {
+        if !isReady { await start() }
+        guard let bridge else { throw BridgeError.helperExited(status: -1) }
+        return try await bridge.describeDialog(command, images: image.map { [$0] } ?? [])
+    }
+
     /// Opens a file Mancora can't read in ImageJ (or Bio-Formats, if installed).
     func open(_ path: String) async throws -> BridgeRunResult {
         if !isReady { await start() }

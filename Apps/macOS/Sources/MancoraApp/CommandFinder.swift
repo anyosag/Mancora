@@ -77,7 +77,8 @@ struct CommandFinder: View {
         guard let name = selection ?? entries.first?.name else { return }
         dismiss()
         Task {
-            let created = await model.runCommand(name, bridge: bridge)
+            // As from the menus: a command with a dialog asks for its options first.
+            let created = await model.perform(name, bridge: bridge)
             openNewWindows(created)
         }
     }

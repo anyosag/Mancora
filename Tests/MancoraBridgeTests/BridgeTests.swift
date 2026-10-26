@@ -242,6 +242,36 @@ struct BridgeIntegrationTests {
         await bridge.stop()
     }
 
+    @Test(.enabled(if: hasDisplay)) func dialogsAreDescribedForNativeForms() async throws {
+        let bridge = try BridgeFixtures.bridge()
+        // Gaussian Blur on a calibrated stack: sigma, scaled units, a preview, and the stack question.
+        let blur = try await bridge.describeDialog("Gaussian Blur...", images: [fixture])
+        let dialog = try #require(blur.dialogs.first, "no dialog")
+        #expect(dialog.title == "Gaussian Blur...")
+        #expect(blur.supportsPreview)
+        let sigma = try #require(dialog.fields.first { $0.key == "sigma" }, "\(dialog.fields)")
+        #expect(sigma.kind == .number)
+        #expect(sigma.label.hasPrefix("Sigma"))
+        #expect(Double(sigma.value ?? "") != nil)
+        #expect(dialog.fields.contains { $0.key == "scaled" && $0.kind == .checkbox })
+        #expect(blur.asksForStack)
+        #expect(blur.options(["sigma": "3.5", "scaled": "false"], processStack: true) == "sigma=3.5 stack")
+
+        // Analyze Particles: text fields, a choice, checkboxes, keys as ImageJ's recorder writes them.
+        let mask = try Hyperstack(
+            title: "mask.tif", stack: ImageStack(width: 8, height: 8, planes: [.gray8((0..<64).map { $0 % 9 == 0 ? 255 : 0 })]))
+        let particles = try await bridge.describeDialog("Analyze Particles...", images: [mask])
+        let fields = try #require(particles.dialogs.first?.fields)
+        #expect(fields.first { $0.key == "size" }?.kind == .string)
+        #expect(fields.first { $0.key == "show" }?.items?.contains("Outlines") == true)
+        #expect(fields.contains { $0.key == "summarize" && $0.kind == .checkbox })
+        #expect(!particles.asksForStack)
+
+        // A command without a dialog.
+        #expect(try await bridge.describeDialog("Invert", images: [mask]).dialogs.isEmpty)
+        await bridge.stop()
+    }
+
     @Test func unknownCommandsAreReported() async throws {
         let bridge = try BridgeFixtures.bridge()
         do {

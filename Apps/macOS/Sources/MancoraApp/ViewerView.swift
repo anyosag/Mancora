@@ -6,11 +6,11 @@ struct ViewerWindow: View {
     @Binding var request: OpenRequest?
     let bridge: AppBridge
     @State private var model = ViewerModel()
-    @State private var showsInspector = true
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.undoManager) private var undoManager
 
     var body: some View {
-        ViewerView(model: model, showsInspector: $showsInspector)
+        ViewerView(model: model, showsInspector: $model.showsInspector)
             .frame(minWidth: 720, minHeight: 520)
             .sheet(isPresented: $model.showsCommandFinder) {
                 CommandFinder(model: model, bridge: bridge) { urls in
@@ -22,10 +22,20 @@ struct ViewerWindow: View {
             ) {
                 ReportView(text: model.report ?? "")
             }
+            .sheet(item: $model.pendingDialog) { pending in
+                CommandDialogView(pending: pending) { options in
+                    Task { show(await model.runRecorded(pending.command, options: options, bridge: bridge)) }
+                }
+            }
             .focusedSceneValue(\.viewer, model)
             .task(id: request) {
                 model.bridge = bridge
-                if let request { model.open(request) }
+                model.undoManager = undoManager
+                if let request {
+                    model.open(request)
+                } else if let command = CommandQueue.shared.take() {
+                    show(await model.perform(command, bridge: bridge))
+                }
             }
             .onOpenURL { url in
                 model.bridge = bridge
@@ -36,6 +46,15 @@ struct ViewerWindow: View {
                     model.open(OpenRequest(url: url))
                 }
             }
+    }
+}
+
+extension ViewerWindow {
+    /// New images: the first fills this window if it's empty, the others get their own.
+    func show(_ urls: [URL]) {
+        var rest = urls[...]
+        if !model.hasImage, let first = rest.popFirst() { model.open(OpenRequest(url: first)) }
+        for url in rest { openWindow(id: "viewer", value: OpenRequest(url: url)) }
     }
 }
 

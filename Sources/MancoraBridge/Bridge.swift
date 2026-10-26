@@ -136,6 +136,24 @@ public actor Bridge {
         return try await withImages([], method: "open") { _, outputDir in OpenParams(path: absolute, outputDir: outputDir) }
     }
 
+    /// The dialogs `command` shows for `images` (the last one active), so a
+    /// native dialog can ask for its options. Empty for commands without one.
+    public func describeDialog(_ command: String, images: [Hyperstack] = []) async throws -> BridgeDialogs {
+        let request = workRoot.appendingPathComponent("request-\(nextID)")
+        try FileManager.default.createDirectory(at: request, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: request) }
+        var inputs: [String] = []
+        for (k, image) in images.enumerated() {
+            let folder = request.appendingPathComponent("input-\(k)")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let path = folder.appendingPathComponent(Self.fileName(for: image.title)).path
+            try TIFFExporter.write(image, to: path)
+            inputs.append(path)
+        }
+        return try await call(
+            "dialog", DialogParams(command: command, inputs: inputs, outputDir: request.path), as: BridgeDialogs.self, retry: true)
+    }
+
     /// Asks the helper to exit, and stops it if it doesn't.
     public func stop() async {
         if let connection, connection.isRunning {

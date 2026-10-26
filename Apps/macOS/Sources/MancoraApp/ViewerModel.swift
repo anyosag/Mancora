@@ -37,6 +37,20 @@ final class ViewerModel {
 
     /// Find Command (⌘L) is showing.
     var showsCommandFinder = false
+    /// The Brightness & Contrast and image inspector is showing.
+    var showsInspector = true
+    /// A command waiting for its dialog's answers.
+    var pendingDialog: PendingDialog?
+
+    struct LastCommand: Equatable {
+        let name: String
+        let options: String
+    }
+
+    /// For Process ▸ Repeat Command.
+    private(set) var lastCommand: LastCommand?
+    /// The window's undo manager: commands that change the image can be undone.
+    @ObservationIgnored weak var undoManager: UndoManager?
     /// What the last ImageJ command or macro logged or measured.
     var report: String?
 
@@ -156,6 +170,54 @@ final class ViewerModel {
     /// Runs an ImageJ command on this image: natively when Mancora has it,
     /// otherwise in ImageJ through the bridge. Returns files for the new
     /// images it made, for the caller to open in new windows.
+    /// Runs a menu command as ImageJ does: one with a dialog asks for its
+    /// options first (ImageJ's own dialog, read through the bridge and
+    /// shown natively), then runs natively or in ImageJ.
+    func perform(_ name: String, bridge: AppBridge) async -> [URL] {
+        if Self.mayHaveDialog(name) {
+            if !bridge.isReady { await bridge.start() }
+            if bridge.isReady {
+                do {
+                    let dialogs = try await bridge.describeDialog(name, on: image)
+                    if !dialogs.dialogs.isEmpty {
+                        pendingDialog = PendingDialog(command: name, dialogs: dialogs, stackSize: image?.stack.count ?? 1)
+                        return []
+                    }
+                } catch {
+                    errorMessage = "\(error)"
+                    return []
+                }
+            }
+        }
+        return await runRecorded(name, options: "", bridge: bridge)
+    }
+
+    /// Runs a command and remembers it for Repeat Command.
+    func runRecorded(_ name: String, options: String, bridge: AppBridge) async -> [URL] {
+        lastCommand = LastCommand(name: name, options: options)
+        return await runCommand(name, options: options, bridge: bridge)
+    }
+
+    /// ImageJ ends the names of commands that ask for something with "...".
+    static func mayHaveDialog(_ name: String) -> Bool {
+        name.trimmingCharacters(in: .whitespaces).hasSuffix("...")
+    }
+
+    func zoom(by factor: Double) {
+        let current: Double
+        switch zoom {
+        case .scale(let s): current = s
+        case .fit: current = 1
+        }
+        zoom = .scale(min(max(current * factor, 1.0 / 32), 64))
+    }
+
+    /// File ▸ Revert: the file as saved.
+    func revert() {
+        guard let fileURL else { return }
+        open(OpenRequest(url: fileURL))
+    }
+
     func runCommand(_ name: String, options: String = "", bridge: AppBridge) async -> [URL] {
         let registry = CommandRegistry.standard
         if registry.isNative(name) {
@@ -292,6 +354,11 @@ final class ViewerModel {
     /// the image in place.
     private func replace(with changed: Hyperstack) {
         let dims = changed.dimensions
+        if let previous = image {
+            undoManager?.registerUndo(withTarget: self) { model in
+                MainActor.assumeIsolated { model.replace(with: previous) }
+            }
+        }
         image = changed
         channel = min(channel, dims.channels - 1)
         slice = min(slice, dims.slices - 1)
