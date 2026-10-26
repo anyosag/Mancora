@@ -63,6 +63,30 @@ extension ViewerModel {
         Task { _ = await perform("Convert to Mask", bridge: bridge) }
     }
 
+    /// A plane's 256-bin histogram over its own range of values, and that range: 0...255 for 8-bit
+    /// data, else the smallest and largest finite value (widened by one when they coincide).
+    nonisolated static func histogram(of plane: Plane) -> (bins: [Int], range: ClosedRange<Double>) {
+        var range: ClosedRange<Double> = 0...255
+        if plane.pixelType != .gray8 && plane.pixelType != .rgb8 {
+            var low = Double.infinity
+            var high = -Double.infinity
+            if let found = plane.valueRange(), found.lowerBound.isFinite, found.upperBound.isFinite {
+                low = found.lowerBound
+                high = found.upperBound
+            } else {
+                // ±Infinity (or nothing but NaN): take the finite values only.
+                for i in 0..<plane.count {
+                    let v = plane.value(at: i)
+                    guard v.isFinite else { continue }
+                    low = min(low, v)
+                    high = max(high, v)
+                }
+            }
+            if low.isFinite && high.isFinite { range = low < high ? low...high : low...(low + 1) }
+        }
+        return (histogram(plane, range: range), range)
+    }
+
     /// A plane's 256-bin histogram over `range`.
     nonisolated static func histogram(_ plane: Plane, range: ClosedRange<Double>) -> [Int] {
         let span = range.upperBound - range.lowerBound
@@ -87,16 +111,28 @@ extension ViewerModel {
     }
 }
 
-/// The inspector's Threshold section.
+/// The inspector's Threshold section: the plane's histogram with the range between the two handles
+/// in red, the method, and Auto, Apply and Reset.
 struct ThresholdSection: View {
     @Bindable var model: ViewerModel
 
     var body: some View {
+        let isIntegral = model.image?.pixelType != .gray32Float
         Section("Threshold") {
-            ThresholdHistogram(
-                bins: model.histogram, range: model.displayRange, levels: model.threshold
-            )
-            .frame(height: 64)
+            VStack(spacing: 8) {
+                LevelsHistogram(
+                    bins: model.histogram, binRange: model.histogramRange, domain: model.levelsDomain,
+                    values: Binding(
+                        get: { levels },
+                        set: { model.setThresholdLevels(lower: $0.lowerBound, upper: $0.upperBound) }),
+                    limits: model.levelLimits, isIntegral: isIntegral,
+                    highlight: model.threshold == nil ? nil : Color.red, label: "Threshold")
+                HStack {
+                    LevelField(title: "Lower", value: lowerBinding, isIntegral: isIntegral)
+                    Spacer(minLength: 8)
+                    LevelField(title: "Upper", value: upperBinding, isIntegral: isIntegral)
+                }
+            }
             Picker("Method", selection: $model.thresholdMethod) {
                 ForEach(AutoThresholder.Method.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
@@ -107,57 +143,34 @@ struct ThresholdSection: View {
                 Toggle("Stack histogram", isOn: $model.thresholdStack)
                     .onChange(of: model.thresholdStack) { model.autoThreshold() }
             }
-            let bounds = model.sliderBounds
-            let levels = model.threshold ?? ThresholdLevels(lower: bounds.lowerBound, upper: bounds.upperBound)
-            let step = model.image?.pixelType == .gray32Float ? 0 : 1.0
-            RangeSlider(
-                title: "Lower",
-                value: Binding(
-                    get: { levels.lower },
-                    set: { model.setThresholdLevels(lower: min($0, levels.upper), upper: levels.upper) }),
-                bounds: bounds, step: step)
-            RangeSlider(
-                title: "Upper",
-                value: Binding(
-                    get: { levels.upper },
-                    set: { model.setThresholdLevels(lower: levels.lower, upper: max($0, levels.lower)) }),
-                bounds: bounds, step: step)
-            HStack {
+            HStack(spacing: 8) {
                 Button("Auto") { model.autoThreshold() }
                 Button("Apply") { model.applyThreshold() }
                     .disabled(model.threshold == nil)
                 Button("Reset") { model.resetThreshold() }
                 Spacer()
             }
+            .buttonStyle(.bordered)
         }
         .onAppear { model.render() }
         .onDisappear { model.recordThreshold() }
     }
-}
 
-/// The histogram, with the thresholded bins in red.
-struct ThresholdHistogram: View {
-    let bins: [Int]
-    let range: ClosedRange<Double>
-    let levels: ThresholdLevels?
+    /// The levels set, or the whole range of values while there is no threshold.
+    private var levels: ClosedRange<Double> {
+        guard let threshold = model.threshold else { return model.levelsDomain }
+        return min(threshold.lower, threshold.upper)...max(threshold.lower, threshold.upper)
+    }
 
-    var body: some View {
-        Canvas { context, size in
-            guard let top = bins.max(), top > 0 else { return }
-            let width = size.width / CGFloat(max(bins.count, 1))
-            let span = range.upperBound - range.lowerBound
-            for (i, count) in bins.enumerated() where count > 0 {
-                let height = size.height * CGFloat(count) / CGFloat(top)
-                let rect = CGRect(x: CGFloat(i) * width, y: size.height - height, width: max(width, 1), height: height)
-                var thresholded = false
-                if let levels, span > 0 {
-                    let value = range.lowerBound + (Double(i) + 0.5) / Double(bins.count) * span
-                    thresholded = value >= levels.lower && value <= levels.upper
-                }
-                context.fill(Path(rect), with: .color(thresholded ? .red : .secondary))
-            }
-        }
-        .background(Color(nsColor: .textBackgroundColor))
-        .border(Color(nsColor: .separatorColor))
+    private var lowerBinding: Binding<Double> {
+        Binding(
+            get: { levels.lowerBound },
+            set: { model.setThresholdLevels(lower: min(model.clampedLevel($0), levels.upperBound), upper: levels.upperBound) })
+    }
+
+    private var upperBinding: Binding<Double> {
+        Binding(
+            get: { levels.upperBound },
+            set: { model.setThresholdLevels(lower: levels.lowerBound, upper: max(model.clampedLevel($0), levels.lowerBound)) })
     }
 }

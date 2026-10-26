@@ -10,6 +10,8 @@ struct EditorRequest: Codable, Hashable {
     var isText = false
     /// Tells empty editors apart: SwiftUI brings the window of an equal value forward instead of opening another.
     var serial: UUID?
+    /// The Recorder's Create Macro: a new, unsaved macro that starts with this text.
+    var text: String?
 }
 
 /// State of one editor window, as ImageJ's Editor has it: the text (kept by
@@ -40,6 +42,8 @@ final class MacroEditorModel {
     @ObservationIgnored var openEditor: ((URL) -> Void)?
     /// The text before the window has its text view (and after it, until it's replaced).
     @ObservationIgnored private var pendingText = ""
+    /// The text is a new macro's, which isn't saved anywhere yet.
+    @ObservationIgnored private var startsChanged = false
 
     var title: String { fileURL?.lastPathComponent ?? (isText ? "Untitled.txt" : "Macro.ijm") }
 
@@ -73,6 +77,15 @@ final class MacroEditorModel {
         } catch {
             message = "Can't open “\(url.lastPathComponent)”: \(error.localizedDescription)"
         }
+    }
+
+    /// The Recorder's Create Macro: this window starts as a new macro with `text`, which is unsaved.
+    func start(with text: String) {
+        guard fileURL == nil, !startsChanged else { return }
+        pendingText = text
+        startsChanged = true
+        textView?.show(text)
+        isChanged = true
     }
 
     /// File ▸ Open in an editor: the file fills this window if it's empty and unchanged, else it gets its own.
@@ -169,7 +182,7 @@ final class MacroEditorModel {
     func attach(_ textView: MacroTextView) {
         self.textView = textView
         textView.show(pendingText)
-        isChanged = false
+        isChanged = startsChanged
         selectionDidChange(in: textView)
         Self.editors.removeAll { $0.model == nil || $0.model === self }
         Self.editors.append(WeakEditor(model: self))
@@ -294,7 +307,11 @@ struct MacroEditorWindow: View {
             model.openEditor = { url in openWindow(id: "macro-editor", value: EditorRequest(url: url)) }
             if let request {
                 model.isText = request.isText
-                if let url = request.url, model.fileURL != url { model.load(url) }
+                if let url = request.url, model.fileURL != url {
+                    model.load(url)
+                } else if request.url == nil, let text = request.text {
+                    model.start(with: text)
+                }
             }
         }
     }
