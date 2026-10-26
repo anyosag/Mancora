@@ -221,16 +221,15 @@ public final class MacroSession {
         case "plugins": return imageJDirectory.map { slash($0) + "plugins/" }
         case "macros": return imageJDirectory.map { slash($0) + "macros/" }
         case "luts": return imageJDirectory.map { slash($0) + "luts/" }
-        case "current", "cwd": return slash(fm.currentDirectoryPath)
-        case "default": return defaultDirectory.map(slash) ?? ""
+        case "cwd": return slash(fm.currentDirectoryPath)
+        // OpenDialog's default directory, as ImageJ gives for both.
+        case "current", "default": return defaultDirectory.map(slash) ?? ""
         case "file": return lastDirectory ?? ""
         case "image":
             guard let path = context.current?.image.properties["Mancora.path"] else { return "" }
             return slash((path as NSString).deletingLastPathComponent)
         case "downloads": return slash(fm.homeDirectoryForCurrentUser.path) + "Downloads/"
-        default:
-            if nameIn.contains("/") || nameIn.contains("\\") { return nil }
-            return nil
+        default: return nil
         }
     }
 

@@ -543,4 +543,53 @@ enum MacroCorpus {
             print(getTitle());
             """#),
     ]
+
+    /// Saving, options and `call` targets that change what a macro gets.
+    static let filesAndOptions: [MacroParityCase] = [
+        .init("save and saveAs keep ImageJ's names", #"""
+            dir = getDirectory("temp");
+            save(dir + "mancora-save.tif");
+            print(getTitle(), File.exists(dir + "mancora-save.tif"));
+            save(dir + "mancora-save-noext");
+            print(getTitle(), File.exists(dir + "mancora-save-noext.tif"));
+            saveAs("Tiff", dir + "mancora-saveas.png");
+            print(getTitle(), File.exists(dir + "mancora-saveas.tif"), File.exists(dir + "mancora-saveas.png"));
+            makeRectangle(2, 3, 10, 12);
+            saveAs("Selection", dir + "mancora-sel.txt");
+            print(File.exists(dir + "mancora-sel.roi"));
+            names = newArray("mancora-save.tif", "mancora-save-noext.tif", "mancora-saveas.tif", "mancora-sel.roi");
+            for (i = 0; i < names.length; i++) ok = File.delete(dir + names[i]);
+            """#, on: .gray8),
+        .init("Roi.contains rounds", #"""
+            makeRectangle(10, 10, 10, 10);
+            print(Roi.contains(9.6, 9.6), Roi.contains(9.4, 10), Roi.contains(19.4, 10), Roi.contains(19.6, 10));
+            makeOval(5, 5, 20, 20);
+            print(Roi.contains(14.5, 14.5), Roi.contains(5.2, 5.2), Roi.contains(24.6, 15));
+            """#, on: .gray8),
+        .init("getList keys and setOption InvertY", #"""
+            a = getList("Image.Titles");
+            print(a.length, a[0]);
+            m = getList("THRESHOLD.methods");
+            print(m.length, m[0], m[m.length - 1]);
+            setOption("InvertY", true);
+            print(is("InvertY"));
+            x = 3; y = 4;
+            toScaled(x, y);
+            print(x, y);
+            makeRectangle(5, 6, 10, 4);
+            List.setMeasurements;
+            print(List.getValue("Y"), List.getValue("BY"));
+            setOption("InvertY", false);
+            print(is("InvertY"));
+            setOption("Changes", false);
+            print(is("changes"));
+            """#, on: .gray8),
+        .init("call targets Mancora runs", #"""
+            call("ij.IJ.log", "logged by call");
+            call("java.lang.System.gc");
+            call("ij.gui.ImageWindow.setNextLocation", "10", "20");
+            t = call("java.lang.System.currentTimeMillis");
+            print(parseFloat(t) > 1e12, call("ij.IJ.pad", "7", "3"));
+            """#),
+    ]
 }

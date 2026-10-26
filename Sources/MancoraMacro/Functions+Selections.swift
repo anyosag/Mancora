@@ -438,6 +438,15 @@ extension Functions {
 
     // MARK: - The ROI Manager
 
+    /// Whether `roiManager(cmd)` (lowercased, as ImageJ compares it) runs natively.
+    static func isNativeRoiManagerCommand(_ cmd: String) -> Bool {
+        [
+            "open", "save", "rename", "associate", "centered", "usenames", "add", "select", "count", "size", "index",
+            "translate", "reset", "delete", "deselect", "measure", "update", "show all", "show none",
+            "show all with labels", "show all without labels", "sort",
+        ].contains(cmd)
+    }
+
     func roiManager() throws(MacroSignal) -> Double {
         let cmd = try getFirstString().lowercased()
         var path: String?
@@ -539,7 +548,7 @@ extension Functions {
             guard let i = rm.selected.first, let roi = try image().roi else { break }
             rm.entries[i].roi = roi
         case "show all", "show none", "show all with labels", "show all without labels", "usenames", "associate",
-            "centered", "remove slice info", "sort":
+            "centered", "sort":
             if cmd == "sort" { rm.entries.sort { javaCompare($0.name, $1.name) < 0 } }
         default:
             try unsupported("roiManager(\"\(cmd)\")")
@@ -784,8 +793,8 @@ extension Functions {
             try setSelection(nil)
             return nil
         case "contains":
-            let x = try getFirstArg()
-            let y = try getLastArg()
+            let x = Int(Int32(truncatingIfNeeded: javaMathRound(try getFirstArg())))
+            let y = Int(Int32(truncatingIfNeeded: javaMathRound(try getLastArg())))
             guard let roi = try image().roi else { try interp.fail("Selection required") }
             return Variable(Self.roiContains(roi, x, y) ? 1 : 0)
         default:
@@ -794,9 +803,9 @@ extension Functions {
     }
 
     /// `Roi.contains(x, y)` for area selections: whether the pixel is in the mask.
-    static func roiContains(_ roi: Roi, _ x: Double, _ y: Double) -> Bool {
+    static func roiContains(_ roi: Roi, _ x: Int, _ y: Int) -> Bool {
         guard roi.isArea, let mask = try? roi.mask() else { return false }
-        return mask[x: jIntI(x), y: jIntI(y)]
+        return mask[x: x, y: y]
     }
 
     func doRoiManager() throws(MacroSignal) -> Variable? {

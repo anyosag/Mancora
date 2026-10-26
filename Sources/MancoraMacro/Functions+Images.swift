@@ -339,8 +339,18 @@ extension Functions {
         }
     }
 
-    func save(_ path: String) throws(MacroSignal) {
-        try saveImage(path, format: "tiff")
+    /// `IJ.save(path)`: in the format the extension names (TIFF without
+    /// one), keeping the image's title.
+    func save(_ pathIn: String) throws(MacroSignal) {
+        var path = pathIn
+        let current = session.context.current
+        if javaLastIndexOf(path, ".") < 0 && current != nil { path += ".tif" }
+        let dot = javaLastIndexOf(path, ".")
+        if dot < 0 {
+            try interp.fail("The file path passed to IJ.save() method or save()\nmacro function is missing the required extension.\n \n\"" + path + "\"")
+        }
+        try saveImage(path, format: javaSubstring(path, dot + 1))
+        if let title = current?.title { try? modifyImage { $0.image.title = title } }
     }
 
     func saveAs() throws(MacroSignal) {
@@ -354,42 +364,90 @@ extension Functions {
             oneArg = true
         }
         if oneArg && (format.contains(Self.separator) || format.contains("/")) {
-            try saveImage(format, format: "tiff")
+            try save(format)
             return
         }
-        try saveImage(path ?? "", format: format.lowercased())
+        try saveImage(path ?? "", format: format)
+    }
+
+    /// What `IJ.saveAs` makes of a format name: the first of these words it contains.
+    enum SaveFormat: Equatable {
+        case tiff, jpeg, gif, textImage, text, zip, raw, avi, bmp, fits, png, pgm, lut, results, selection
+        case xyCoordinates, unsupported
+
+        init(_ formatIn: String) {
+            let format = javaToLowerCase(formatIn)
+            func has(_ s: String) -> Bool { javaContains(format, s) }
+            let formats: [(Bool, SaveFormat)] = [
+                (has("tif"), .tiff), (has("jpeg") || has("jpg"), .jpeg), (has("gif"), .gif),
+                (has("text image"), .textImage), (has("text") || has("txt"), .text), (has("zip"), .zip),
+                (has("raw"), .raw), (has("avi"), .avi), (has("bmp"), .bmp), (has("fits"), .fits), (has("png"), .png),
+                (has("pgm"), .pgm), (has("lut"), .lut), (has("results") || has("measurements") || has("table"), .results),
+                (has("selection") || has("roi"), .selection), (has("xy") || has("coordinates"), .xyCoordinates),
+            ]
+            self = formats.first { $0.0 }?.1 ?? .unsupported
+        }
+
+        /// Whether Mancora saves this format (an unknown one is ImageJ's error either way).
+        var isNative: Bool { [.tiff, .results, .selection, .unsupported].contains(self) }
+    }
+
+    /// The format `save(path)` uses: the extension's, TIFF without one.
+    static func saveFormat(forPath path: String) -> SaveFormat {
+        let dot = javaLastIndexOf(path, ".")
+        return dot < 0 ? .tiff : SaveFormat(javaSubstring(path, dot + 1))
+    }
+
+    /// `IJ.updateExtension`: replaces a short extension, or adds one.
+    static func updateExtension(_ path: String, _ ext: String) -> String {
+        let dotIndex = javaLastIndexOf(path, ".")
+        let length = path.utf16.count
+        guard dotIndex >= 0 && dotIndex > javaLastIndexOf(path, separator) && length - dotIndex <= 5 else {
+            return path + ext
+        }
+        let next = javaSubstring(path, dotIndex + 1, min(dotIndex + 2, length))
+        if let c = next.unicodeScalars.first, ("0"..."9").contains(c) { return path + ext }
+        return javaSubstring(path, 0, dotIndex) + ext
     }
 
     private func saveImage(_ pathIn: String, format: String) throws(MacroSignal) {
         if pathIn.isEmpty { try unsupported("saveAs with a save dialog") }
         var path = pathIn
-        switch format {
-        case "tiff", "tif":
+        switch SaveFormat(format) {
+        case .tiff:
             let open = try image()
-            if !path.lowercased().hasSuffix(".tif") && !path.lowercased().hasSuffix(".tiff") { path += ".tif" }
+            if !javaEndsWith(path, ".tiff") { path = Self.updateExtension(path, ".tif") }
             do { try TIFFExporter.write(open.image, to: path) } catch { try interp.fail("\(error)") }
             let title = Self.javaFileName(path)
             try modifyImage { $0.image.title = title }
-        case "results", "measurements":
+        case .results:
             if !path.contains(".") { path += ".csv" }
             let text = ResultsFormatter.csv(session.context.results, decimalPlaces: session.context.settings.decimalPlaces)
             do { try Data(text.utf8).write(to: URL(fileURLWithPath: path)) } catch { try interp.fail("\(error)") }
-        case "text":
-            try unsupported("saveAs(\"Text\")")
-        case "selection":
+        case .selection:
             let open = try image()
             guard let roi = open.roi else { try interp.fail("Selection required") }
-            if !path.hasSuffix(".roi") { path += ".roi" }
+            path = Self.updateExtension(path, ".roi")
             do {
                 try Data(RoiCodec.encode(roi)).write(to: URL(fileURLWithPath: path))
             } catch {
                 try interp.fail("\(error)")
             }
-        case "lut":
-            try unsupported("saveAs(\"LUT\")")
+        case .unsupported:
+            try interp.fail("Unsupported save() or saveAs() file format: \"" + javaToLowerCase(format) + "\"\n \n\"" + path + "\"")
         default:
             try unsupported("saveAs(\"\(format)\")")
         }
+    }
+
+    /// The extensions `open(path)` reads natively.
+    static let nativeOpenExtensions: Set<String> = ["tif", "tiff", "roi", "zip"]
+
+    /// A path's extension, lowercased, as ImageJ's `Opener` compares them.
+    static func fileExtension(_ path: String) -> String? {
+        let dot = javaLastIndexOf(path, ".")
+        guard dot >= 0, dot > max(javaLastIndexOf(path, "/"), javaLastIndexOf(path, separator)) else { return nil }
+        return javaToLowerCase(javaSubstring(path, dot + 1))
     }
 
     // MARK: - Stack position
@@ -1394,9 +1452,13 @@ extension Functions {
         case _ where option.hasPrefix("std"): measurement(.standardDeviation)
         case _ where option.hasPrefix("expandablearrays"): expandableArrays = state
         case "scaleconversions": session.context.settings.scaleConversions = state
-        case "changes", "debugmode", "openusingplugins", "queuemacros", "disableundo", "showrowindexes",
-            "antialiasedtext", "savebatchoutput", "waitforcompletion", "interpolatelines", "flipfitsimages",
-            "disablepopupmenu", "inverty":
+        case "inverty":
+            try modifyImage { $0.image.calibration.invertY = state }
+        case "changes", "disablepopupmenu":
+            // The image's unsaved-changes flag and its canvas menu: neither is kept.
+            _ = try image()
+        case "debugmode", "openusingplugins", "queuemacros", "disableundo", "showrowindexes", "antialiasedtext",
+            "savebatchoutput", "waitforcompletion", "interpolatelines", "flipfitsimages":
             break
         case _
         where option.hasPrefix("show") || option.hasPrefix("openashyper") || option.hasPrefix("bicubic")
@@ -1708,15 +1770,15 @@ extension Functions {
     // MARK: - Lists
 
     func getList() throws(MacroSignal) -> VariableArray {
-        let key = try getStringArg()
+        let key = javaToLowerCase(try getStringArg())
         switch key {
         case "image.titles":
             return VariableArray(session.context.images.map { Variable($0.title) })
-        case "window.titles", "window.list":
+        case "window.titles":
             return VariableArray(session.context.tables.keys.sorted().map { Variable($0) })
         case "threshold.methods":
             return VariableArray(AutoThresholder.Method.allCases.map { Variable($0.rawValue) })
-        case "LUTs":
+        case "luts":
             return VariableArray(LUT.builtIn.map { Variable($0.name) })
         case "java.properties":
             return VariableArray(["os.name", "file.separator", "line.separator", "user.home", "user.dir"].map { Variable($0) })

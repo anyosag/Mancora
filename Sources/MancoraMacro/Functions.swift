@@ -136,7 +136,7 @@ final class Functions {
         case MAKE_ELLIPSE: try makeEllipse()
         case TO_SCALED: try toScaled()
         case TO_UNSCALED: try toUnscaled()
-        case SET_JUSTIFICATION, SET_Z_COORDINATE, SET_KEY_DOWN, RESTORE_PREVIOUS_TOOL, SET_RGB_WEIGHTS:
+        case SET_JUSTIFICATION, SET_KEY_DOWN, RESTORE_PREVIOUS_TOOL:
             try skipArgs()
         default:
             try unsupported(type)
@@ -1649,8 +1649,17 @@ final class Functions {
 
     // MARK: - Files and directories
 
+    /// The names `getDirectory` knows (lowercased) that Mancora answers; others are a chooser's title.
+    static let directoryKeys: Set<String> = [
+        "plugins", "macros", "luts", "home", "downloads", "startup", "imagej", "current", "default", "temp", "image",
+        "file", "cwd",
+    ]
+
     private func getDirectory() throws(MacroSignal) -> String {
-        session.directory(try getStringArg()) ?? ""
+        let title = try getStringArg()
+        if Self.directoryKeys.contains(javaToLowerCase(title)) { return session.directory(title) ?? "" }
+        if javaToLowerCase(title) == "preferences" { try unsupported("getDirectory(\"preferences\")") }
+        try unsupported("getDirectory(\"\(title)\") with a folder chooser")
     }
 
     private func doFile() throws(MacroSignal) -> String? {
@@ -1967,8 +1976,18 @@ final class Functions {
             if arg != nil && ["script", "js", "bsh", "python"].contains(name) { try unsupported("eval(\"\(name)\", ...)") }
             return try session.runMacro(code: name, argument: arg)
         }
+        if let ext = Self.fileExtension(name), ["js", "bsh", "py", "groovy", "clj", "rb", "java"].contains(ext) {
+            try unsupported("runMacro(\"\(Self.javaFileName(name))\")")
+        }
         return try session.runMacroFile(name, argument: arg)
     }
+
+    /// The `call()` targets Mancora runs itself; others are ImageJ's (or a plugin's) Java.
+    static let nativeCalls: Set<String> = [
+        "ij.IJ.pad", "java.lang.System.getProperty", "ij.IJ.freeMemory", "ij.IJ.maxMemory", "java.lang.Thread.sleep",
+        "ij.IJ.wait", "ij.Prefs.get", "ij.Prefs.set", "ij.IJ.log", "java.lang.System.currentTimeMillis",
+        "java.lang.System.gc", "ij.gui.ImageWindow.setNextLocation", "ij.gui.ImageWindow.centerNextImage",
+    ]
 
     private func call() throws(MacroSignal) -> String? {
         let fullName = try getFirstString()
@@ -1976,6 +1995,20 @@ final class Functions {
         while interp.nextToken() == ch(",") { args.append(try getNextString()) }
         try interp.getRightParen()
         switch fullName {
+        case "ij.IJ.log":
+            guard args.count == 1 else { break }
+            session.log(args[0])
+            return nil
+        case "java.lang.System.currentTimeMillis":
+            guard args.isEmpty else { break }
+            return String(Int64(currentTimeMillis()))
+        case "java.lang.System.gc":
+            guard args.isEmpty else { break }
+            return nil
+        case "ij.gui.ImageWindow.setNextLocation", "ij.gui.ImageWindow.centerNextImage":
+            // Where the next image window opens: there are no windows.
+            guard args.count == (fullName.hasSuffix("setNextLocation") ? 2 : 0) else { break }
+            return nil
         case "ij.IJ.pad":
             guard args.count == 2 else { break }
             return ImageJFormat.pad(args[0], jIntI(toolsParseDouble(args[1])))
