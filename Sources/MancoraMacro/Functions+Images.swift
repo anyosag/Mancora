@@ -1281,6 +1281,7 @@ extension Functions {
             guard let path = try image().image.properties["Mancora.path"] else { return "" }
             return (Self.javaParent(path) ?? "") + Self.separator
         case "image.subtitle":
+            _ = try image()  // there's no window to give a subtitle in batch mode
             return ""
         default:
             break
@@ -1494,8 +1495,24 @@ extension Functions {
         maximum?.setValue(stats.max)
         std?.setValue(stats.standardDeviation)
         if let hist {
-            let histogram = Self.histogram(open.currentPlane, width: open.image.width, region: region) ?? []
+            var histogram = Self.histogram(open.currentPlane, width: open.image.width, region: region) ?? []
+            if !calibrated, case .gray16(let p) = open.currentPlane, stats.max >= 0, stats.max.isFinite {
+                // getRawStatistics of a 16-bit image: ShortStatistics.histogram16, from 0 to the maximum.
+                histogram = [Int](repeating: 0, count: Int(stats.max) + 1)
+                Self.forEachPixel(width: open.image.width, height: p.count / max(open.image.width, 1), region: region) {
+                    let v = Int(p[$0])
+                    if v < histogram.count { histogram[v] += 1 }
+                }
+            }
             hist.setArray(VariableArray(histogram.map { Variable(Double($0)) }))
+        }
+    }
+
+    /// Calls `body` with the index of each pixel in `region` (or the whole plane).
+    static func forEachPixel(width: Int, height: Int, region: MeasurementRegion?, _ body: (Int) -> Void) {
+        let r = region ?? MeasurementRegion(x: 0, y: 0, width: width, height: height)
+        for y in max(r.y, 0)..<max(max(r.y, 0), min(r.y + r.height, height)) {
+            for x in max(r.x, 0)..<max(max(r.x, 0), min(r.x + r.width, width)) where r.contains(x, y) { body(y * width + x) }
         }
     }
 

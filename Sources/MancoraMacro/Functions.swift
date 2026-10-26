@@ -563,8 +563,9 @@ final class Functions {
         case "asin": return jAsin(arg)
         case "acos": return jAcos(arg)
         case "erf": return ijErf(arg)
-        case "toRadians": return arg / 180.0 * Double.pi
-        case "toDegrees": return arg * 180.0 / Double.pi
+        // Java 9+'s Math.toRadians and toDegrees: one multiplication by a constant.
+        case "toRadians": return arg * 0.017453292519943295
+        case "toDegrees": return arg * 57.29577951308232
         default:
             try interp.error("Unrecognized function name")
             return .nan
@@ -648,7 +649,17 @@ final class Functions {
 
     private func print() throws(MacroSignal) {
         interp.inPrint = true
-        var s = try getFirstString()
+        try interp.getLeftParen()
+        let first = try interp.getString()
+        var s = first ?? "null"
+        if first == nil && interp.nextToken() != ch(",") {
+            // A string function that returns nothing (String.append, runMacro without a
+            // return value): IJ.log(null) prints no line.
+            try interp.getRightParen()
+            if interp.evaluating { interp.evalOutput = nil }
+            interp.inPrint = false
+            return
+        }
         if interp.nextToken() == ch(",") {
             if javaStartsWith(s, "[") && javaEndsWith(s, "]") {
                 try printToWindow(s)
@@ -958,10 +969,7 @@ final class Functions {
             }
         case "getResultsHeadings":
             try interp.getParens()
-            // ResultsTable.getColumnHeadings(): the row number column, Label, then the columns.
-            let rt = session.context.results
-            let label = rt.labels.contains { $0 != nil } ? "Label\t" : ""
-            return " \t" + label + rt.columns.map { $0 + "\t" }.joined()
+            return ResultsFormatter.headings(session.context.results)
         case "copy", "show", "copyResults", "paste", "setFontSize":
             try unsupported("String." + name)
         default:
@@ -1669,8 +1677,9 @@ final class Functions {
         case "open": return try openFile()
         case "openAsString":
             let path = try getStringArg()
+            // IJ.openAsString's error string, which the macro reports as the error.
             guard let data = fm.contents(atPath: path) else {
-                try interp.error("File not found")
+                try interp.error("Error: file not found")
                 return nil
             }
             return String(decoding: data, as: UTF8.self)
@@ -1845,21 +1854,31 @@ final class Functions {
     }
 
     /// `new File(path).getName()`.
-    static func javaFileName(_ path: String) -> String {
+    static func javaFileName(_ pathIn: String) -> String {
+        let path = javaNormalizedPath(pathIn)
         let i = max(javaLastIndexOf(path, "/"), javaLastIndexOf(path, Self.separator))
         return javaSubstring(path, i + 1)
     }
 
     /// `new File(path).getParent()`.
     static func javaParent(_ pathIn: String) -> String? {
-        var path = pathIn
-        while path.utf16.count > 1 && (javaEndsWith(path, "/") || javaEndsWith(path, Self.separator)) {
-            path = javaSubstring(path, 0, path.utf16.count - 1)
-        }
+        let path = javaNormalizedPath(pathIn)
         let i = max(javaLastIndexOf(path, "/"), javaLastIndexOf(path, Self.separator))
         if i < 0 { return nil }
         if i == 0 { return path.utf16.count > 1 ? javaSubstring(path, 0, 1) : nil }
         return javaSubstring(path, 0, i)
+    }
+
+    /// The path a `java.io.File` keeps: separators doubled or at the end removed ("a//b/" is "a/b").
+    static func javaNormalizedPath(_ path: String) -> String {
+        var out: [UInt16] = []
+        let separators: Set<UInt16> = [47, Self.separator.utf16.first!]
+        for c in path.utf16 {
+            if separators.contains(c), let last = out.last, separators.contains(last) { continue }
+            out.append(c)
+        }
+        if out.count > 1, let last = out.last, separators.contains(last) { out.removeLast() }
+        return utf16String(out)
     }
 
     #if os(Windows)

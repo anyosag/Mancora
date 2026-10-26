@@ -1,3 +1,4 @@
+import Foundation
 import MancoraCommands
 import MancoraCore
 import Testing
@@ -65,6 +66,35 @@ struct InterpreterTests {
             #expect(error.message == "Undefined variable")
             #expect(error.lineNumber == 2)
         }
+    }
+
+    /// The macOS app runs macros on a cooperative thread, whose stack is 512 KB:
+    /// recursion must still get as far as in ImageJ, which stops it with
+    /// "Stack overflow" once its variable stack is full.
+    @Test func recursionOnASmallThreadStack() {
+        final class Outcome: @unchecked Sendable {
+            var lines: [String] = []
+            var error: MacroError?
+        }
+        let outcome = Outcome()
+        let finished = DispatchSemaphore(value: 0)
+        let thread = Thread {
+            let session = MacroSession()
+            do throws(MacroError) {
+                try session.run("function depth(n) { if (n == 0) return 0; return 1 + depth(n - 1); }\nprint(depth(600));")
+                try session.run("function f(n) { return f(n + 1); }\nf(0);")
+            } catch {
+                outcome.error = error
+            }
+            outcome.lines = session.logLines
+            finished.signal()
+        }
+        thread.stackSize = 512 << 10
+        thread.start()
+        finished.wait()
+        #expect(outcome.lines == ["600"])
+        #expect(outcome.error?.message == "Stack overflow")
+        #expect(outcome.error?.lineNumber == 1)
     }
 
     @Test func returnValueAndArgument() throws {
