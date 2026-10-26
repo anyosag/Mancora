@@ -295,6 +295,14 @@ enum MacroCorpus {
         .init("a replacement's missing named group", #"""
             print(replace("ab", "(?<n>a)b", "${m}"));
             """#),
+        .init("deep recursion", #"""
+            function depth(n) { if (n == 0) return 0; return 1 + depth(n - 1); }
+            print(depth(600));
+            """#),
+        .init("recursion that fills the variable stack", #"""
+            function f(a, b, c, d) { return f(a, b, c, d); }
+            f(1, 2, 3, 4);
+            """#),
         .init("String.format conversions and flags", #"""
             print(String.format("%#.0f", 3), String.format("%#.0e", 2.5), String.format("%.1f %<.2f", 1.25), String.format("%2$.1f %1$.1f", 1, 2));
             print(String.format("%h|%H|%.1h", 1.5, -1234567.891, NaN), String.format("%a %A %.2a %.0a", 1.5, -0.1, 0.1, -0.1));

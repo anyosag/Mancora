@@ -45,6 +45,8 @@ enum MacroSignal: Error, @unchecked Sendable {
 public final class Interpreter {
     static let STACK_SIZE = 1000
     static let MAX_ARGS = 20
+    /// Nested calls of macro functions, within ``MacroSession/stackSize``.
+    static let MAX_NESTING = 10000
 
     var pc = -1
     var token = 0
@@ -81,6 +83,7 @@ public final class Interpreter {
     var evalOutput: String?
     var callStack = [Int](repeating: 0, count: 10)
     var callDepth = 0
+    var nesting = 0
 
     /// What the macro works on: images, results, the log.
     public let session: MacroSession
@@ -292,6 +295,11 @@ public final class Interpreter {
     }
 
     func runUserFunction() throws(MacroSignal) -> Variable? {
+        // Functions without arguments never fill the variable stack; Java's
+        // own stack stops them in ImageJ.
+        nesting += 1
+        defer { nesting -= 1 }
+        if nesting > Self.MAX_NESTING { try fail("Stack overflow") }
         growCallStack(1)
         let newPC = Int(tokenValue)
         let saveStartOfLocals = startOfLocals
