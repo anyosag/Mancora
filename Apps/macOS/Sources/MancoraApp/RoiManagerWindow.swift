@@ -174,7 +174,7 @@ extension ViewerModel {
             if z > 0 { slice = min(z, d.slices) - 1 }
             if t > 0 { frame = min(t, d.frames) - 1 }
         }
-        self.image?.encodedROI = RoiCodec.encode(roi)
+        storeSelection(roi)
         positionChanged()
     }
 

@@ -298,6 +298,9 @@ struct DisplayInspector: View {
                 if image.pixelType.usesLUT {
                     contrastSection(image)
                 }
+                if model.showsThreshold && image.pixelType != .rgb8 {
+                    ThresholdSection(model: model)
+                }
                 if image.dimensions.channels > 1 {
                     channelsSection(image)
                 }

@@ -5,6 +5,7 @@ import MancoraCommands
 import MancoraCore
 import MancoraIO
 import MancoraMacro
+import MancoraProcess
 import Observation
 import UniformTypeIdentifiers
 
@@ -51,6 +52,16 @@ final class ViewerModel {
     /// The size and position of the selection being drawn, for the status bar.
     var selectionText: String?
     @ObservationIgnored var gesture: SelectionGesture?
+
+    /// The image's threshold (raw values), shown in red; commands use it.
+    var threshold: ThresholdLevels?
+    /// The Threshold section is showing in the inspector.
+    var showsThreshold = false
+    var thresholdMethod = AutoThresholder.Method.default
+    var thresholdDark = false
+    var thresholdStack = false
+    /// The plane's 256-bin histogram over the display range, for the Threshold section.
+    private(set) var histogram: [Int] = []
 
     struct LastCommand: Equatable {
         let name: String
@@ -138,6 +149,7 @@ final class ViewerModel {
         frame = 0
         zoom = .fit
         autoState.reset()
+        threshold = nil
         render()
     }
 
@@ -265,16 +277,19 @@ final class ViewerModel {
                 let id = context.add(other)
                 owners[id] = viewer
                 originals[id] = other
+                let levels = viewer.threshold
+                try? context.withCurrent(name) { (open: inout OpenImage) in open.threshold = levels }
             }
             if let image {
                 let id = context.add(image)
                 owners[id] = self
                 originals[id] = image
-                let (c, z, t) = (channel, slice, frame)
+                let (c, z, t, levels) = (channel, slice, frame, threshold)
                 try? context.withCurrent(name) { (open: inout OpenImage) in
                     open.channel = c
                     open.slice = z
                     open.frame = t
+                    open.threshold = levels
                 }
             }
             isBusy = true
@@ -297,6 +312,7 @@ final class ViewerModel {
                 for open in done.images {
                     if let owner = owners[open.id] {
                         if open.image != originals[open.id] { owner.replace(with: open.image) }
+                        if open.threshold != owner.threshold { owner.setThreshold(open.threshold, render: true) }
                     } else {
                         created.append(open.image)
                     }
@@ -317,7 +333,15 @@ final class ViewerModel {
             ? session.imageViewers.filter { $0 !== self }.compactMap(\.image) : []
         let images = others + (image.map { [$0] } ?? [])
         do {
-            let result = try await bridge.run(name, options: options, images: images)
+            // ImageJ gets the threshold the way a macro sets it.
+            let result: BridgeRunResult
+            if let threshold, image != nil {
+                let code = "setThreshold(\(threshold.lower), \(threshold.upper), \"raw\");\n"
+                    + "run(\"\(MacroRecorder.escape(name))\", \"\(MacroRecorder.escape(options))\");\n"
+                result = try await bridge.runMacro(code, images: images)
+            } else {
+                result = try await bridge.run(name, options: options, images: images)
+            }
             AppRecorder.shared.record(name, options: options)
             return handle(result, inputCount: images.count, hasImage: image != nil)
         } catch {
@@ -401,6 +425,11 @@ final class ViewerModel {
             report = "Returned: \(value)"
         }
         return saveForNewWindows(created)
+    }
+
+    /// Stores `roi` as the image's selection, without undo (ImageJ doesn't undo selections).
+    func storeSelection(_ roi: Roi?) {
+        image?.encodedROI = roi.map(RoiCodec.encode)
     }
 
     func replace(with changed: Hyperstack) {
@@ -589,13 +618,21 @@ final class ViewerModel {
             rendered = nil
             return
         }
-        let (c, z, t) = (channel, slice, frame)
+        let (c, z, t, levels) = (channel, slice, frame, threshold)
+        let range = displayRange
+        let wantsHistogram = showsThreshold && image.pixelType != .rgb8
         renderTask = Task {
-            let pixels = await Task.detached(priority: .userInitiated) {
-                DisplayMapper.render(image, channel: c, slice: z, frame: t)
+            let (pixels, bins) = await Task.detached(priority: .userInitiated) { () -> ([UInt32], [Int]) in
+                var pixels = DisplayMapper.render(image, channel: c, slice: z, frame: t)
+                let plane = image.plane(channel: c, slice: z, frame: t)
+                if let levels, image.dimensions.channels == 1 || image.compositeMode != .composite {
+                    Self.paintThreshold(&pixels, plane: plane, levels: levels)
+                }
+                return (pixels, wantsHistogram ? Self.histogram(plane, range: range) : [])
             }.value
             guard !Task.isCancelled else { return }
             rendered = Self.makeCGImage(pixels, width: image.width, height: image.height)
+            histogram = bins
         }
     }
 

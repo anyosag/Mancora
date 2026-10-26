@@ -131,7 +131,7 @@ enum AppMenuActions {
     /// ImageJ commands that open ImageJ's own windows (Java frames), which
     /// have no place next to Mancora's: these say so instead of opening one.
     static let javaWindows: Set<String> = [
-        "Window/Level...", "Color Balance...", "Threshold...", "Color Threshold...", "Channels Tool...",
+        "Window/Level...", "Color Balance...", "Color Threshold...", "Channels Tool...",
         "Color Picker...", "Line Width...", "Text Window", "Text Window...", "Control Panel...", "Monitor Memory...",
         "Startup Macros...", "Edit...", "Macro", "Macro Tool", "JavaScript", "BeanShell", "Python", "Plugin", "Plugin Filter",
         "Plugin Frame", "Plugin Tool", "Text File... ", "Table...", "Main Window [return]", "Put Behind [tab]",
@@ -181,6 +181,9 @@ enum AppMenuActions {
             viewer?.showsCommandFinder = true
         case "Brightness/Contrast...", "Show Info...":
             viewer?.showsInspector = true
+        case "Threshold...":
+            viewer?.showsInspector = true
+            viewer?.showsThreshold = true
         case "Update...":
             openWindow(id: "update-sites")
         case "ROI Manager...":

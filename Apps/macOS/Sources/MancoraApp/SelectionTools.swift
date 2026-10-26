@@ -73,7 +73,7 @@ extension ViewerModel {
     /// Sets the selection (no undo, as in ImageJ) and records it.
     func setSelection(_ roi: Roi?) {
         guard image != nil else { return }
-        image?.encodedROI = roi.map(RoiCodec.encode)
+        storeSelection(roi)
         AppRecorder.shared.recordSelection(roi)
     }
 
@@ -196,7 +196,7 @@ extension ViewerModel {
             (open.channel, open.slice, open.frame) = (c, z, t)
         }
         guard let roi = context.current?.wandSelection(x: Int(p.x), y: Int(p.y)) else { return }
-        self.image?.encodedROI = RoiCodec.encode(roi)
+        storeSelection(roi)
         AppRecorder.shared.recordLine("doWand(\(p.x), \(p.y));")
     }
 
