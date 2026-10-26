@@ -16,12 +16,14 @@
 // Methods:
 //   hello                                 -> {imagej, java, pluginsDir}
 //   commands                              -> {commands: [{name, className}]}
-//   run {command, options, inputs[], outputDir}
+//   run {command, options, inputs[], titles[], outputDir}
 //                                         -> {outputs[], log, results}
-//   macro {code, inputs[], outputDir}     -> {outputs[], log, results, value}
+//   macro {code, inputs[], titles[], outputDir}
+//                                         -> {outputs[], log, results, value}
 //   shutdown                              -> {} (then exits)
 //
-// "inputs" are TIFF paths opened in order (the last is the active image);
+// "inputs" are TIFF paths opened in order (the last is the active image),
+// each given its title from "titles" (a file name can't hold every title);
 // every image open afterwards that wasn't an input, plus inputs a command
 // changed, is saved as TIFF into outputDir and listed in "outputs".
 
@@ -194,12 +196,15 @@ public class MancoraBridgeHelper {
         ij.plugin.filter.Analyzer.resetCounter();
         List<String> inputs = new ArrayList<>();
         if (params.get("inputs") != null) for (Object o : Json.array(params.get("inputs"))) inputs.add((String) o);
+        List<Object> titles = params.get("titles") == null ? new ArrayList<>() : Json.array(params.get("titles"));
         File outputDir = new File((String) params.get("outputDir"));
         Map<Integer, String> inputIDs = new LinkedHashMap<>();
         Map<Integer, Long> inputStamps = new HashMap<>();
-        for (String path : inputs) {
+        for (int k = 0; k < inputs.size(); k++) {
+            String path = inputs.get(k);
             ImagePlus imp = IJ.openImage(path);
             if (imp == null) throw new IOException("ImageJ could not open " + path);
+            if (k < titles.size() && titles.get(k) instanceof String) imp.setTitle((String) titles.get(k));
             Interpreter.addBatchModeImage(imp);
             WindowManager.setTempCurrentImage(imp);
             inputIDs.put(imp.getID(), path);

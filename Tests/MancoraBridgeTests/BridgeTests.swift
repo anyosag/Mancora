@@ -263,6 +263,22 @@ struct BridgeIntegrationTests {
         await bridge.stop()
     }
 
+    /// Titles reach ImageJ, and come back, as they are, including ones no
+    /// file name can hold.
+    @Test func titlesNoFileNameCanHold() async throws {
+        let bridge = try BridgeFixtures.bridge()
+        for title in ["cells: a/b?", "..", String(repeating: "長", count: 100) + ".tif"] {
+            var image = fixture
+            image.title = title
+            let result = try await bridge.runMacro("print(\"title=\" + getTitle()); run(\"Invert\", \"stack\");", images: [image])
+            #expect(result.log.contains("title=" + title), "\(result.log)")
+            let output = try #require(result.images.first)
+            #expect(output.title == title)
+            #expect(output.replacesInput == 0)
+        }
+        await bridge.stop()
+    }
+
     /// Dialogs nobody can answer don't hang the helper: ImageJ's errors come
     /// back as errors, and "Process all slices?" is answered No.
     @Test(.enabled(if: hasDisplay)) func dialogsAreAnswered() async throws {

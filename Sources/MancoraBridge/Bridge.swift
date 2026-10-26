@@ -116,15 +116,15 @@ public actor Bridge {
     /// Runs an ImageJ command with an options string (as recorded by
     /// ImageJ's macro recorder) on `images`, the last one being active.
     public func run(_ command: String, options: String = "", images: [Hyperstack] = []) async throws -> BridgeRunResult {
-        try await withImages(images, method: "run") { inputs, outputDir in
-            RunParams(command: command, options: options, inputs: inputs, outputDir: outputDir)
+        try await withImages(images, method: "run") { inputs, titles, outputDir in
+            RunParams(command: command, options: options, inputs: inputs, titles: titles, outputDir: outputDir)
         }
     }
 
     /// Runs ImageJ macro code with `images` open, the last one active.
     public func runMacro(_ code: String, argument: String = "", images: [Hyperstack] = []) async throws -> BridgeRunResult {
-        try await withImages(images, method: "macro") { inputs, outputDir in
-            MacroParams(code: code, argument: argument, inputs: inputs, outputDir: outputDir)
+        try await withImages(images, method: "macro") { inputs, titles, outputDir in
+            MacroParams(code: code, argument: argument, inputs: inputs, titles: titles, outputDir: outputDir)
         }
     }
 
@@ -133,7 +133,7 @@ public actor Bridge {
     /// value names the reader: "ImageJ" or "Bio-Formats".
     public func open(_ path: String) async throws -> BridgeRunResult {
         let absolute = URL(fileURLWithPath: path).standardizedFileURL.path
-        return try await withImages([], method: "open") { _, outputDir in OpenParams(path: absolute, outputDir: outputDir) }
+        return try await withImages([], method: "open") { _, _, outputDir in OpenParams(path: absolute, outputDir: outputDir) }
     }
 
     /// Asks the helper to exit, and stops it if it doesn't.
@@ -175,7 +175,7 @@ public actor Bridge {
     private struct EmptyResult: Decodable {}
 
     private func withImages<P: Encodable>(
-        _ images: [Hyperstack], method: String, params: (_ inputs: [String], _ outputDir: String) -> P
+        _ images: [Hyperstack], method: String, params: (_ inputs: [String], _ titles: [String], _ outputDir: String) -> P
     ) async throws -> BridgeRunResult {
         let request = workRoot.appendingPathComponent("request-\(nextID)")
         let outputs = request.appendingPathComponent("out")
@@ -183,14 +183,15 @@ public actor Bridge {
         defer { try? FileManager.default.removeItem(at: request) }
         var inputs: [String] = []
         for (k, image) in images.enumerated() {
-            // ImageJ titles images after their file, so keep each image's title.
+            // Named after its title as far as a file name can be (ImageJ keeps the
+            // file name too); the helper gives the image its title as it is.
             let folder = request.appendingPathComponent("input-\(k)")
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let path = folder.appendingPathComponent(Self.fileName(for: image.title)).path
             try TIFFExporter.write(image, to: path)
             inputs.append(path)
         }
-        let result = try await call(method, params(inputs, outputs.path), as: RunResult.self, retry: true)
+        let result = try await call(method, params(inputs, images.map(\.title), outputs.path), as: RunResult.self, retry: true)
         var produced: [BridgeImage] = []
         for output in result.outputs {
             var image = try TIFFImporter.read(path: output.path)
@@ -376,10 +377,14 @@ public actor Bridge {
         return folder
     }
 
-    /// A file name that keeps `title` as ImageJ will show it.
+    /// A file name like `title`, valid on every platform: separators and
+    /// other reserved characters become `_`, and a name that is empty, `.`,
+    /// `..` or longer than file systems allow becomes `Untitled.tif`.
     static func fileName(for title: String) -> String {
-        let cleaned = String(title.map { "/\\:*?\"<>|".contains($0) || $0.isNewline ? "_" : $0 })
-        return cleaned.trimmingCharacters(in: .whitespaces).isEmpty ? "Untitled.tif" : cleaned
+        let cleaned = String(title.map { "/\\:*?\"<>|\0".contains($0) || $0.isNewline ? "_" : $0 })
+        let trimmed = cleaned.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, trimmed != ".", trimmed != "..", cleaned.utf8.count <= 255 else { return "Untitled.tif" }
+        return cleaned
     }
 
     /// Whether the locale `environment` selects for character types (`LC_ALL`,

@@ -97,6 +97,8 @@ struct RunParams: Encodable {
     let command: String
     let options: String
     let inputs: [String]
+    /// Each input's title, which its file name may not hold.
+    let titles: [String]
     let outputDir: String
 }
 
@@ -104,6 +106,7 @@ struct MacroParams: Encodable {
     let code: String
     let argument: String
     let inputs: [String]
+    let titles: [String]
     let outputDir: String
 }
 
