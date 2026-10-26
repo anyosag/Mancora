@@ -31,17 +31,21 @@ jobs:
           swift run mancora lut Resources/LUTs/mpl-viridis.lut
 
   imagej-parity:
-    name: ImageJ reopens Mancora's TIFFs
+    name: ImageJ reopens Mancora's TIFFs · Java bridge
     runs-on: ubuntu-24.04
     container: swift:6.2-noble
     steps:
       - uses: actions/checkout@v4
-      - name: Install a JDK
-        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends openjdk-21-jdk-headless curl > /dev/null
-      - name: Build mancora
-        run: swift build --product mancora
+      - name: Install a JDK and Xvfb
+        # The full JDK brings AWT's native libraries; ImageJ needs them (and a
+        # display, which Xvfb provides) to build its dialogs.
+        run: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends openjdk-21-jdk xvfb xauth curl > /dev/null
+      - name: Build
+        run: swift build --build-tests
       - name: Save with Mancora, reopen with ImageJ 1.54p
         run: Tools/parity/tiff-reopen.sh "$(swift build --show-bin-path)/mancora"
+      - name: Java bridge integration tests
+        run: MANCORA_TEST_IJ_JAR="$GITHUB_WORKSPACE/Tools/fixtures/.cache/ij-1.54p.jar" swift test --skip-build --filter MancoraBridgeTests
 
   windows:
     name: Windows · Swift 6.2

@@ -21,6 +21,7 @@ mkdir -p "$stage"
 cp "$bin/mancora" "$stage/"
 strip "$stage/mancora" 2>/dev/null || true
 cp -R "$root/Resources/LUTs" "$stage/LUTs"
+cp -R "$root/Resources/Bridge" "$stage/Bridge"
 cp "$root/LICENSE.txt" "$root/THIRD_PARTY_NOTICES.md" "$stage/"
 
 "$stage/mancora" --version
