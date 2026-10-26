@@ -324,7 +324,9 @@ public enum KnownSites {
     public static let all: [Site] = [
         Site(name: "ImageJ", url: "https://update.imagej.net/", description: "ImageJ2 and its libraries."),
         Site(name: "Fiji", url: "https://update.fiji.sc/", description: "Fiji's plugins and libraries, Bio-Formats included."),
-        Site(name: "Java-8", url: "https://sites.imagej.net/Java-8/", description: "Libraries Fiji needed on Java 8."),
+        Site(
+            name: "Java-8", url: "https://sites.imagej.net/Java-8/",
+            description: "Current versions of Fiji's libraries, Bio-Formats among them; enable it with Fiji."),
         Site(name: "IJPB-plugins", url: "https://sites.imagej.net/IJPB-plugins/", description: "MorphoLibJ and other INRAE plugins."),
         Site(name: "BAR", url: "https://sites.imagej.net/Tiago/", description: "Broadly Applicable Routines."),
         Site(name: "BioVoxxel", url: "https://sites.imagej.net/BioVoxxel/", description: "BioVoxxel Toolbox."),

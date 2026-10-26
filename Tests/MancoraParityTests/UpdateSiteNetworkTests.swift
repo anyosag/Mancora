@@ -92,9 +92,12 @@ struct UpdateSiteNetworkTests {
     @Test(.enabled(if: Parity.available)) func bioFormatsFromFijisSitesOpensFilesInTheBridge() async throws {
         let home = try Self.home()
         defer { try? FileManager.default.removeItem(at: home.root) }
+        // The sites a standard Fiji has: Java-8 holds the current Bio-Formats
+        // (the Fiji site's own copy stopped at 5.1.10 in 2016) and shadows Fiji's.
         let manager = try PluginManager(root: home.root)
         try manager.setActive("ImageJ", true)
         try manager.addSite(name: "Fiji", url: nil)
+        try manager.addSite(name: "Java-8", url: nil)
         try await manager.refresh(client: client)
         // Only Bio-Formats' ImageJ plugin (the current record, wherever the sites keep it), and what it needs.
         let candidates = manager.files.files.filter { $0.unversionedFilename.hasSuffix("/bio-formats_plugins.jar") }
