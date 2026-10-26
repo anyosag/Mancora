@@ -30,7 +30,7 @@ let package = Package(
     targets: [
         .target(
             name: "MancoraBridge",
-            dependencies: ["MancoraCore", "MancoraIO", "MancoraPlugins", "MancoraSupport", "MancoraUpdate"],
+            dependencies: ["MancoraCore", "MancoraFiji", "MancoraIO", "MancoraPlugins", "MancoraSupport", "MancoraUpdate"],
             swiftSettings: strictness
         ),
         .target(name: "MancoraCommands", dependencies: ["MancoraCore", "MancoraIO", "MancoraProcess"], swiftSettings: strictness),
@@ -58,7 +58,7 @@ let package = Package(
         ),
         .testTarget(
             name: "MancoraBridgeTests",
-            dependencies: ["MancoraBridge", "MancoraCore", "MancoraIO", "MancoraPlugins", "MancoraUpdate"],
+            dependencies: ["MancoraBridge", "MancoraCore", "MancoraFiji", "MancoraIO", "MancoraPlugins", "MancoraUpdate"],
             swiftSettings: strictness
         ),
         .testTarget(
