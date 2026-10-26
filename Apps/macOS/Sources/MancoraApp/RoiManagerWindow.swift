@@ -213,6 +213,80 @@ extension ViewerModel {
     }
 }
 
+// MARK: Window
+
+extension Roi {
+    /// The SF Symbol for the ROI's type in the ROI Manager's list.
+    var roiManagerSymbol: String {
+        switch shape {
+        case .rectangle:
+            return "rectangle"
+        case .oval:
+            return "oval"
+        case .polygon(let polygon):
+            switch polygon.kind {
+            case .polygon: return "pentagon"
+            case .freehand: return "hand.draw"
+            case .traced: return "wand.and.rays"
+            case .polyline: return "waveform.path"
+            case .freeline: return "scribble"
+            case .angle: return "angle"
+            }
+        case .line(let line):
+            return line.arrow == nil ? "line.diagonal" : "line.diagonal.arrow"
+        case .points:
+            return "smallcircle.filled.circle"
+        case .opaque(let opaque):
+            switch opaque.kind {
+            case .composite: return "square.on.circle"
+            case .text: return "textformat"
+            case .image: return "photo"
+            }
+        }
+    }
+
+    /// The plane a ROI is tied to, as the list says it, or `nil` for a ROI on every plane.
+    var roiManagerPosition: String? {
+        switch position {
+        case .none:
+            return nil
+        case .stack(let n):
+            return "Slice \(n)"
+        case .hyperstack(let c, let z, let t):
+            var parts: [String] = []
+            if c > 0 { parts.append("C\(c)") }
+            if z > 0 { parts.append("Z\(z)") }
+            if t > 0 { parts.append("T\(t)") }
+            return parts.isEmpty ? nil : parts.joined(separator: " ")
+        }
+    }
+}
+
+/// One row of the ROI Manager's list: the ROI's type, its name, and the plane it belongs to.
+private struct RoiRow: View {
+    let entry: RoiManagerList.Entry
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: entry.roi.roiManagerSymbol)
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            Text(entry.name)
+                .monospacedDigit()
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            if let position = entry.roi.roiManagerPosition {
+                Text(position)
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// The ROI Manager: a list of the selections, with + and − and an actions menu under it,
+/// and Show All in the toolbar.
 struct RoiManagerView: View {
     @Bindable var session: AppSession
     @State private var message: String?
@@ -222,71 +296,129 @@ struct RoiManagerView: View {
     private var viewer: ViewerModel? { session.currentViewer }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            List(
-                selection: Binding(
-                    get: { Set(session.roiManager.selected) },
-                    set: { session.selectInManager($0.sorted(), viewer: viewer) })
-            ) {
-                ForEach(Array(session.roiManager.entries.enumerated()), id: \.offset) { i, entry in
-                    Text(entry.name).font(.callout.monospacedDigit()).tag(i)
-                }
-            }
-            .frame(minWidth: 180)
-            VStack(alignment: .leading, spacing: 6) {
-                Button("Add [t]") { attempt { () throws(AppSession.ManagerError) in try session.addToManager(from: viewer) } }
-                Button("Update") { attempt { () throws(AppSession.ManagerError) in try session.updateManager(from: viewer) } }
-                Button("Delete") { session.deleteFromManager() }
-                Button("Rename…") {
-                    guard let i = session.roiManager.selected.first, session.roiManager.selected.count == 1 else {
-                        message = "Exactly one item in the list must be selected."
-                        return
-                    }
-                    newName = session.roiManager.entries[i].name
-                    renaming = true
-                }
-                Button("Measure") { attempt { () throws(AppSession.ManagerError) in try session.measureManager(on: viewer) } }
-                Button("Deselect") {
-                    session.roiManager.selected = []
-                    AppRecorder.shared.recordLine("roiManager(\"Deselect\");")
-                }
-                Divider()
-                Button("Open…") { open() }
-                Button("Save…") { save() }
-                Divider()
-                Toggle("Show All", isOn: $session.showsAllRois)
-                    .onChange(of: session.showsAllRois) {
-                        AppRecorder.shared.recordLine("roiManager(\"Show \(session.showsAllRois ? "All" : "None")\");")
-                    }
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .frame(width: 110, alignment: .leading)
+        VStack(spacing: 0) {
+            roiList
+            Divider()
+            bottomBar
         }
-        .padding(12)
-        .frame(minWidth: 320, minHeight: 300)
+        .frame(minWidth: 300, minHeight: 260)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Toggle(isOn: $session.showsAllRois) {
+                    Label("Show All", systemImage: "eye").labelStyle(.titleAndIcon)
+                }
+                .toggleStyle(.button)
+                .help("Show All: draw every ROI in the list on the image")
+            }
+        }
+        .onChange(of: session.showsAllRois) {
+            AppRecorder.shared.recordLine("roiManager(\"Show \(session.showsAllRois ? "All" : "None")\");")
+        }
         .alert("ROI Manager", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(message ?? "")
         }
         .sheet(isPresented: $renaming) {
-            Form {
-                TextField("Rename as:", text: $newName)
-                HStack {
-                    Spacer()
-                    Button("Cancel") { renaming = false }
-                    Button("OK") {
-                        attempt { () throws(AppSession.ManagerError) in try session.renameInManager(newName) }
-                        renaming = false
-                    }
-                    .keyboardShortcut(.defaultAction)
-                }
-            }
-            .padding(16)
-            .frame(width: 320)
+            RoiRenameSheet(name: $newName, cancel: { renaming = false }, commit: commitRename)
         }
     }
+
+    // MARK: List
+
+    private var roiList: some View {
+        List(
+            selection: Binding(
+                get: { Set(session.roiManager.selected) },
+                set: { session.selectInManager($0.sorted(), viewer: viewer) })
+        ) {
+            ForEach(Array(session.roiManager.entries.enumerated()), id: \.offset) { i, entry in
+                RoiRow(entry: entry).tag(i)
+            }
+        }
+        .listStyle(.inset(alternatesRowBackgrounds: true))
+        // A double click on a row renames it.
+        .contextMenu(forSelectionType: Int.self, menu: { _ in EmptyView() }, primaryAction: { items in renameRow(items) })
+        .overlay {
+            if session.roiManager.entries.isEmpty {
+                ContentUnavailableView(
+                    "No ROIs", systemImage: "square.dashed",
+                    description: Text("Make a selection on an image, then click + to add it."))
+            }
+        }
+    }
+
+    private func renameRow(_ items: Set<Int>) {
+        guard items.count == 1, let i = items.first, session.roiManager.entries.indices.contains(i) else { return }
+        // The first click of the double click has selected the row; rename acts on the selection.
+        if session.roiManager.selected != [i] { session.roiManager.selected = [i] }
+        beginRename()
+    }
+
+    // MARK: Bottom bar
+
+    /// + and − and the other actions, in the style of the lists in System Settings.
+    private var bottomBar: some View {
+        HStack(spacing: 2) {
+            Button {
+                attempt { () throws(AppSession.ManagerError) in try session.addToManager(from: viewer) }
+            } label: {
+                Label("Add [t]", systemImage: "plus")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 26, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .help("Add the image's selection to the list [t]")
+            Button {
+                session.deleteFromManager()
+            } label: {
+                Label("Delete", systemImage: "minus")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 26, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .help("Delete the selected ROIs, or all of them if none is selected")
+            Menu {
+                Button("Update", systemImage: "arrow.triangle.2.circlepath") {
+                    attempt { () throws(AppSession.ManagerError) in try session.updateManager(from: viewer) }
+                }
+                Button("Rename…", systemImage: "pencil") { beginRename() }
+                Button("Measure", systemImage: "ruler") {
+                    attempt { () throws(AppSession.ManagerError) in try session.measureManager(on: viewer) }
+                }
+                Button("Deselect", systemImage: "xmark.circle") { deselect() }
+                Divider()
+                Button("Open…", systemImage: "folder") { open() }
+                Button("Save…", systemImage: "square.and.arrow.down") { save() }
+            } label: {
+                Label("More Actions", systemImage: "ellipsis.circle")
+                    .labelStyle(.iconOnly)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Update, Rename, Measure, Deselect, Open and Save")
+            Spacer()
+            Text(summary)
+                .font(.caption)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(.bar)
+    }
+
+    private var summary: String {
+        let total = session.roiManager.count
+        let selected = session.roiManager.selected.count
+        if total == 0 { return "" }
+        if selected > 0 { return "\(selected) of \(total) selected" }
+        return total == 1 ? "1 ROI" : "\(total) ROIs"
+    }
+
+    // MARK: Actions
 
     private func attempt(_ action: () throws(AppSession.ManagerError) -> Void) {
         do throws(AppSession.ManagerError) {
@@ -294,6 +426,27 @@ struct RoiManagerView: View {
         } catch {
             message = error.text
         }
+    }
+
+    private func deselect() {
+        session.roiManager.selected = []
+        AppRecorder.shared.recordLine("roiManager(\"Deselect\");")
+    }
+
+    private func beginRename() {
+        guard let i = session.roiManager.selected.first, session.roiManager.selected.count == 1,
+            session.roiManager.entries.indices.contains(i)
+        else {
+            message = "Exactly one item in the list must be selected."
+            return
+        }
+        newName = session.roiManager.entries[i].name
+        renaming = true
+    }
+
+    private func commitRename() {
+        attempt { () throws(AppSession.ManagerError) in try session.renameInManager(newName) }
+        renaming = false
     }
 
     private func open() {
@@ -310,5 +463,34 @@ struct RoiManagerView: View {
         panel.nameFieldStringValue = one ? "\(session.roiManager.entries[session.roiManager.selected[0]].name).roi" : "RoiSet.zip"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         attempt { () throws(AppSession.ManagerError) in try session.saveManager(to: url) }
+    }
+}
+
+/// Rename…: the new name for the selected ROI.
+private struct RoiRenameSheet: View {
+    @Binding var name: String
+    let cancel: () -> Void
+    let commit: () -> Void
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Rename as:")
+                .font(.headline)
+            TextField("Name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .focused($isFocused)
+                .onSubmit(commit)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel, action: cancel)
+                    .keyboardShortcut(.cancelAction)
+                Button("Rename", action: commit)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 320)
+        .onAppear { isFocused = true }
     }
 }
