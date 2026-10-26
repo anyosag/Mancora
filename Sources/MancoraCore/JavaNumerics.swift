@@ -16,6 +16,28 @@ package enum JavaNumerics {
         int32(Double(value))
     }
 
+    /// Java's `Math.round(double)`: the nearest `long`, with ties rounding
+    /// up (`-2.5` gives `-2`). NaN gives 0; out-of-range values saturate.
+    ///
+    /// Like Java 7 and later, this is the exact `floor(value + 0.5)`, so
+    /// `0.49999999999999994` rounds to 0 rather than 1.
+    package static func round(_ value: Double) -> Int64 {
+        if value.isNaN { return 0 }
+        let floor = value.rounded(.down)
+        // value - floor is exact except for values in (-0.5, 0), where it
+        // lies in (0.5, 1) and rounding can't take it below 0.5.
+        let rounded = value - floor >= 0.5 ? floor + 1 : floor
+        if rounded >= 0x1p63 { return .max }
+        if rounded < -0x1p63 { return .min }
+        return Int64(rounded)
+    }
+
+    /// Java's `(int)Math.round(double)`: the `long` result narrowed to its
+    /// low 32 bits.
+    package static func roundToInt32(_ value: Double) -> Int32 {
+        Int32(truncatingIfNeeded: round(value))
+    }
+
     /// Java `(byte)` of a `double`, reinterpreted as unsigned.
     package static func byte(_ value: Double) -> UInt8 {
         UInt8(truncatingIfNeeded: int32(value))
