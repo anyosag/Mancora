@@ -302,3 +302,55 @@ enum AutoThresholderMethods {
         "Moments", "Otsu", "Percentile", "RenyiEntropy", "Shanbhag", "Triangle", "Yen",
     ]
 }
+
+/// Analyze ▸ Analyze Particles.
+@Suite("ImageJ parity: particles", .enabled(if: Parity.available, "needs MANCORA_TEST_IJ_JAR, a JDK and a display or Xvfb"))
+struct ParticleParityTests {
+    typealias Step = ParityCase.Step
+    static let everything = MeasurementParityTests.everything
+
+    static func particles(
+        _ options: String, on input: ParityInput, measure: String = "area mean min redirect=None decimal=3",
+        before: [Step] = []
+    ) -> ParityCase {
+        ParityCase(
+            steps: before + [Step(command: "Set Measurements...", options: measure),
+                             Step(command: "Analyze Particles...", options: options)],
+            inputs: [input], tolerance: 1e-9, results: true)
+    }
+
+    @Test func binaryImages() async throws {
+        try await Parity.check([
+            Self.particles("display clear", on: .binary),
+            Self.particles("display clear", on: .binary, measure: Self.everything),
+            Self.particles("size=20-Infinity display clear exclude", on: .binary, measure: Self.everything),
+            Self.particles("size=0-15 display clear include", on: .binary),
+            Self.particles("circularity=0.50-1.00 display clear", on: .binary, measure: Self.everything),
+            Self.particles("display clear four", on: .binary, measure: Self.everything),
+            Self.particles("display clear record", on: .binary),
+            Self.particles("show=Masks display clear", on: .binary),
+            Self.particles("display clear stack", on: .binaryStack, measure: Self.everything),
+            Self.particles("show=Masks display clear stack", on: .binaryStack),
+            Self.particles("display clear summarize", on: .binary),
+        ])
+    }
+
+    @Test func thresholdedImages() async throws {
+        let mask = Step(command: "Convert to Mask", options: "")
+        try await Parity.check([
+            Self.particles("display clear", on: .gray8, measure: Self.everything, before: [mask]),
+            Self.particles("display clear include", on: .gray16, measure: Self.everything, before: [mask]),
+            Self.particles("size=0.5-Infinity display clear", on: .freehandROI, measure: Self.everything, before: [mask]),
+            Self.particles("size=10-Infinity pixel display clear exclude", on: .namedROI, before: [mask]),
+        ])
+    }
+
+    @Test func withinSelections() async throws {
+        try await Parity.check([
+            Self.particles("display clear", on: .binaryRectangleROI, measure: Self.everything),
+            Self.particles("display clear exclude", on: .binaryRectangleROI),
+            Self.particles("display clear", on: .binaryOvalROI, measure: Self.everything),
+            Self.particles("display clear include summarize", on: .binaryOvalROI),
+        ])
+    }
+}

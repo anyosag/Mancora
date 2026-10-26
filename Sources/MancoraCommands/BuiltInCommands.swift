@@ -5,7 +5,7 @@ import MancoraProcess
 enum BuiltInCommands {
     static var all: [CommandDefinition] {
         lutCommands + [invertLUT, enhanceContrast, rename, close, closeAll, duplicate, properties, setScale]
-            + [setMeasurements, measure, clearResults] + FilterCommands.all + ProcessCommands.all + ThresholdCommands.all
+            + [setMeasurements, measure, clearResults, analyzeParticles] + FilterCommands.all + ProcessCommands.all + ThresholdCommands.all
     }
 
     // MARK: Image ▸ Lookup Tables
@@ -338,6 +338,100 @@ enum BuiltInCommands {
                 options: context.settings.measurements, threshold: threshold, into: &context.results)
         } catch {
             throw CommandError.notNative("Measure")
+        }
+    }
+
+    /// `ParticleAnalyzer` from a macro: `size=` (calibrated unless `pixel`),
+    /// `circularity=`, `show=Nothing` or `Masks`, and `display`, `exclude`,
+    /// `clear`, `include`, `summarize`, `record`, `four` and `stack`.
+    static let analyzeParticles = CommandDefinition("Analyze Particles...", menu: "Analyze") { context, options in
+        let name = "Analyze Particles..."
+        guard let open = context.current else { throw CommandError.noImage(name) }
+        let text = options.text
+        if ["overlay", "add", "composite", "in_situ"].contains(where: { options.flag(forLabel: $0) || text.contains($0 + " ") }) {
+            throw CommandError.notNative(name)  // overlays, the ROI Manager, composite ROIs, in situ: ImageJ
+        }
+        let show = options.value(forLabel: "Show:") ?? "Nothing"
+        guard show == "Nothing" || show == "Masks" else { throw CommandError.notNative(name) }
+        let cal = open.image.calibration
+        let scaled = cal.unit != "pixel" && cal.unit != "pixels" && cal.unit != ""
+        let unitSquared = scaled && !options.flag(forLabel: "Pixel units") ? cal.pixelWidth * cal.pixelHeight : 1
+        func range(_ label: String) -> (Double?, Double?) {
+            let parts = (options.value(forLabel: label) ?? "").split(whereSeparator: { $0 == " " || $0 == "-" })
+            let low = parts.first.flatMap { Double(String($0)) }
+            let high = parts.count == 2 ? Double(String(parts[1])) : nil
+            return (low, high)
+        }
+        var particleOptions = ParticleAnalyzer.Options()
+        let (minSize, maxSize) = range("Size")
+        particleOptions.minSize = max(minSize.map { $0 / unitSquared } ?? 0, 0)
+        particleOptions.maxSize = maxSize.map { $0 / unitSquared } ?? .infinity
+        if particleOptions.maxSize < particleOptions.minSize { particleOptions.maxSize = .infinity }
+        let (minCirc, maxCirc) = range("Circularity:")
+        var low = minCirc ?? 0, high = maxCirc ?? 1
+        if low < 0 { low = 0 }
+        if low > high && high == 1 { low = 0 }
+        if low > high { low = high }
+        if high < low { high = low }
+        if low == 1 && high == 1 { low = 0 }
+        (particleOptions.minCircularity, particleOptions.maxCircularity) = (low, high)
+        particleOptions.excludeEdges = options.flag(forLabel: "Exclude on edges")
+        particleOptions.fourConnected = text.contains("four")
+        particleOptions.includeHoles = options.flag(forLabel: "Include holes") || particleOptions.fourConnected
+        particleOptions.recordStarts = options.flag(forLabel: "Record starts") || text.contains("record")
+        particleOptions.masks = show == "Masks"
+        particleOptions.blackBackground = context.settings.blackBackground
+        let summarize = options.flag(forLabel: "Summarize")
+        if summarize { context.settings.measurements.insert(.area) }
+        var measurements = context.settings.measurements
+        measurements.remove(.limitToThreshold)
+
+        if options.flag(forLabel: "Clear results") { context.results.reset() }
+        let threshold = open.threshold.flatMap { $0.lower <= $0.upper ? $0.lower...$0.upper : nil }
+        let dims = open.image.dimensions
+        var masks: [Plane] = []
+        for index in FilterCommands.targetPlanes(open, options) {
+            let (c, z, t) = (index % dims.channels, (index / dims.channels) % dims.slices, index / (dims.channels * dims.slices))
+            let result: ParticleAnalyzer.Result
+            do {
+                result = try ParticleAnalyzer.analyze(
+                    open.image, channel: c, slice: z, frame: t, roi: open.roi, threshold: threshold,
+                    measurements: measurements, options: particleOptions, into: &context.results)
+            } catch ParticleAnalyzer.Failure.noThreshold {
+                throw CommandError.failed(
+                    command: name,
+                    detail: "A threshold has not been set using the Image->Adjust->Threshold tool or the setThreshold(min,max) macro function.")
+            } catch {
+                throw CommandError.notNative(name)
+            }
+            if let mask = result.mask { masks.append(mask) }
+            if summarize {
+                let label: String
+                if open.image.stack.count > 1 {
+                    let short = Analyzer.shortSliceLabel(open.image.stack.labels[index]) ?? ""
+                    label = short.isEmpty ? String(index + 1) : short
+                } else {
+                    label = open.title
+                }
+                let title = open.image.stack.count == 1 ? "Summary" : "Summary of " + open.title
+                var summary = context.tables[title] ?? ResultsTable()
+                ParticleAnalyzer.summarize(
+                    label: label, count: result.count, totalArea: result.totalArea, measurements: measurements,
+                    results: context.results, into: &summary)
+                context.tables[title] = summary
+            }
+        }
+        if particleOptions.masks, !masks.isEmpty {
+            do {
+                let stack = try ImageStack(width: open.image.width, height: open.image.height, planes: masks)
+                let lut: LUT = LUT.grays.inverted()
+                let mask = try Hyperstack(
+                    title: "Mask of " + open.title, stack: stack, calibration: open.image.calibration,
+                    channels: [ChannelDisplay(lut: lut, displayRange: 0...255)])
+                context.add(mask)
+            } catch {
+                throw CommandError.failed(command: name, detail: "\(error)")
+            }
         }
     }
 

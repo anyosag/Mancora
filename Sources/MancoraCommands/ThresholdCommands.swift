@@ -17,6 +17,8 @@ enum ThresholdCommands {
     static func thresholder(_ name: String, _ context: inout CommandContext, _ options: MacroOptions) throws {
         guard let open = context.current else { throw CommandError.noImage(name) }
         guard open.image.pixelType != .rgb8 else { throw CommandError.notNative(name) }  // color thresholds: ImageJ
+        // Thresholder works on the whole image: it deletes the selection first.
+        try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in open.roi = nil }
         if open.image.stack.count == 1 {
             let black = context.settings.blackBackground
             try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in

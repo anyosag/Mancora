@@ -125,7 +125,7 @@ public enum Analyzer {
 
     /// `ImageStack.getShortSliceLabel(n, 60)`: the first line, without a
     /// file extension, at most 60 characters.
-    static func shortSliceLabel(_ label: String?) -> String? {
+    public static func shortSliceLabel(_ label: String?) -> String? {
         guard var short = label else { return nil }
         if let newline = short.firstIndex(of: "\n") {
             if newline == short.startIndex { return nil }

@@ -177,6 +177,7 @@ enum ParityInput: String, Sendable {
     case gray8, gray16, gray32, rgb, stack8, stack16, stack32, hyperstack, calibrated, binary, binaryStack
     // Images with a selection, which ImageJ reads from the TIFF.
     case rectangleROI, roundedROI, ovalROI, polygonROI, subpixelPolygonROI, freehandROI, tracedROI, edgeROI, namedROI
+    case binaryRectangleROI, binaryOvalROI
     case fixtureHyperstack = "ij-hyperstack-16bit.tif"
     case fixtureFire = "ij-8bit-fire.tif"
 
@@ -199,9 +200,11 @@ enum ParityInput: String, Sendable {
             image.calibration.pixelDepth = 1.5
             image.calibration.unit = "µm"
             made = image
-        case .binary, .binaryStack:
+        case .binary, .binaryStack, .binaryRectangleROI, .binaryOvalROI:
             // 0 and 255 only, for Process ▸ Binary.
-            var image = try Self.make(rawValue + ".tif", .gray8, slices: self == .binary ? 1 : 3)
+            var image = try Self.make(rawValue + ".tif", .gray8, slices: self == .binaryStack ? 3 : 1)
+            if self == .binaryRectangleROI { image.encodedROI = RoiCodec.encode(Self.roi(for: .edgeROI)) }
+            if self == .binaryOvalROI { image.encodedROI = RoiCodec.encode(Self.roi(for: .ovalROI)) }
             for index in 0..<image.stack.count {
                 guard case .gray8(let p) = image.stack[index] else { continue }
                 try image.setPlane(.gray8(p.map { $0 > 120 ? 255 : 0 }), at: index)

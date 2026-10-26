@@ -53,6 +53,8 @@ public struct CommandContext: Sendable {
     public private(set) var images: [OpenImage] = []
     public private(set) var currentID: Int?
     public var results = ResultsTable()
+    /// Other tables by title, such as Analyze Particles' "Summary".
+    public var tables: [String: ResultsTable] = [:]
     public var log: [String] = []
     public var settings = CommandSettings()
     private var nextID = -1
