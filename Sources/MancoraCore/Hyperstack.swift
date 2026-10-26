@@ -87,6 +87,11 @@ public struct Hyperstack: Sendable, Equatable {
         channels[channel] = display
     }
 
+    /// Replaces the plane at stack `index` with one of the same size and type.
+    public mutating func setPlane(_ plane: Plane, at index: Int) throws(ImageModelError) {
+        try stack.setPlane(plane, at: index)
+    }
+
     /// Reinterprets the planes as `dims` (ImageJ's `setDimensions`); the
     /// plane count must stay the same. Channels keep their display settings
     /// where they still exist; new ones get ImageJ's defaults.

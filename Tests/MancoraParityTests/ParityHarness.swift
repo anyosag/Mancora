@@ -169,7 +169,7 @@ struct ParityCase: Sendable, CustomStringConvertible {
 /// Test images: small, odd-sized and filled from a fixed seed so every run
 /// is the same, plus the ImageJ-written fixtures.
 enum ParityInput: String, Sendable {
-    case gray8, gray16, gray32, rgb, stack8, stack16, stack32, hyperstack, calibrated
+    case gray8, gray16, gray32, rgb, stack8, stack16, stack32, hyperstack, calibrated, binary, binaryStack
     case fixtureHyperstack = "ij-hyperstack-16bit.tif"
     case fixtureFire = "ij-8bit-fire.tif"
 
@@ -191,6 +191,14 @@ enum ParityInput: String, Sendable {
             image.calibration.pixelHeight = 0.25
             image.calibration.pixelDepth = 1.5
             image.calibration.unit = "µm"
+            made = image
+        case .binary, .binaryStack:
+            // 0 and 255 only, for Process ▸ Binary.
+            var image = try Self.make(rawValue + ".tif", .gray8, slices: self == .binary ? 1 : 3)
+            for index in 0..<image.stack.count {
+                guard case .gray8(let p) = image.stack[index] else { continue }
+                try image.setPlane(.gray8(p.map { $0 > 120 ? 255 : 0 }), at: index)
+            }
             made = image
         case .fixtureHyperstack, .fixtureFire:
             return try TIFFImporter.read(path: Parity.url("Tests/Fixtures/tiff/" + rawValue).path)

@@ -171,6 +171,29 @@ struct BridgeIntegrationTests {
         await bridge.stop()
     }
 
+    /// Dialogs nobody can answer don't hang the helper: ImageJ's errors come
+    /// back as errors, and "Process all slices?" is answered No.
+    @Test(.enabled(if: hasDisplay)) func dialogsAreAnswered() async throws {
+        let bridge = try BridgeFixtures.bridge()
+        let gray = try Hyperstack(
+            title: "gray.tif", stack: ImageStack(width: 4, height: 1, planes: [.gray8([0, 10, 200, 255])]))
+        do {
+            _ = try await bridge.run("Erode", images: [gray])
+            Issue.record("expected ImageJ's error")
+        } catch let error as BridgeError {
+            #expect(error.description.contains("binary"))
+        }
+        let stack = try Hyperstack(
+            title: "stack.tif",
+            stack: ImageStack(width: 2, height: 1, planes: [.gray8([0, 255]), .gray8([0, 255]), .gray8([255, 0])]))
+        let result = try await bridge.runMacro("run(\"Invert\");", images: [stack])
+        let output = try #require(result.images.first)
+        #expect(output.image.stack[0] == .gray8([255, 0]))  // the current slice
+        #expect(output.image.stack[2] == .gray8([255, 0]))  // the others untouched
+        #expect(result.log.contains("answered No"))
+        await bridge.stop()
+    }
+
     @Test func unknownCommandsAreReported() async throws {
         let bridge = try BridgeFixtures.bridge()
         do {

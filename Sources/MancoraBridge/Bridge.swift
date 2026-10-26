@@ -132,7 +132,7 @@ public actor Bridge {
             connection.terminate()
         }
         connection = nil
-        if let display = virtualDisplay { Self.stopVirtualDisplay(display.process, name: display.name) }
+        if let display = virtualDisplay { Self.stopVirtualDisplay(display.process, name: display.name, removingFiles: true) }
         virtualDisplay = nil
         try? FileManager.default.removeItem(at: workRoot)
     }
@@ -140,13 +140,14 @@ public actor Bridge {
     /// Children inherit the signal mask of the thread that starts them, and
     /// Swift's concurrency threads block SIGTERM, so Xvfb is killed outright
     /// and its socket and lock file removed for it.
-    private static func stopVirtualDisplay(_ process: Process, name: String) {
+    private static func stopVirtualDisplay(_ process: Process, name: String, removingFiles: Bool) {
         guard process.isRunning else { return }
         #if os(Windows)
         process.terminate()
         #else
         kill(process.processIdentifier, SIGKILL)
         process.waitUntilExit()
+        guard removingFiles else { return }
         let number = name.dropFirst()
         try? FileManager.default.removeItem(atPath: "/tmp/.X11-unix/X\(number)")
         try? FileManager.default.removeItem(atPath: "/tmp/.X\(number)-lock")
@@ -293,15 +294,22 @@ public actor Bridge {
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
             guard (try? process.run()) != nil else { return nil }
-            // Wait (up to 5 s) for the server's socket before handing it to Java.
+            // Wait (up to 5 s) for the server's socket before handing it to
+            // Java, and make sure the server is ours: another bridge may have
+            // taken the number first, and Xvfb's lock file names the winner.
+            let lock = "/tmp/.X\(number)-lock"
             for _ in 0..<100 where process.isRunning {
-                if FileManager.default.fileExists(atPath: "\(sockets)/X\(number)") {
+                let owner = (try? String(contentsOfFile: lock, encoding: .utf8))
+                    .flatMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                if let owner, owner != process.processIdentifier { break }
+                if owner != nil, FileManager.default.fileExists(atPath: "\(sockets)/X\(number)") {
                     virtualDisplay = (process, ":\(number)")
                     return ":\(number)"
                 }
                 Thread.sleep(forTimeInterval: 0.05)
             }
-            process.terminate()  // lost a race for this number, or Xvfb failed: try the next one
+            // Lost a race for this number, or Xvfb failed: try the next one.
+            Self.stopVirtualDisplay(process, name: ":\(number)", removingFiles: false)
         }
         return nil
     }

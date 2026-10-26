@@ -102,3 +102,84 @@ struct MeasurementParityTests {
         ])
     }
 }
+
+/// Process ▸ Filters, Noise and Binary, and the 3×3 filters.
+@Suite("ImageJ parity: filters", .enabled(if: Parity.available, "needs MANCORA_TEST_IJ_JAR, a JDK and a display or Xvfb"))
+struct FilterParityTests {
+    @Test func gaussianBlur() async throws {
+        try await Parity.check([
+            ParityCase("Gaussian Blur...", "sigma=2", on: .gray8),
+            ParityCase("Gaussian Blur...", "sigma=2", on: .gray16),
+            ParityCase("Gaussian Blur...", "sigma=2.5", on: .gray32),
+            ParityCase("Gaussian Blur...", "sigma=1", on: .rgb),
+            ParityCase("Gaussian Blur...", "sigma=1.5 stack", on: .stack16),
+            ParityCase("Gaussian Blur...", "sigma=1.5", on: .stack8),
+            ParityCase("Gaussian Blur...", "sigma=0.5 scaled stack", on: .calibrated),
+            ParityCase("Gaussian Blur...", "radius=5", on: .gray8),
+            ParityCase("Gaussian Blur...", "sigma=3", on: .hyperstack),
+        ])
+    }
+
+    @Test func rankFilters() async throws {
+        try await Parity.check([
+            ParityCase("Mean...", "radius=2", on: .gray8),
+            ParityCase("Minimum...", "radius=1", on: .gray16),
+            ParityCase("Maximum...", "radius=3", on: .gray32),
+            ParityCase("Variance...", "radius=2", on: .gray16),
+            ParityCase("Variance...", "radius=1.5", on: .gray32),
+            ParityCase("Variance...", "radius=2", on: .gray8),
+            ParityCase("Median...", "radius=2", on: .rgb),
+            ParityCase("Median...", "radius=1 stack", on: .stack8),
+            ParityCase("Remove Outliers...", "radius=2 threshold=20 which=Bright", on: .gray8),
+            ParityCase("Remove Outliers...", "radius=3 threshold=100 which=Dark", on: .gray16),
+            ParityCase("Remove NaNs...", "radius=2", on: .gray32),
+            ParityCase("Despeckle", on: .gray8),
+            ParityCase("Despeckle", on: .rgb),
+            ParityCase("Despeckle", "stack", on: .stack16),
+        ])
+    }
+
+    @Test func threeByThreeAndConvolve() async throws {
+        try await Parity.check([
+            ParityCase("Smooth", on: .gray8),
+            ParityCase("Smooth", on: .gray32),
+            ParityCase("Sharpen", on: .gray16),
+            ParityCase("Sharpen", on: .rgb),
+            ParityCase("Find Edges", on: .gray8),
+            ParityCase("Find Edges", on: .gray32),
+            ParityCase("Find Edges", "stack", on: .stack16),
+            ParityCase("Convolve...", "text1=[-1 -1 -1\n-1 8 -1\n-1 -1 -1] normalize", on: .gray8),
+            ParityCase("Convolve...", "text1=[1 2 1 2 4 2 1 2 1] normalize", on: .gray32),
+            ParityCase("Convolve...", "text1=[0 1 0\n1 1 1\n0 1 0]", on: .gray16),
+            ParityCase("Convolve...", "text1=[1 1 1\n1 1 1\n1 1 1] normalize stack", on: .stack8),
+        ])
+    }
+
+    @Test func binary() async throws {
+        // Binary Options are static in ImageJ's helper: put them back to ImageJ's defaults.
+        let reset = ParityCase.Step(command: "Options...", options: "iterations=1 count=1 black do=Nothing")
+        try await Parity.check(
+            ["Erode", "Dilate", "Open", "Close-", "Outline", "Fill Holes", "Skeletonize"].map { ParityCase($0, on: .binary) }
+                + [
+                    ParityCase("Erode", "stack", on: .binaryStack),
+                    ParityCase("Outline", "stack", on: .binaryStack),
+                    ParityCase("Outline", on: .binaryStack),
+                    ParityCase(
+                        steps: [.init(command: "Options...", options: "iterations=2 count=3 black do=Nothing"),
+                                .init(command: "Dilate", options: ""), reset],
+                        inputs: [.binary]),
+                    ParityCase(
+                        steps: [.init(command: "Options...", options: "iterations=3 count=2 pad do=Erode"), reset],
+                        inputs: [.binary]),
+                    ParityCase(
+                        steps: [.init(command: "Options...", options: "iterations=1 count=1 black do=[Fill Holes]"), reset],
+                        inputs: [.binary]),
+                    ParityCase(
+                        steps: [.init(command: "Options...", options: "iterations=1 count=1 black do=Outline"), reset],
+                        inputs: [.binary]),
+                    ParityCase(
+                        steps: [.init(command: "Options...", options: "iterations=1 count=1 black do=Skeletonize"), reset],
+                        inputs: [.binary]),
+                ])
+    }
+}

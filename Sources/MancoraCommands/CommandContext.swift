@@ -19,8 +19,13 @@ public struct OpenImage: Sendable {
 
 /// Options that change how commands behave, from ImageJ's Edit ▸ Options.
 public struct CommandSettings: Sendable, Hashable {
-    /// Process ▸ Binary ▸ Options ▸ Black background.
-    public var blackBackground = false
+    /// Process ▸ Binary ▸ Options ▸ Black background (on by default, as in
+    /// ImageJ's default preferences).
+    public var blackBackground = true
+    /// Process ▸ Binary ▸ Options: iterations and count for erode and dilate, and Pad edges when eroding.
+    public var binaryIterations = 1
+    public var binaryCount = 1
+    public var padEdges = false
     /// Edit ▸ Options ▸ Conversions ▸ Scale when converting.
     public var scaleConversions = true
     /// Analyze ▸ Set Measurements ▸ Decimal places.

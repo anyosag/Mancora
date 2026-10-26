@@ -50,6 +50,7 @@ public class MancoraBridgeHelper {
         System.setErr(capture);
         Interpreter.batchMode = true;
         if (java.awt.GraphicsEnvironment.isHeadless()) installHeadlessCommands();
+        else DialogWatchdog.start();
         BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
         String line;
         while ((line = in.readLine()) != null) {
@@ -208,15 +209,23 @@ public class MancoraBridgeHelper {
             Hashtable<?, ?> table = Menus.getCommands();
             if (table != null && table.get(command) == null)
                 throw new IllegalArgumentException("Unrecognized command: \"" + command + "\"");
+            // Empty options would make ImageJ treat the call as interactive
+            // (asking, for example, whether to process every slice); a space
+            // keeps it a macro call that gives no options.
+            if (options.isEmpty()) options = " ";
+            DialogWatchdog.reset();
             ImagePlus active = WindowManager.getCurrentImage();
             if (active != null) IJ.run(active, command, options);
             else IJ.run(command, options);
+            DialogWatchdog.check(command);
             String log = new String(captured.toByteArray(), StandardCharsets.UTF_8);
             if (java.awt.GraphicsEnvironment.isHeadless() && log.contains("java.awt.HeadlessException"))
                 throw new IllegalStateException("\"" + command + "\" needs a display (ImageJ builds its dialog even "
                     + "when the options are given); run Mancora with a display, or install Xvfb");
         } else {
+            DialogWatchdog.reset();
             String value = IJ.runMacro((String) params.get("code"), params.get("argument") == null ? "" : (String) params.get("argument"));
+            DialogWatchdog.check("The macro");
             result.put("value", value);
         }
         // Save every image a command created, and the inputs it changed.
@@ -242,6 +251,82 @@ public class MancoraBridgeHelper {
         result.put("log", takeLog());
         closeAll();
         return result;
+    }
+
+    /**
+     * Nobody can answer a dialog here: ImageJ's errors, "Process all
+     * slices?" and dialogs a command's options didn't fill in would wait
+     * forever. The watchdog closes each one as it appears: questions are
+     * answered "No" (the macro default: the current slice only), dialogs
+     * wanting input are canceled, and messages are reported as the
+     * command's error.
+     */
+    static final class DialogWatchdog {
+        private static final List<String> errors = Collections.synchronizedList(new ArrayList<>());
+        private static final List<String> questions = Collections.synchronizedList(new ArrayList<>());
+        private static final Set<java.awt.Window> handled = Collections.newSetFromMap(new java.util.WeakHashMap<>());
+
+        static void start() {
+            Thread thread = new Thread(() -> {
+                while (true) {
+                    try { Thread.sleep(100); } catch (InterruptedException e) { return; }
+                    for (java.awt.Window w : java.awt.Window.getWindows()) {
+                        if (!(w instanceof java.awt.Dialog) || !w.isShowing() || handled.contains(w)) continue;
+                        handled.add(w);
+                        java.awt.Dialog d = (java.awt.Dialog) w;
+                        String text = text(d).trim();
+                        String message = text.isEmpty() ? d.getTitle() : text;
+                        if (d instanceof ij.gui.GenericDialog) {
+                            errors.add("ImageJ asked for input the options didn't give (\"" + d.getTitle() + "\" dialog)");
+                            java.awt.EventQueue.invokeLater(() ->
+                                d.dispatchEvent(new java.awt.event.WindowEvent(d, java.awt.event.WindowEvent.WINDOW_CLOSING)));
+                        } else if (d instanceof ij.gui.YesNoCancelDialog) {
+                            questions.add(message);
+                            java.awt.EventQueue.invokeLater(d::dispose);  // neither yes nor cancel: no
+                        } else {
+                            errors.add(message);
+                            java.awt.EventQueue.invokeLater(d::dispose);
+                        }
+                    }
+                }
+            }, "Mancora dialog watchdog");
+            thread.setDaemon(true);
+            thread.start();
+        }
+
+        static void reset() {
+            errors.clear();
+            questions.clear();
+        }
+
+        /** Logs the questions answered, and fails with the messages shown. */
+        static void check(String what) {
+            synchronized (questions) {
+                for (String q : questions) IJ.log("ImageJ asked \"" + q.replace('\n', ' ') + "\"; answered No.");
+            }
+            synchronized (errors) {
+                if (!errors.isEmpty()) throw new IllegalStateException(String.join("\n", errors));
+            }
+        }
+
+        /** The labels in a dialog, including ImageJ's MultiLineLabel (whose text is private). */
+        static String text(java.awt.Container c) {
+            StringBuilder b = new StringBuilder();
+            for (java.awt.Component k : c.getComponents()) {
+                if (k instanceof java.awt.Label) b.append(((java.awt.Label) k).getText()).append('\n');
+                else if (k instanceof ij.gui.MultiLineLabel) {
+                    try {
+                        java.lang.reflect.Field f = ij.gui.MultiLineLabel.class.getDeclaredField("lines");
+                        f.setAccessible(true);
+                        for (String line : (String[]) f.get(k)) b.append(line).append('\n');
+                    } catch (Exception e) {
+                        // no text after all
+                    }
+                } else if (k instanceof java.awt.TextArea) b.append(((java.awt.TextArea) k).getText()).append('\n');
+                if (k instanceof java.awt.Container) b.append(text((java.awt.Container) k));
+            }
+            return b.toString();
+        }
     }
 
     /**
