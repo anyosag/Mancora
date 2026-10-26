@@ -35,6 +35,8 @@ final class ViewerModel {
     var zoom = Zoom.fit
     /// The pixel under the pointer, as ImageJ's status bar shows it.
     private(set) var pointerText: String?
+    /// The same readout in parts, for the status bar's columns.
+    private(set) var pointerReadout: PointerReadout?
 
     /// Find Command (⌘L) is showing.
     var showsCommandFinder = false
@@ -53,7 +55,7 @@ final class ViewerModel {
     var selectionText: String?
     @ObservationIgnored var gesture: SelectionGesture?
     /// The scale the canvas shows the image at (for Zoom to Fit, the fitted one).
-    @ObservationIgnored var displayedScale = 1.0
+    var displayedScale = 1.0
 
     /// The image's threshold (raw values), shown in red; commands use it.
     var threshold: ThresholdLevels?
@@ -679,6 +681,7 @@ final class ViewerModel {
     func pointerMoved(to point: CGPoint?, displaySize: CGSize) {
         guard let image, let point, displaySize.width > 0, displaySize.height > 0 else {
             pointerText = nil
+            pointerReadout = nil
             pointer = nil
             return
         }
@@ -689,24 +692,33 @@ final class ViewerModel {
         let y = Int(py)
         guard (0..<image.width).contains(x), (0..<image.height).contains(y), let plane = currentPlane else {
             pointerText = nil
+            pointerReadout = nil
             return
         }
         let cal = image.calibration
         var text = "x=\(x), y=\(y)"
+        var readout = PointerReadout(x: "\(x)", y: "\(y)", pixel: nil, value: "")
         if cal.isSpatiallyCalibrated {
             let cx = (Double(x) - cal.xOrigin) * cal.pixelWidth, cy = (Double(y) - cal.yOrigin) * cal.pixelHeight
             text = "x=\(Self.short(cx)) \(cal.unit), y=\(Self.short(cy)) \(cal.unit) (\(x), \(y))"
+            readout = PointerReadout(
+                x: "\(Self.short(cx)) \(cal.unit)", y: "\(Self.short(cy)) \(cal.unit)", pixel: "\(x), \(y)", value: "")
         }
         let index = y * image.width + x
         if case .rgb8(let pixels) = plane {
             let c = pixels[index]
-            text += ", value=\((c >> 16) & 0xFF),\((c >> 8) & 0xFF),\(c & 0xFF)"
+            let rgb = "\((c >> 16) & 0xFF),\((c >> 8) & 0xFF),\(c & 0xFF)"
+            text += ", value=\(rgb)"
+            readout.value = rgb
         } else {
             let raw = plane.value(at: index)
             let calibrated = cal.calibratedValue(raw)
-            text += ", value=\(Self.short(calibrated))" + (calibrated == raw ? "" : " (\(Self.short(raw)))")
+            let shown = Self.short(calibrated) + (calibrated == raw ? "" : " (\(Self.short(raw)))")
+            text += ", value=\(shown)"
+            readout.value = shown
         }
         pointerText = text
+        pointerReadout = readout
     }
 
     private static func short(_ v: Double) -> String {

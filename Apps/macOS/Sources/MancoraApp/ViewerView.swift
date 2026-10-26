@@ -241,7 +241,18 @@ struct ImageCanvas: View {
     }
 }
 
-/// Channel, slice and frame sliders (for dimensions above 1) and the pointer readout.
+/// What the pointer is over, in parts: x and y (calibrated when the image has a scale), the
+/// pixel they are, and the value there.
+struct PointerReadout: Equatable {
+    var x: String
+    var y: String
+    /// The pixel as "x, y", when x and y are calibrated.
+    var pixel: String?
+    var value: String
+}
+
+/// The position in a stack or hyperstack, and below it the readout: the pixel under the pointer
+/// while it is over the image, else the image's size and type; always the zoom.
 struct StatusBar: View {
     @Bindable var model: ViewerModel
     let image: Hyperstack
@@ -260,7 +271,7 @@ struct StatusBar: View {
         let dims = image.dimensions
         // Counts of different widths would stagger the sliders; give every row the widest.
         let digits = String(max(dims.channels, dims.slices, dims.frames)).count
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(spacing: 6) {
             if dims.channels > 1 || dims.slices > 1 || dims.frames > 1 {
                 VStack(spacing: 4) {
                     if dims.channels > 1 {
@@ -279,17 +290,11 @@ struct StatusBar: View {
                 }
                 Divider()
             }
-            HStack {
-                Text(model.selectionText ?? model.pointerText ?? summary)
-                    .font(.callout.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer()
-                if model.isBusy { ProgressView().controlSize(.small) }
-            }
+            readout
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        .background(.bar)
         .onChange(of: model.channel) { model.positionChanged() }
         .onChange(of: model.slice) { model.positionChanged() }
         .onChange(of: model.frame) { model.positionChanged() }
@@ -301,6 +306,30 @@ struct StatusBar: View {
                 advance(axis)
             }
         }
+    }
+
+    private var readout: some View {
+        HStack(spacing: 12) {
+            if let text = model.selectionText {
+                Text(text)
+            } else if let reading = model.pointerReadout {
+                ReadoutField(label: "X", value: reading.x, width: 56)
+                ReadoutField(label: "Y", value: reading.y, width: 56)
+                if let pixel = reading.pixel {
+                    Text("(\(pixel))").foregroundStyle(.tertiary)
+                }
+                ReadoutField(label: "Value", value: reading.value, width: 72)
+            } else {
+                Text(summary)
+            }
+            Spacer(minLength: 8)
+            if model.isBusy { ProgressView().controlSize(.small) }
+            Text(Self.zoomText(model.displayedScale))
+        }
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .frame(minHeight: 16)
     }
 
     private func playbackBinding(_ axis: PlayAxis) -> Binding<Bool> {
@@ -334,6 +363,28 @@ struct StatusBar: View {
         if image.stack.count > 1 { parts.append("\(image.stack.count) planes") }
         if image.stack.isVirtual { parts.append("virtual") }
         return parts.joined(separator: " · ")
+    }
+
+    /// The zoom as a percentage: whole when it is, else to a tenth ("33.3%").
+    static func zoomText(_ scale: Double) -> String {
+        let percent = scale * 100
+        if percent >= 100 || abs(percent - percent.rounded()) < 0.05 { return "\(Int(percent.rounded()))%" }
+        return String(format: "%.1f%%", percent)
+    }
+}
+
+/// A caption and its value in the status bar, held to a width so that the fields beside it stay put.
+private struct ReadoutField: View {
+    let label: String
+    let value: String
+    let width: CGFloat
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(label).foregroundStyle(.tertiary)
+            Text(value)
+        }
+        .frame(minWidth: width, alignment: .leading)
     }
 }
 
