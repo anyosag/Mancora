@@ -20,6 +20,8 @@ let package = Package(
         .executableTarget(
             name: "MancoraApp",
             dependencies: [
+                .product(name: "MancoraBridge", package: "Mancora"),
+                .product(name: "MancoraCommands", package: "Mancora"),
                 .product(name: "MancoraCore", package: "Mancora"),
                 .product(name: "MancoraIO", package: "Mancora"),
                 .product(name: "MancoraSupport", package: "Mancora"),

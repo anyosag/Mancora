@@ -4,6 +4,7 @@ import SwiftUI
 /// One viewer window. Each window has its own image, as in ImageJ.
 struct ViewerWindow: View {
     @Binding var request: OpenRequest?
+    let bridge: AppBridge
     @State private var model = ViewerModel()
     @State private var showsInspector = true
     @Environment(\.openWindow) private var openWindow
@@ -11,6 +12,16 @@ struct ViewerWindow: View {
     var body: some View {
         ViewerView(model: model, showsInspector: $showsInspector)
             .frame(minWidth: 720, minHeight: 520)
+            .sheet(isPresented: $model.showsCommandFinder) {
+                CommandFinder(model: model, bridge: bridge) { urls in
+                    for url in urls { openWindow(id: "viewer", value: OpenRequest(url: url)) }
+                }
+            }
+            .sheet(
+                isPresented: Binding(get: { model.report != nil }, set: { if !$0 { model.report = nil } })
+            ) {
+                ReportView(text: model.report ?? "")
+            }
             .focusedSceneValue(\.viewer, model)
             .task(id: request) {
                 if let request { model.open(request) }
@@ -325,6 +336,34 @@ struct RangeSlider: View {
                 Slider(value: clamped, in: bounds)
             }
         }
+    }
+}
+
+/// What an ImageJ command or macro logged and measured.
+struct ReportView: View {
+    let text: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("ImageJ").font(.headline)
+            ScrollView {
+                Text(text)
+                    .font(.callout.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            HStack {
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                }
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 520, height: 360)
     }
 }
 
