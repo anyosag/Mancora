@@ -70,8 +70,10 @@ func updateSitesCommand(_ args: [String]) async {
             if !names.isEmpty { try manager.select(names) }
             let (changes, conflicts) = manager.plan()
             for change in changes { print(change) }
-            guard conflicts.isEmpty else {
-                fail("mancora: cannot update:\n" + conflicts.map { "  \($0)" }.joined(separator: "\n"))
+            report(conflicts.filter(\.isWarning).map { "\($0) (keeping the local file)" })
+            let errors = conflicts.filter { !$0.isWarning }
+            guard errors.isEmpty else {
+                fail("mancora: cannot update:\n" + errors.map { "  \($0)" }.joined(separator: "\n"))
             }
             if changes.isEmpty {
                 print("Everything is up to date.")

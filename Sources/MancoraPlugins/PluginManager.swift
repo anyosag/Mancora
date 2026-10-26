@@ -187,9 +187,12 @@ public final class PluginManager {
     /// Downloads and verifies everything planned into `update/`, then moves
     /// it into place, removes what's uninstalled and saves `db.xml.gz`. If
     /// any download fails or doesn't match its checksum, nothing changes.
+    /// Warnings (a locally modified file another one may need a newer
+    /// version of) keep the local file, as the updater's first resolution does.
     public func apply(client: any HTTPClient, progress: (String) -> Void = { _ in }) async throws {
         let (_, conflicts) = plan()
-        guard conflicts.isEmpty else { throw InstallError.conflicts(conflicts) }
+        let errors = conflicts.filter { !$0.isWarning }
+        guard errors.isEmpty else { throw InstallError.conflicts(errors) }
         let fm = FileManager.default
         let staging = root.appendingPathComponent("update")
         if fm.fileExists(atPath: staging.path) { try fm.removeItem(at: staging) }

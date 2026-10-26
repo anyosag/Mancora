@@ -281,6 +281,9 @@ public final class PluginCollection {
     public struct Conflict: Sendable, CustomStringConvertible {
         public let filename: String
         public let message: String
+        /// The updater's warning severity: its first resolution, keeping the
+        /// local file, is what an update does when nobody can be asked.
+        public var isWarning = false
         public var description: String { "\(filename): \(message)" }
     }
 
@@ -304,7 +307,8 @@ public final class PluginCollection {
                         Conflict(
                             filename: file.filename,
                             message: "Locally modified and the Updater cannot determine its status. "
-                                + "A newer version might be required by \(Self.join(reasons))"))
+                                + "A newer version might be required by \(Self.join(reasons))",
+                            isWarning: true))
                 } else if !automatic.contains(where: { $0 === file }) {
                     automatic.append(file)
                 }

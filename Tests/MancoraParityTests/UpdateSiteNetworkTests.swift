@@ -17,17 +17,23 @@ import Testing
 struct UpdateSiteNetworkTests {
     let client = URLSessionHTTPClient(userAgent: "mancora-tests")
 
-    @Test func everyKnownSiteServesItsIndex() async throws {
-        for known in KnownSites.all {
-            let collection = PluginCollection(root: nil)
-            let site = UpdateSite(name: known.name, url: known.url)
-            site.isActive = true
-            collection.addSite(site)
-            let (data, lastModified) = try await client.dataAndLastModified(from: URL(string: site.url + "db.xml.gz")!)
-            try collection.readSiteDatabase(site, xml: try Inflate.gzip([UInt8](data)[...], limit: 1 << 30))
-            #expect(!collection.files.isEmpty, "\(known.name) lists no files")
-            #expect(lastModified != nil, "\(known.name) sends no Last-Modified")
+    @Test(arguments: KnownSites.all.map(\.name)) func knownSiteServesItsIndex(_ name: String) async throws {
+        let known = try #require(KnownSites.all.first { $0.name == name })
+        let collection = PluginCollection(root: nil)
+        let site = UpdateSite(name: known.name, url: known.url)
+        site.isActive = true
+        collection.addSite(site)
+        let url = URL(string: site.url + "db.xml.gz")!
+        let (data, lastModified): (Data, Date?)
+        do {
+            (data, lastModified) = try await client.dataAndLastModified(from: url)
+        } catch {
+            // One retry: a site's server may be slow to answer.
+            (data, lastModified) = try await client.dataAndLastModified(from: url)
         }
+        try collection.readSiteDatabase(site, xml: try Inflate.gzip([UInt8](data)[...], limit: 1 << 30))
+        #expect(!collection.files.isEmpty, "\(known.name) lists no files")
+        #expect(lastModified != nil, "\(known.name) sends no Last-Modified")
     }
 
     /// A fresh bridge home with ImageJ 1.54p.
@@ -90,11 +96,16 @@ struct UpdateSiteNetworkTests {
         try manager.setActive("ImageJ", true)
         try manager.addSite(name: "Fiji", url: nil)
         try await manager.refresh(client: client)
-        // Only Bio-Formats' ImageJ plugin, and what it needs.
-        try manager.select(["plugins/bio-formats_plugins.jar"])
+        // Only Bio-Formats' ImageJ plugin (the current record, wherever the sites keep it), and what it needs.
+        let plugin = try #require(
+            manager.files.files.filter { $0.unversionedFilename.hasSuffix("/bio-formats_plugins.jar") && $0.current != nil }
+                .max { $0.timestamp < $1.timestamp })
+        try manager.select([plugin.filename])
         let (changes, conflicts) = manager.plan()
-        #expect(conflicts.isEmpty, "\(conflicts)")
-        #expect(changes.contains { $0.filename.hasPrefix("jars/bio-formats/") }, "\(changes)")
+        // The bridge's own ImageJ may differ from the ImageJ site's: that's a warning, and it stays.
+        let errors = conflicts.filter { !$0.isWarning }
+        #expect(errors.isEmpty, "\(errors)")
+        #expect(changes.contains { $0.filename.contains("formats-") }, "\(plugin.filename): \(changes)")
         try await manager.apply(client: client)
 
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("mancora-bf-\(UUID().uuidString)")
