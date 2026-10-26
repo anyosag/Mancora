@@ -468,6 +468,19 @@ enum MacroCorpus {
             for (i = 0; i < 256; i++) sum += counts2[i];
             print(sum);
             """#, on: .gray8),
+        .init("raw statistics' histogram of a 16-bit image", #"""
+            makeOval(3, 3, 20, 14);
+            getRawStatistics(n, mean, min, max, std, hist);
+            print(n, max, hist.length, hist[hist.length - 1]);
+            sum = 0;
+            for (i = 0; i < hist.length; i++) sum += hist[i];
+            print(sum);
+            getStatistics(area, mean, min, max, std, hist);
+            print(hist.length);
+            run("Select None");
+            getRawStatistics(n, mean, min, max, std, hist);
+            print(n, max, hist.length, hist[hist.length - 1]);
+            """#, on: .gray16),
         .init("thresholds", #"""
             setThreshold(50, 150);
             getThreshold(lower, upper);
