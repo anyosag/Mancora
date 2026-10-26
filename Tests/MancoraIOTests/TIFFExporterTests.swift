@@ -159,6 +159,7 @@ struct TIFFExporterTests {
         Fixtures.tiffManifest.map(\.file) + [
             "ij-hyperstack-16bit.tif", "ij-8bit-fire.tif", "ij-stack-8bit.tif", "ij-32bit-float.tif", "ij-rgb.tif",
             "ij-metadata-be.tif", "ij-metadata-le.tif", "ij-16bit-lut-inverted.tif", "ij-16bit-signed.tif",
+            "ij-rgb48.tif",
         ]
 
     /// Every image Mancora reads survives being saved and read again.
@@ -179,7 +180,7 @@ struct TIFFExporterTests {
         "Same bytes as ImageJ",
         arguments: [
             "ij-hyperstack-16bit.tif", "ij-8bit-fire.tif", "ij-stack-8bit.tif", "ij-32bit-float.tif", "ij-rgb.tif",
-            "ij-16bit-lut-inverted.tif", "ij-16bit-signed.tif",
+            "ij-16bit-lut-inverted.tif", "ij-16bit-signed.tif", "ij-rgb48.tif",
         ])
     func byteIdentical(_ name: String) throws {
         let path = Fixtures.path("Tests/Fixtures/tiff/\(name)")
