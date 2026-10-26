@@ -62,6 +62,10 @@ struct MancoraApp: App {
             LogWindow(session: AppSession.shared)
         }
         .defaultSize(width: 480, height: 300)
+        WindowGroup("Plot", id: "plot", for: PlotRequest.self) { $request in
+            if let request { PlotWindow(request: request) }
+        }
+        .defaultSize(width: 520, height: 460)
         Window("ROI Manager", id: "roi-manager") {
             RoiManagerView(session: AppSession.shared)
         }

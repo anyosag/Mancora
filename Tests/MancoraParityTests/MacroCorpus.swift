@@ -832,3 +832,230 @@ enum MacroCorpus {
             """#, on: .gray16),
     ]
 }
+
+extension MacroCorpus {
+    /// Prints an array's length and every value to 9 decimals, so profiles
+    /// and histograms must match ImageJ's to the last digit.
+    static let show = #"""
+        function show(label, a) {
+            s = label + " " + a.length + ":";
+            for (i = 0; i < a.length; i++) s = s + " " + d2s(a[i], 9);
+            print(s);
+        }
+        function showHist(label, values, counts) {
+            s = label + " " + values.length + "/" + counts.length + ":";
+            n = 0;
+            for (i = 0; i < counts.length; i++) n += counts[i];
+            s = s + " n=" + n;
+            for (i = 0; i < counts.length; i++)
+                if (counts.length <= 1000 || counts[i] > 0) s = s + " " + d2s(values[i], 9) + "=" + counts[i];
+            print(s);
+        }
+
+        """#
+
+    /// Line, polyline and rectangle profiles (`getProfile`) and `getLine`.
+    static let profiles: [MacroParityCase] = [
+        .init("straight line profiles", show + #"""
+            for (k = 1; k <= nImages; k++) {
+                selectImage(k);
+                t = getTitle();
+                makeLine(5, 7, 50, 30); show(t + " int", getProfile());
+                makeLine(3.5, 40.25, 57.75, 2.5); show(t + " sub", getProfile());
+                makeLine(10, 10, 10, 40); show(t + " vertical", getProfile());
+                makeLine(40, 20, 12, 20); show(t + " leftward", getProfile());
+                makeLine(0, 0, 60, 46); show(t + " corners", getProfile());
+                makeLine(-5, 10, 70, 35.5); show(t + " outside", getProfile());
+                makeLine(20.125, 11.75, 33.875, 41.25); show(t + " short", getProfile());
+                makeLine(30, 30, 30, 30); show(t + " point", getProfile());
+                getLine(x1, y1, x2, y2, w);
+                print(x1, y1, x2, y2, w);
+            }
+            """#, on: .gray8, .gray16, .gray32, .rgb),
+        .init("wide line profiles", show + #"""
+            for (k = 1; k <= nImages; k++) {
+                selectImage(k);
+                t = getTitle();
+                makeLine(5, 7, 50, 30, 3); show(t + " 3", getProfile());
+                makeLine(5, 7, 50, 30, 10); show(t + " 10", getProfile());
+                makeLine(10.5, 40.25, 50.75, 5.5, 4); show(t + " sub 4", getProfile());
+                makeLine(30, 5, 30, 40, 2); show(t + " vertical 2", getProfile());
+                makeLine(2, 2, 58, 44, 10); show(t + " edges 10", getProfile());
+                makeLine(50, 20, 10, 22, 7); show(t + " leftward 7", getProfile());
+                makeLine(-8, 30, 25, -3, 5); show(t + " outside 5", getProfile());
+                makeLine(5, 7, 50, 30, 1); show(t + " 1", getProfile());
+                getLine(x1, y1, x2, y2, w);
+                print(x1, y1, x2, y2, w, getValue("selection.width"));
+                makeLine(5, 7, 50, 30, 2.5);
+                getLine(x1, y1, x2, y2, w);
+                print(w);
+            }
+            """#, on: .gray8, .gray16, .gray32, .rgb),
+        .init("polyline and freeline profiles", show + #"""
+            for (k = 1; k <= nImages; k++) {
+                selectImage(k);
+                t = getTitle();
+                makeLine(5, 5, 20, 30, 45, 10, 55, 40); show(t + " polyline", getProfile());
+                makeLine(0, 0, 10, 20, 30, 20); show(t + " from origin", getProfile());
+                makeSelection("polyline", newArray(4.5, 20.25, 33.75, 50.5), newArray(6.25, 30.5, 12.125, 40));
+                show(t + " subpixel polyline", getProfile());
+                makeSelection("polyline", newArray(5, 40), newArray(10, 30)); show(t + " two points", getProfile());
+                makeSelection("freeline", newArray(5, 8, 12, 17, 23, 30, 38, 45), newArray(20, 22, 25, 24, 20, 18, 19, 23));
+                show(t + " freeline", getProfile());
+                makeSelection("freeline", newArray(5.5, 9.25, 14.75, 20.5, 26.125), newArray(30.5, 28.25, 27, 29.5, 33.75));
+                show(t + " subpixel freeline", getProfile());
+                getLine(x1, y1, x2, y2, w);
+                print(x1, y1, x2, y2, w);
+            }
+            """#, on: .gray8, .gray16, .gray32, .rgb),
+        .init("profiles without interpolation", show + #"""
+            setOption("InterpolateLines", false);
+            for (k = 1; k <= nImages; k++) {
+                selectImage(k);
+                t = getTitle();
+                makeLine(3.5, 40.25, 57.75, 2.5); show(t + " sub", getProfile());
+                makeLine(20.125, 11.75, 33.875, 41.25); show(t + " short", getProfile());
+                makeLine(5, 7, 50, 30, 5); show(t + " wide", getProfile());
+                makeLine(5, 5, 20, 30, 45, 10, 55, 40); show(t + " polyline", getProfile());
+                makeSelection("freeline", newArray(5.5, 9.25, 14.75, 20.5, 26.125), newArray(30.5, 28.25, 27, 29.5, 33.75));
+                show(t + " freeline", getProfile());
+            }
+            setOption("InterpolateLines", true);
+            makeLine(3.5, 40.25, 57.75, 2.5); show("interpolated again", getProfile());
+            """#, on: .gray8, .gray16, .gray32, .rgb),
+        .init("rectangle profiles and the alt key", show + #"""
+            for (k = 1; k <= nImages; k++) {
+                selectImage(k);
+                t = getTitle();
+                makeRectangle(10, 5, 20, 15); show(t + " rect", getProfile());
+                setKeyDown("alt"); show(t + " rows", getProfile()); setKeyDown("none");
+                makeRectangle(50, 40, 20, 15); show(t + " edge", getProfile());
+                setKeyDown("alt"); show(t + " edge rows", getProfile()); setKeyDown("none");
+                makeRectangle(10.5, 5.25, 20.25, 15.75); show(t + " subpixel", getProfile());
+                makeRectangle(5, 5, 1, 30); show(t + " column", getProfile());
+                setKeyDown("alt"); show(t + " column rows", getProfile()); setKeyDown("none");
+                makeRectangle(10, 10, 15, 12, 6); show(t + " rounded", getProfile());
+            }
+            print(isKeyDown("alt"), isKeyDown("shift"));
+            setKeyDown("alt");
+            print(isKeyDown("alt"), isKeyDown("shift"));
+            run("Select None");
+            print(isKeyDown("alt"));
+            setKeyDown("alt shift");
+            print(isKeyDown("alt"), isKeyDown("shift"));
+            makeRectangle(1, 1, 8, 8);
+            print(isKeyDown("alt"), isKeyDown("shift"), selectionType());
+            setKeyDown("alt");
+            makeLine(2, 3, 40, 30);
+            print(isKeyDown("alt"));
+            """#, on: .gray8, .gray16, .gray32, .rgb),
+        .init("profiles of stacks and calibrated images", show + #"""
+            for (k = 1; k <= nImages; k++) {
+                selectImage(k);
+                t = getTitle();
+                if (nSlices > 1) setSlice(2);
+                makeLine(5, 7, 50, 30); show(t + " line", getProfile());
+                makeLine(5, 7, 50, 30, 6); show(t + " wide", getProfile());
+                makeLine(5, 5, 20, 30, 45, 10); show(t + " polyline", getProfile());
+                makeRectangle(10, 5, 20, 15); show(t + " rect", getProfile());
+            }
+            selectImage(1);
+            run("Properties...", "unit=micron pixel_width=0.5 pixel_height=0.25 voxel_depth=1");
+            makeLine(5, 7, 50, 30); show("non-square", getProfile());
+            """#, on: .stack16, .calibrated, .functionCalibrated8, .functionCalibrated16, .hyperstack),
+        .init("wide polylines and freelines, angles and arrows", show + #"""
+            for (k = 1; k <= nImages; k++) {
+                selectImage(k);
+                getLine(x1, y1, x2, y2, w);
+                print(getTitle(), selectionType(), w);
+                show(getTitle(), getProfile());
+                run("Select None");
+            }
+            """#, on: .polylineROI, .subpixelPolylineROI, .freelineROI, .subpixelFreelineROI, .angleROI, .arrowROI),
+    ]
+
+    /// `getHistogram` with every bin count and range ImageJ supports.
+    static let histograms: [MacroParityCase] = [
+        .init("8-bit and RGB histograms", show + #"""
+            for (k = 1; k <= nImages; k++) {
+                selectImage(k);
+                t = getTitle();
+                bins = newArray(256, 1, 2, 10, 64, 100, 255, 257, 1000);
+                for (b = 0; b < bins.length; b++) {
+                    getHistogram(values, counts, bins[b]);
+                    showHist(t + " " + bins[b], values, counts);
+                }
+                makeRectangle(10, 5, 20, 15);
+                getHistogram(values, counts, 256); showHist(t + " rect", values, counts);
+                getHistogram(values, counts, 64); showHist(t + " rect 64 (whole image)", values, counts);
+                makeOval(12, 9, 33, 21);
+                getHistogram(values, counts, 256); showHist(t + " oval", values, counts);
+                makeLine(5, 5, 40, 30);
+                getHistogram(values, counts, 256); showHist(t + " line", values, counts);
+                makePoint(20, 15);
+                getHistogram(values, counts, 256); showHist(t + " point", values, counts);
+                run("Select None");
+                getHistogram(0, counts, 256);
+                print(counts.length);
+                getStatistics(area, mean, min, max, std, hist);
+                print(area, mean, min, max, std, hist[0], hist[100], hist[128], hist[200]);
+            }
+            """#, on: .gray8, .rgb, .functionCalibrated8),
+        .init("16-bit histograms", show + #"""
+            t = getTitle();
+            bins = newArray(256, 1, 3, 10, 100, 1000, 4096);
+            for (b = 0; b < bins.length; b++) {
+                getHistogram(values, counts, bins[b]);
+                showHist(t + " " + bins[b], values, counts);
+            }
+            ranges = newArray(1000, 2000, 0, 65535, 1500.5, 3000.25, 4000, 100, 5000, 6000, -100, 500, 0, 0, 1234, 1234);
+            for (r = 0; r < ranges.length; r += 2) {
+                getHistogram(values, counts, 50, ranges[r], ranges[r + 1]);
+                showHist(t + " " + ranges[r] + "-" + ranges[r + 1], values, counts);
+            }
+            getHistogram(values, counts, 65536);
+            s = "65536 " + counts.length + ":";
+            for (i = 0; i < 65536; i++) if (counts[i] > 0) s = s + " " + i + "=" + counts[i];
+            print(s);
+            makeRectangle(10, 5, 20, 15);
+            getHistogram(values, counts, 256); showHist(t + " rect", values, counts);
+            getHistogram(values, counts, 20, 1000, 3000); showHist(t + " rect range", values, counts);
+            counts2 = newArray(65536);
+            getHistogram(0, counts2, 65536);
+            n = 0;
+            for (i = 0; i < 65536; i++) n += counts2[i];
+            print(n);
+            makeOval(12, 9, 33, 21);
+            getHistogram(values, counts, 30); showHist(t + " oval", values, counts);
+            """#, on: .gray16),
+        .init("calibrated 16-bit histograms", show + #"""
+            t = getTitle();
+            getHistogram(values, counts, 256); showHist(t, values, counts);
+            getHistogram(values, counts, 40); showHist(t + " 40", values, counts);
+            getHistogram(values, counts, 40, 50, 150); showHist(t + " calibrated range", values, counts);
+            """#, on: .functionCalibrated16),
+        .init("32-bit histograms", show + #"""
+            t = getTitle();
+            bins = newArray(256, 1, 7, 100, 1000);
+            for (b = 0; b < bins.length; b++) {
+                getHistogram(values, counts, bins[b]);
+                showHist(t + " " + bins[b], values, counts);
+            }
+            ranges = newArray(-1, 1, 0, 0, 2, 1, -10, 10, 0.5, 0.75, 5, 6);
+            for (r = 0; r < ranges.length; r += 2) {
+                getHistogram(values, counts, 64, ranges[r], ranges[r + 1]);
+                showHist(t + " " + ranges[r] + "-" + ranges[r + 1], values, counts);
+            }
+            makeRectangle(10, 5, 20, 15);
+            getHistogram(values, counts, 33); showHist(t + " rect", values, counts);
+            run("Select None");
+            setPixel(3, 3, NaN);
+            setPixel(4, 3, 1/0);
+            getHistogram(values, counts, 16); showHist(t + " NaN", values, counts);
+            """#, on: .gray32),
+        .init("histogram range on an 8-bit image", show + #"""
+            getHistogram(values, counts, 256, 0, 100);
+            print("not reached");
+            """#, on: .gray8),
+    ]
+}

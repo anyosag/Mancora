@@ -196,6 +196,16 @@ enum AppMenuActions {
             openWindow(id: "update-sites")
         case "ROI Manager...":
             openWindow(id: "roi-manager")
+        case "Plot Profile", "Histogram":
+            // Plotted natively; ImageJ plots what Mancora can't. From a plot window, the current image.
+            if let viewer = viewer ?? AppSession.shared.currentViewer {
+                if !PlotWindows.open(name, viewer: viewer, openWindow: openWindow) {
+                    Task { open(await viewer.perform(name, bridge: bridge)) }
+                }
+            } else {
+                CommandQueue.shared.next = name
+                openWindow(id: "viewer")
+            }
         case "Add to Manager":
             do throws(AppSession.ManagerError) {
                 try AppSession.shared.addToManager(from: viewer)

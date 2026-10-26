@@ -1463,12 +1463,14 @@ extension Functions {
         case _ where option.hasPrefix("std"): measurement(.standardDeviation)
         case _ where option.hasPrefix("expandablearrays"): expandableArrays = state
         case "scaleconversions": session.context.settings.scaleConversions = state
+        case "interpolatelines": session.context.settings.interpolateLineProfiles = state
+        case _ where option.hasPrefix("bicubic"): session.bicubic = state
         case "changes", "debugmode", "openusingplugins", "queuemacros", "disableundo", "showrowindexes",
-            "antialiasedtext", "savebatchoutput", "waitforcompletion", "interpolatelines", "flipfitsimages",
+            "antialiasedtext", "savebatchoutput", "waitforcompletion", "flipfitsimages",
             "disablepopupmenu", "inverty":
             break
         case _
-        where option.hasPrefix("show") || option.hasPrefix("openashyper") || option.hasPrefix("bicubic")
+        where option.hasPrefix("show") || option.hasPrefix("openashyper")
             || option.hasPrefix("wand") || option.contains("points") || option.hasPrefix("loop")
             || option.hasPrefix("jfilechooser") || option.hasPrefix("auto") || option.hasPrefix("converttomicrons")
             || option.hasPrefix("supportmacroundo") || option.hasPrefix("copyhead") || option.hasPrefix("monospaced")
@@ -1585,106 +1587,11 @@ extension Functions {
     }
 
     /// The 256-bin histogram `ImageStatistics` gives for `region`: by value
-    /// for 8-bit and RGB (the mean of R, G and B); from the minimum to the
+    /// for 8-bit and RGB (the rounded luminance); from the minimum to the
     /// maximum in the region for 16-bit (`ShortStatistics`) and 32-bit
     /// (`FloatStatistics`) planes.
     static func histogram(_ plane: Plane, width: Int, region: MeasurementRegion?) -> [Int]? {
-        let height = plane.count / max(width, 1)
-        let r = region ?? MeasurementRegion(x: 0, y: 0, width: width, height: height)
-        var histogram = [Int](repeating: 0, count: 256)
-        func forEach(_ body: (Int) -> Void) {
-            for y in max(r.y, 0)..<max(max(r.y, 0), min(r.y + r.height, height)) {
-                for x in max(r.x, 0)..<max(max(r.x, 0), min(r.x + r.width, width)) where r.contains(x, y) { body(y * width + x) }
-            }
-        }
-        switch plane {
-        case .gray8(let p): forEach { histogram[Int(p[$0])] += 1 }
-        case .rgb8(let p):
-            forEach {
-                let c = p[$0]
-                histogram[(Int((c >> 16) & 0xFF) + Int((c >> 8) & 0xFF) + Int(c & 0xFF)) / 3] += 1
-            }
-        case .gray16(let p):
-            var counts = [Int](repeating: 0, count: 65536)
-            forEach { counts[Int(p[$0])] += 1 }
-            guard let lo = counts.firstIndex(where: { $0 > 0 }), let hi = counts.lastIndex(where: { $0 > 0 }) else { return histogram }
-            let binSize = Double(hi - lo + 1) / 256
-            let scale = 1 / binSize
-            for i in lo...hi where counts[i] > 0 {
-                histogram[min(255, jIntI(scale * Double(i - lo)))] += counts[i]
-            }
-        case .gray32Float(let p):
-            var lo = Double.greatestFiniteMagnitude, hi = -Double.greatestFiniteMagnitude
-            forEach {
-                let v = Double(p[$0])
-                if v < lo { lo = v }
-                if v > hi { hi = v }
-            }
-            let scale = 256 / (hi - lo)
-            forEach {
-                let v = Double(p[$0])
-                guard v >= lo && v <= hi else { return }
-                histogram[min(255, jIntI(scale * (v - lo)))] += 1
-            }
-        }
-        return histogram
-    }
-
-    func getHistogram() throws(MacroSignal) {
-        try interp.getLeftParen()
-        var values: Variable?
-        if interp.nextToken() == NUMBER { _ = try interp.getExpression() } else { values = try getArrayVariable() }
-        try interp.getComma()
-        let counts = try getArrayVariable()
-        try interp.getComma()
-        let nBins = jIntI(try interp.getExpression())
-        let open = try image()
-        let bitDepth = open.image.pixelType.bitDepth
-        if interp.nextToken() == ch(",") {
-            _ = try getNextArg()
-            _ = try getLastArg()
-            if bitDepth == 8 || bitDepth == 24 { try interp.error("16 or 32-bit image required to set histMin and histMax") }
-            try unsupported("getHistogram with histMin and histMax")
-        }
-        try interp.getRightParen()
-        var region: MeasurementRegion?
-        if let roi = open.roi {
-            guard roi.isArea else { try unsupported("getHistogram with a line selection") }
-            do { region = try roi.measurementRegion(width: open.image.width, height: open.image.height) } catch {
-                try interp.fail("\(error)")
-            }
-        }
-        var histogram: [Int]
-        if nBins == 65536 && bitDepth == 16, case .gray16(let p) = open.currentPlane {
-            histogram = [Int](repeating: 0, count: 65536)
-            let width = open.image.width, height = open.image.height
-            let r = region ?? MeasurementRegion(x: 0, y: 0, width: width, height: height)
-            for y in max(r.y, 0)..<min(r.y + r.height, height) {
-                for x in max(r.x, 0)..<min(r.x + r.width, width) where r.contains(x, y) { histogram[Int(p[y * width + x])] += 1 }
-            }
-        } else if nBins == 256, (bitDepth == 8 || bitDepth == 24),
-            let h = Self.histogram(open.currentPlane, width: open.image.width, region: region)
-        {
-            histogram = h
-            if let values {
-                let cal = open.image.calibration
-                var array: [Double] = []
-                var value = cal.calibratedValue(0)
-                let increment = cal.valueFunction != nil ? (cal.calibratedValue(256) - cal.calibratedValue(0)) / 256 : 1
-                for _ in 0..<256 {
-                    array.append(value)
-                    value += increment
-                }
-                values.setArray(VariableArray(array.map { Variable($0) }))
-            }
-        } else {
-            try unsupported("getHistogram with \(nBins) bins on \(bitDepth)-bit images")
-        }
-        if let array = counts.getArray(), array.count == histogram.count {
-            for (i, v) in histogram.enumerated() { array[i].setValue(Double(v)) }
-        } else {
-            counts.setArray(VariableArray(histogram.map { Variable(Double($0)) }))
-        }
+        HistogramData(plane: plane, width: width, region: region).counts
     }
 
     func getLut() throws(MacroSignal) {
@@ -1808,10 +1715,6 @@ extension Functions {
         default:
             try interp.fail("Unvalid key")
         }
-    }
-
-    func getProfile() throws(MacroSignal) -> VariableArray? {
-        try unsupported("getProfile")
     }
 }
 

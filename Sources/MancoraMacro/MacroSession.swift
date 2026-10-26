@@ -23,6 +23,11 @@ public final class MacroSession {
     /// Batch mode: on from the start, as for a macro ImageJ runs without its window (`IJ.runMacro` headless).
     public var batchMode = true
     public var lineWidth = 1
+    /// The keys `setKeyDown` holds down (`IJ.altKeyDown()`, `IJ.shiftKeyDown()`…).
+    var keys = HeldKeys()
+    /// `setOption("Bicubic", …)` (`ImageProcessor.setUseBicubic`), which
+    /// ImageJ applies to every interpolated value.
+    var bicubic = false
     /// `random("seed", n)`'s seed, which ImageJ also uses for its noise filters.
     public var randomSeed = Double.nan
     /// The foreground and background colors (`0xRRGGBB`), kept in the command settings.
@@ -319,4 +324,17 @@ public struct RoiManagerList: Sendable {
     public init() {}
 
     public var count: Int { entries.count }
+}
+
+/// ImageJ's key state (`IJ.setKeyDown`/`setKeyUp`), which macros set with
+/// `setKeyDown` and some functions read: Alt makes `getProfile()` average
+/// the rows of a rectangle.
+struct HeldKeys {
+    var alt = false
+    var shift = false
+    var control = false
+    var space = false
+
+    /// `IJ.setKeyUp(IJ.ALL_KEYS)`.
+    mutating func releaseAll() { self = HeldKeys() }
 }

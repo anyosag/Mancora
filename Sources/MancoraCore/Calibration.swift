@@ -46,4 +46,14 @@ public struct Calibration: Sendable, Hashable {
     public func calibratedValue(_ raw: Double) -> Double {
         valueFunction?.apply(raw) ?? raw
     }
+
+    /// The raw pixel value of a calibrated value (ImageJ's `getRawValue`):
+    /// the straight line inverted, or 0 when it's flat (the first entry of
+    /// ImageJ's calibration table that comes closest).
+    public func rawValue(_ calibrated: Double) -> Double {
+        guard let valueFunction else { return calibrated }
+        switch valueFunction {
+        case .straightLine(let intercept, let slope): return slope != 0 ? (calibrated - intercept) / slope : 0
+        }
+    }
 }
