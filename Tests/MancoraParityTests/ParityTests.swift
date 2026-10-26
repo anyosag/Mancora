@@ -244,7 +244,11 @@ struct ProcessParityTests {
                 .map { ParityCase("8-bit", on: $0) }
                 + [ParityInput.gray8, .gray32, .stack32, .rgb].map { ParityCase("16-bit", on: $0) }
                 + [ParityInput.gray8, .gray16, .rgb, .hyperstack, .fixtureHyperstack].map { ParityCase("32-bit", on: $0) }
-                + [ParityInput.gray8, .gray16, .gray32, .fixtureFire, .stack8].map { ParityCase("RGB Color", on: $0) })
+                + [ParityInput.gray8, .gray16, .gray32, .fixtureFire, .stack8].map { ParityCase("RGB Color", on: $0) }
+                // "RGB Color" forgets the name of the LUT it was drawn through.
+                + [ParityInput.gray8, .gray16, .stack8].map {
+                    ParityCase(steps: [.init(command: "Fire", options: ""), .init(command: "RGB Color", options: "")], inputs: [$0])
+                })
     }
 
     @Test func math() async throws {

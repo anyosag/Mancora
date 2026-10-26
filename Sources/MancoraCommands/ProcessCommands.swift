@@ -43,6 +43,12 @@ enum ProcessCommands {
             if type == .rgb8, open.image.channels.count > 1, open.image.stack.count > open.image.channels.count {
                 throw CommandError.notNative(name)
             }
+            // Converter.convert removes the threshold first, even when there's
+            // nothing to convert; "RGB Color" also forgets the LUT's name.
+            try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in
+                open.threshold = nil
+                if type == .rgb8 { open.image.properties[BuiltInCommands.currentLUTKey] = nil }
+            }
             if open.image.pixelType == type, type != .gray8 { return }  // nothing to do
             let options = ConversionOptions(scale: context.settings.scaleConversions)
             try replaceCurrent(name, &context) { open in try ImageConverter.convert(open.image, to: type, options: options) }
