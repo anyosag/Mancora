@@ -1852,17 +1852,15 @@ final class Functions {
     }
 
     /// `new File(path).getName()`.
-    static func javaFileName(_ path: String) -> String {
+    static func javaFileName(_ pathIn: String) -> String {
+        let path = javaNormalizedPath(pathIn)
         let i = max(javaLastIndexOf(path, "/"), javaLastIndexOf(path, Self.separator))
         return javaSubstring(path, i + 1)
     }
 
     /// `new File(path).getParent()`.
     static func javaParent(_ pathIn: String) -> String? {
-        var path = pathIn
-        while path.utf16.count > 1 && (javaEndsWith(path, "/") || javaEndsWith(path, Self.separator)) {
-            path = javaSubstring(path, 0, path.utf16.count - 1)
-        }
+        let path = javaNormalizedPath(pathIn)
         let i = max(javaLastIndexOf(path, "/"), javaLastIndexOf(path, Self.separator))
         if i < 0 { return nil }
         if i == 0 { return path.utf16.count > 1 ? javaSubstring(path, 0, 1) : nil }
@@ -1870,6 +1868,18 @@ final class Functions {
     }
 
     #if os(Windows)
+    /// The path a `java.io.File` keeps: separators doubled or at the end removed ("a//b/" is "a/b").
+    static func javaNormalizedPath(_ path: String) -> String {
+        var out: [UInt16] = []
+        let separators: Set<UInt16> = [47, Self.separator.utf16.first!]
+        for c in path.utf16 {
+            if separators.contains(c), let last = out.last, separators.contains(last) { continue }
+            out.append(c)
+        }
+        if out.count > 1, let last = out.last, separators.contains(last) { out.removeLast() }
+        return utf16String(out)
+    }
+
         static let separator = "\\"
     #else
         static let separator = "/"

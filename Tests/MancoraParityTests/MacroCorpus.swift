@@ -331,6 +331,10 @@ enum MacroCorpus {
             setResult("Label", 0, "x");
             print(Table.headings + "|");
             """#),
+        .init("file names", #"""
+            print(File.getName("/a/b/"), File.getName("a//b"), File.getParent("a//b"), File.getDirectory("a//b//c"));
+            print(File.getName("//") + "|", File.getNameWithoutExtension("/a/b.c/"), File.getParent("/a"), File.getDirectory("/a"));
+            """#),
         .init("String.format conversions and flags", #"""
             print(String.format("%#.0f", 3), String.format("%#.0e", 2.5), String.format("%.1f %<.2f", 1.25), String.format("%2$.1f %1$.1f", 1, 2));
             print(String.format("%h|%H|%.1h", 1.5, -1234567.891, NaN), String.format("%a %A %.2a %.0a", 1.5, -0.1, 0.1, -0.1));
