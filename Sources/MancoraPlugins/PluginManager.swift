@@ -248,7 +248,8 @@ public final class PluginManager {
                 file.setStatus(file.isObsolete ? .obsoleteUninstalled : .notInstalled)
             }
         }
-        for name in Set(deletions) {
+        // Never what was just installed under the same name.
+        for name in Set(deletions).subtracting(downloads.map(\.filename)) {
             let target = root.appendingPathComponent(name)
             if fm.fileExists(atPath: target.path) {
                 do { try fm.removeItem(at: target) } catch { throw InstallError.move(name, error) }
