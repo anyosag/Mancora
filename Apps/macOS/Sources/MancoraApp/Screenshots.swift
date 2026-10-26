@@ -744,9 +744,11 @@ final class ScreenshotRun {
             let tracker = Task {
                 await self.captureOpenMenu(menu, file: file, detail: "The Image menu open, \(mode) mode")
             }
-            // If the capture never ran, the menu would stay open for good.
+            // If the capture never ran, the menu would stay open for good. The timer fires on
+            // the main run loop, where the menu is only ever touched.
+            nonisolated(unsafe) let trackedMenu = menu
             let safety = Timer(timeInterval: 25, repeats: false) { @Sendable _ in
-                MainActor.assumeIsolated { menu.cancelTracking() }
+                MainActor.assumeIsolated { trackedMenu.cancelTracking() }
             }
             RunLoop.main.add(safety, forMode: .common)
             let top: CGFloat = view.isFlipped ? 16 : view.bounds.height - 16
