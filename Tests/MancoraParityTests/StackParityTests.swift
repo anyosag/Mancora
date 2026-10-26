@@ -222,6 +222,33 @@ struct StackJoiningParityTests {
         ])
     }
 
+    @Test func makeMontage() async throws {
+        try await MacroParity.check([
+            M.make("a grid", #"run("Make Montage...", "columns=3 rows=2 scale=1"); state(); titles();"#, on: .stack8),
+            M.make("half size with borders", #"run("Make Montage...", "columns=3 rows=2 scale=0.5 border=2"); state();"#, on: .stack16),
+            M.make(
+                "every other slice", #"run("Make Montage...", "columns=2 rows=2 scale=0.75 first=2 last=5 increment=2"); state();"#,
+                on: .stack32),
+            M.make("RGB", #"run("Make Montage...", "columns=2 rows=2 scale=0.6 border=3"); state();"#, on: .stackRGB),
+            M.make("calibrated", #"run("Make Montage...", "columns=2 rows=2 scale=0.5"); state();"#, on: .calibrated),
+            M.make("binary", #"run("Make Montage...", "columns=3 rows=1 scale=1 border=4"); state();"#, on: .binaryStack),
+            M.make("inverted LUT", #"run("Invert LUT"); setSlice(2); run("Make Montage...", "columns=3 rows=2 scale=1.5 border=1"); state();"#, on: .stack8),
+            M.make(
+                "foreground and background colors",
+                #"setForegroundColor(255, 0, 0); setBackgroundColor(0, 0, 255); run("Make Montage...", "columns=3 rows=2 scale=1 border=2 use"); state();"#,
+                on: .stackRGB),
+            M.make(
+                "a composite of channels",
+                #"run("Reduce Dimensionality...", "channels"); run("Make Montage...", "columns=2 rows=1 scale=1 border=1"); state();"#,
+                on: .hyperstack),
+            M.make(
+                "a hyperstack's channels",
+                #"run("Reduce Dimensionality...", "channels slices"); run("Make Montage...", "columns=2 rows=2 scale=0.5 border=1"); state();"#,
+                on: .hyperstack),
+            M.make("more tiles than room", #"run("Make Montage...", "columns=2 rows=1 scale=1 increment=0"); state();"#, on: .stack16),
+        ])
+    }
+
     @Test func groupedZProject() async throws {
         try await MacroParity.check([
             M.make("whole stack", #"run("Grouped Z Project...", "projection=[Max Intensity] group=5"); state(); titles();"#, on: .stack16),

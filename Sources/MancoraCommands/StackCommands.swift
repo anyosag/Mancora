@@ -6,8 +6,60 @@ import MancoraProcess
 /// ImageJ runs them for images without a window (a macro in batch mode).
 enum StackCommands {
     static var all: [CommandDefinition] {
-        [addSlice, deleteSlice, nextSlice, previousSlice, setSlice, stackToImages, setLabel, removeLabels, reduce]
+        [addSlice, deleteSlice, nextSlice, previousSlice, setSlice, stackToImages, setLabel, removeLabels, reduce, makeMontage]
             + StackCombineCommands.all
+    }
+
+    // MARK: Make Montage
+
+    /// `MontageMaker`: `columns=`, `rows=`, `scale=`, `first=`, `last=`,
+    /// `increment=`, `border=` (and `use` for the foreground and background
+    /// colors) in a new image "Montage". Slice labels (`label`) need text
+    /// rendering, which ImageJ does.
+    static let makeMontage = CommandDefinition("Make Montage...", menu: "Image>Stacks") { context, options in
+        let name = "Make Montage..."
+        guard let open = context.current, open.image.stack.count > 1 else {
+            throw CommandError.failed(command: name, detail: "Stack required")
+        }
+        let image = open.image
+        let d = image.dimensions
+        let hyper = MontageMaker.isChannelHyperstack(image)
+        if hyper && d.slices > 1 && d.frames > 1 {
+            throw CommandError.failed(command: name, detail: "5D hyperstacks are not supported")
+        }
+        let n = MontageMaker.slices(of: image)
+        var layout = MontageMaker.Layout.defaults(slices: n, width: image.width)
+        let fields = ["Columns:", "Rows:", "Scale factor:"] + (hyper ? [] : ["First slice:", "Last slice:"])
+            + ["Increment:", "Border width:", "Font size:"]
+        let invalid = fields.contains { label in
+            options.value(forLabel: label).map { Double(MacroOptions.trimmed($0)) == nil } ?? false
+        }
+        func number(_ label: String, _ value: Double) -> Double { options.number(forLabel: label, default: value) }
+        func int(_ label: String, _ value: Int) -> Int { Int(JavaNumerics.int32(number(label, Double(value)))) }
+        layout.columns = int("Columns:", layout.columns)
+        layout.rows = int("Rows:", layout.rows)
+        layout.scale = number("Scale factor:", layout.scale)
+        if !hyper {
+            layout.first = int("First slice:", layout.first)
+            layout.last = int("Last slice:", layout.last)
+        }
+        layout.increment = int("Increment:", 1)
+        layout.borderWidth = max(int("Border width:", 0), 0)
+        _ = number("Font size:", 12)
+        if layout.first < 1 { layout.first = 1 }
+        if layout.last > n { layout.last = n }
+        if layout.first > layout.last { (layout.first, layout.last) = (1, n) }
+        if layout.increment < 1 { layout.increment = 1 }
+        if invalid { throw CommandError.failed(command: name, detail: "Invalid number") }
+        if options.flag(forLabel: "Label slices") { throw CommandError.notNative(name) }  // text: ImageJ draws it
+        guard layout.columns > 0, layout.rows > 0, Int(Double(image.width) * layout.scale) > 0,
+            Int(Double(image.height) * layout.scale) > 0
+        else { throw CommandError.notNative(name) }  // ImageJ fails on an empty montage
+        context.add(
+            MontageMaker.montage(
+                image, layout: layout, channel: open.channel, slice: open.slice, frame: open.frame,
+                useForegroundColor: options.flag(forLabel: "Use foreground color"),
+                foreground: context.settings.foreground, background: context.settings.background))
     }
 
     /// The current plane's stack index (0-based; ImageJ's `getCurrentSlice() - 1`).
