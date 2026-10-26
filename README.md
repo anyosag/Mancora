@@ -152,6 +152,16 @@ swift run --package-path Apps/macOS     # macOS
 swift run --package-path Apps/Windows   # Windows
 ```
 
+The macOS app downloads Fiji the first time a command needs the bridge (a
+sheet says so, shows the download and runs the command when it is done) and
+keeps it up to date; Settings ▸ Fiji turns that off, checks now, shows the
+version and location, and reinstalls. Fiji's menus are merged into the menu
+bar, from a list kept beside the installation (`Fiji.menus.json`) so they
+are there at launch, before any Java runs. Entries only Fiji has (TrackMate,
+Labkit, the Script Editor) run in a second helper with a Dock icon named
+Fiji; the one that runs Mancora's own commands stays out of sight. An ImageJ
+that an earlier Mancora installed keeps working until Fiji is installed.
+
 To build installers locally, run `Tools/package/macos/package.sh`,
 `Tools/package/windows/package.ps1` or `Tools/package/linux/package.sh`.
 The output goes to `dist/`.

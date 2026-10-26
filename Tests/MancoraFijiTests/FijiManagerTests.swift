@@ -186,6 +186,31 @@ struct FijiUpdateTests {
         #expect(try await manager.applyUpdates() == .upToDate)
     }
 
+    @Test func disablingASiteInAnUpdateRemovesItsFiles() async throws {
+        let (manager, _, root) = try Self.installed()
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        _ = try await manager.applyUpdates()
+        #expect(try Self.macro(root) == "print('v2');")
+        // What the app's Update Sites window does when a site is switched off and the change applied.
+        let outcome = try await manager.applyUpdates(siteChanges: { try $0.setActive(FakeFiji.site, false) })
+        #expect(outcome == .applied(["uninstall macros/hello.ijm (Test)"]))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("macros/hello.ijm").path))
+        #expect(FijiInstallation(root: root).isComplete)
+        let site = try #require(PluginManager(root: root).sites.first { $0.name == FakeFiji.site })
+        #expect(!site.isActive)
+        #expect(leftovers(beside: root).isEmpty, "\(leftovers(beside: root))")
+    }
+
+    @Test func changesToTheSitesAloneAreAnUpdate() async throws {
+        let (manager, _, root) = try Self.installed(newMacro: false)
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let outcome = try await manager.applyUpdates(siteChanges: { try $0.addSite(name: "Extra", url: "https://sites.test/Extra/") })
+        #expect(outcome == .applied(["update sites"]))
+        #expect(try PluginManager(root: root).sites.contains { $0.name == "Extra" })
+        #expect(FijiInstallation(root: root).isComplete)
+        #expect(leftovers(beside: root).isEmpty, "\(leftovers(beside: root))")
+    }
+
     @Test func updatesWaitForTheRunningHelper() async throws {
         let (manager, _, root) = try Self.installed()
         defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }

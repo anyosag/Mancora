@@ -1,5 +1,6 @@
 import AppKit
 import MancoraBridge
+import MancoraFiji
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -8,7 +9,7 @@ struct MancoraApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var updater = AppUpdater()
     @State private var bridge = AppBridge()
-    @State private var updateSites = AppUpdateSites()
+    @State private var updateSites = AppUpdateSites.shared
 
     init() {
         let args = CommandLine.arguments
@@ -39,6 +40,12 @@ struct MancoraApp: App {
         // Run from `swift run` there is no app bundle; make it a regular app
         // so it gets a Dock icon, a menu bar and keyboard focus.
         NSApplication.shared.setActivationPolicy(.regular)
+        // Fiji, once installed, keeps itself up to date while Mancora runs (unless that is turned off
+        // in Settings): it looks at launch, then every hour whether a day has passed since it last did.
+        FijiState.shared.begin()
+        if !Screenshots.isActive {
+            Task { await FijiManager.shared.startAutomaticUpdates() }
+        }
     }
 
     var body: some Scene {
@@ -98,14 +105,14 @@ struct MancoraApp: App {
         }
         .defaultSize(width: 720, height: 520)
         Settings {
-            SettingsView(updater: updater)
+            SettingsView(updater: updater, bridge: bridge)
         }
     }
 }
 
-/// The Plugins menu: ImageJ's (Macros, Shortcuts, Utilities, New, …),
-/// Fiji's update sites, the bridge's state, and the commands of installed
-/// plugin jars.
+/// The Plugins menu: ImageJ's (Macros, Shortcuts, Utilities, New, …) with
+/// Fiji's merged in, Fiji's update sites, the bridge's state, and (without
+/// Fiji, whose own menus hold them) the commands of installed plugin jars.
 struct PluginCommands: Commands {
     let bridge: AppBridge
     @FocusedValue(\.viewer) private var viewer
@@ -113,18 +120,28 @@ struct PluginCommands: Commands {
 
     var body: some Commands {
         CommandMenu("Plugins") {
-            MenuEntries(entries: ImageJMenuCommands.menu("Plugins").entries, perform: perform)
+            MenuEntries(
+                entries: ImageJMenuCommands.menu("Plugins").entries, path: "Plugins", perform: perform, performFiji: performFiji)
             Divider()
             Button("Manage Update Sites…") { openWindow(id: "update-sites") }
+            if bridge.hasFijiWindows {
+                Button("Get Images from Fiji") {
+                    AppMenuActions.fetchFijiImages(viewer: viewer, bridge: bridge, openWindow: openWindow)
+                }
+            }
             switch bridge.state {
             case .idle, .failed:
-                Button("Start ImageJ") { Task { await bridge.start() } }
+                Button("Start \(bridge.engineName)") { Task { await bridge.start() } }
             case .starting:
-                Text("Starting ImageJ…")
+                Text("Starting \(bridge.engineName)…")
             case .ready(let imagej, let java):
-                Text("ImageJ \(imagej) · Java \(java)")
+                if bridge.usesFiji {
+                    Text("\(FijiState.shared.version.map(FijiText.name) ?? "Fiji") · ImageJ \(imagej) · Java \(java)")
+                } else {
+                    Text("ImageJ \(imagej) · Java \(java)")
+                }
             }
-            if !bridge.pluginCommands.isEmpty {
+            if !bridge.usesFiji, !bridge.pluginCommands.isEmpty {
                 Divider()
                 ForEach(bridge.pluginCommands, id: \.name) { command in
                     Button(command.name) { perform(command.name) }
@@ -133,29 +150,15 @@ struct PluginCommands: Commands {
         }
     }
 
+    private func performFiji(_ item: FijiMenuItem) {
+        AppMenuActions.performFiji(item, viewer: viewer, bridge: bridge, openWindow: openWindow)
+    }
+
     private func perform(_ name: String) {
         if name == "Run..." {
             AppMenuActions.runMacroFile(viewer: viewer, bridge: bridge, openWindow: openWindow)
         } else {
             AppMenuActions.perform(name, viewer: viewer, bridge: bridge, openWindow: openWindow)
         }
-    }
-}
-
-struct SettingsView: View {
-    @Bindable var updater: AppUpdater
-
-    var body: some View {
-        Form {
-            Toggle(
-                "Check for updates automatically",
-                isOn: Binding(get: { updater.automaticallyChecks }, set: { updater.setAutomaticallyChecks($0) })
-            )
-            Text("Mancora looks for a newer release on GitHub at most once a day.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(20)
-        .frame(width: 380)
     }
 }

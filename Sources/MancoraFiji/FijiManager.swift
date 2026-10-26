@@ -344,6 +344,17 @@ public actor FijiManager {
     /// swapped in now if no helper is running (in any Mancora), else staged
     /// and swapped in before the next helper starts.
     public func applyUpdates(progress: @escaping @Sendable (FijiProgress) -> Void = { _ in }) async throws -> FijiUpdateOutcome {
+        try await applyUpdates(progress: progress, siteChanges: nil)
+    }
+
+    /// As ``applyUpdates(progress:)``, with changes to the update sites made first, on the copy,
+    /// after the sites have been read and before the changes are planned: disabling or removing
+    /// a site plans the removal of its files, and the copy is swapped in with the sites as changed
+    /// (even if no file changes). Nothing changes if anything fails.
+    public func applyUpdates(
+        progress: @escaping @Sendable (FijiProgress) -> Void = { _ in },
+        siteChanges: (@Sendable (PluginManager) throws -> Void)?
+    ) async throws -> FijiUpdateOutcome {
         guard installation.isComplete else { throw FijiError.notInstalled(path: root.path) }
         guard let updating = try FileLock.acquire(files.updating, .exclusive, wait: false) else { throw FijiError.busy }
         defer { updating.release() }
@@ -362,7 +373,7 @@ public actor FijiManager {
         do {
             try Files.cloneTree(from: root, to: building)
             if fm.fileExists(atPath: files.fijiUpdates.path) { try Files.overlay(from: files.fijiUpdates, onto: building) }
-            changes = try await Self.update(root: building, client: client) { message in
+            changes = try await Self.update(root: building, client: client, siteChanges: siteChanges) { message in
                 let p = FijiProgress(phase: .updating, detail: message)
                 progress(p)
                 Task { await self.note(p) }
@@ -394,15 +405,24 @@ public actor FijiManager {
     }
 
     /// Refreshes `root` from its sites and applies the changes there; returns them, empty if there were none.
-    static func update(root: URL, client: any HTTPClient, progress: @escaping @Sendable (String) -> Void) async throws -> [String] {
+    static func update(
+        root: URL, client: any HTTPClient, siteChanges: (@Sendable (PluginManager) throws -> Void)? = nil,
+        progress: @escaping @Sendable (String) -> Void
+    ) async throws -> [String] {
         let manager = try PluginManager(root: root)
         try await manager.refresh(client: client)
         // A site that couldn't be read would look as if its files had gone.
         guard manager.warnings.isEmpty else { throw FijiError.sitesUnreadable(manager.warnings) }
+        try siteChanges?(manager)
         let (changes, conflicts) = manager.plan()
         let errors = conflicts.filter { !$0.isWarning }
         guard errors.isEmpty else { throw FijiError.conflicts(errors.map(\.description)) }
-        if changes.isEmpty { return [] }
+        if changes.isEmpty {
+            guard siteChanges != nil else { return [] }
+            // Only the sites changed: that is a change to Fiji too.
+            try manager.save()
+            return ["update sites"]
+        }
         try await manager.apply(client: client, progress: progress)
         return changes.map(\.description)
     }
