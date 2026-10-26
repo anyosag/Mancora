@@ -128,6 +128,14 @@ public actor Bridge {
         }
     }
 
+    /// Opens a file in a format Mancora doesn't read, as ImageJ (with Fiji's
+    /// extra file types) or Bio-Formats does when installed. The result's
+    /// value names the reader: "ImageJ" or "Bio-Formats".
+    public func open(_ path: String) async throws -> BridgeRunResult {
+        let absolute = URL(fileURLWithPath: path).standardizedFileURL.path
+        return try await withImages([], method: "open") { _, outputDir in OpenParams(path: absolute, outputDir: outputDir) }
+    }
+
     /// Asks the helper to exit, and stops it if it doesn't.
     public func stop() async {
         if let connection, connection.isRunning {
@@ -216,6 +224,8 @@ public actor Bridge {
         let timer = Task.detached {
             try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
             connection.fail(id: id, with: BridgeError.timedOut(seconds: timeout))
+            // A helper that doesn't answer may never answer again: the next request starts a new one.
+            connection.terminate()
         }
         defer { timer.cancel() }
         let data = try await connection.send(id: id, line: line)
@@ -263,7 +273,10 @@ public actor Bridge {
         let classPath = (home.classPath().map(\.path) + [classes.path]).joined(separator: separator)
         var arguments: [String] = []
         if let heap = config.maximumHeapMegabytes { arguments.append("-Xmx\(heap)m") }
-        arguments += ["-Dplugins.dir=\(home.root.path)", "-Dfile.encoding=UTF-8"]
+        arguments += ["-Dplugins.dir=\(home.root.path)", "-Dij.dir=\(home.root.path)", "-Dfile.encoding=UTF-8"]
+        if FileManager.default.fileExists(atPath: home.nativeLibraries.path) {
+            arguments.append("-Djava.library.path=\(home.nativeLibraries.path)")
+        }
         if let table = config.commandTable { arguments.append("-Dmancora.commands=\(table.path)") }
         #if os(macOS)
         arguments.append("-Dapple.awt.UIElement=true")  // no Dock icon or menu bar for the helper
@@ -320,6 +333,8 @@ public actor Bridge {
     }
 
     /// `<home>/helper/<hash of the source>/`, compiled with `javac` once.
+    /// Each compile writes a folder of its own and renames it into place,
+    /// so bridges starting together never run a half-written helper.
     func compiledHelper() throws -> URL {
         let config = configuration
         let source = try Data(contentsOf: config.helperSource)
@@ -328,11 +343,14 @@ public actor Bridge {
         let compiled = folder.appendingPathComponent("MancoraBridgeHelper.class")
         if FileManager.default.fileExists(atPath: compiled.path) { return folder }
         guard let javac = config.java.compiler else { throw BridgeError.noCompiler }
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let staging = folder.deletingLastPathComponent().appendingPathComponent(".\(hash)-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: staging) }
         let process = Process()
         process.executableURL = javac
         process.arguments = [
-            "-encoding", "UTF-8", "-nowarn", "-cp", config.home.imageJJar.path, "-d", folder.path, config.helperSource.path,
+            "-encoding", "UTF-8", "-nowarn", "-cp", config.home.imageJJar.path, "-d", staging.path,
+            config.helperSource.path,
         ]
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -341,9 +359,17 @@ public actor Bridge {
         try process.run()
         let output = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        guard process.terminationStatus == 0, FileManager.default.fileExists(atPath: compiled.path) else {
-            try? FileManager.default.removeItem(at: folder)
+        let staged = staging.appendingPathComponent("MancoraBridgeHelper.class")
+        guard process.terminationStatus == 0, FileManager.default.fileExists(atPath: staged.path) else {
             throw BridgeError.compileFailed(String(decoding: output, as: UTF8.self))
+        }
+        // Another bridge may have renamed its copy (the same one) into place first.
+        if (try? FileManager.default.moveItem(at: staging, to: folder)) == nil,
+            !FileManager.default.fileExists(atPath: compiled.path)
+        {
+            // A folder without the helper, left by an interrupted compile.
+            try? FileManager.default.removeItem(at: folder)
+            try FileManager.default.moveItem(at: staging, to: folder)
         }
         return folder
     }

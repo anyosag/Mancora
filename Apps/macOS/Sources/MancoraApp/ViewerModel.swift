@@ -49,16 +49,21 @@ final class ViewerModel {
 
     func presentOpenPanel(virtual: Bool = false) -> URL? {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.tiff]
+        // Mancora reads TIFF itself; other formats open in ImageJ through the bridge.
+        if virtual { panel.allowedContentTypes = [.tiff] }
         panel.allowsMultipleSelection = false
         panel.title = virtual ? "Open as Virtual Stack" : "Open"
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
         return url
     }
 
+    /// The bridge, for files Mancora can't read itself.
+    @ObservationIgnored var bridge: AppBridge?
+
     func open(_ request: OpenRequest) {
         isBusy = true
         let path = request.url.path, virtual = request.virtual
+        let isTIFF = ["tif", "tiff", "btf", "tf8"].contains(request.url.pathExtension.lowercased())
         Task {
             // Large files take a while to decode; keep the window responsive.
             let result = await Task.detached(priority: .userInitiated) { () -> Result<Hyperstack, MancoraIOError> in
@@ -68,13 +73,35 @@ final class ViewerModel {
                     return .failure(error)
                 }
             }.value
-            isBusy = false
             switch result {
             case .success(let image):
+                isBusy = false
                 show(image, from: request.url)
             case .failure(let error):
-                errorMessage = error.description
+                // Not a TIFF, or a TIFF feature Mancora lacks: ImageJ, or Bio-Formats, may read it.
+                var unsupported = false
+                if case .unsupported = error { unsupported = true }
+                if let bridge, !virtual, !isTIFF || unsupported {
+                    await openInBridge(path, bridge: bridge, url: request.url, fallback: error.description)
+                } else {
+                    isBusy = false
+                    errorMessage = error.description
+                }
             }
+        }
+    }
+
+    private func openInBridge(_ path: String, bridge: AppBridge, url: URL, fallback: String) async {
+        defer { isBusy = false }
+        do {
+            let result = try await bridge.open(path)
+            guard let first = result.images.first else {
+                errorMessage = fallback
+                return
+            }
+            show(first.image, from: nil)
+        } catch {
+            errorMessage = "\(error)"
         }
     }
 

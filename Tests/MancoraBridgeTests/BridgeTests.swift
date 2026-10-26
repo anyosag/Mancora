@@ -5,6 +5,7 @@ import MancoraUpdate
 import Testing
 
 @testable import MancoraBridge
+import MancoraPlugins
 
 enum BridgeFixtures {
     static let repoRoot: String = {
@@ -75,6 +76,27 @@ struct BridgeSetupTests {
         try Data("jar".utf8).write(to: home.imageJJar)
         await #expect(throws: BridgeError.noCompiler) { try await bridge.start() }
         #expect(home.classPath().first?.lastPathComponent == "ij.jar")
+    }
+
+    @Test func classPathFollowsFijisLayout() throws {
+        let home = BridgeHome(root: FileManager.default.temporaryDirectory.appendingPathComponent("mancora-home-\(UUID().uuidString)"))
+        defer { try? FileManager.default.removeItem(at: home.root) }
+        let fm = FileManager.default
+        let other = Platforms.current.hasPrefix("win") ? "linux64" : "win64"
+        for path in ["jars/ij-1.54f.jar", "jars/a.jar", "jars/sub/b.jar", "jars/\(Platforms.current)/native.jar", "jars/\(other)/skip.jar", "jars/notes.txt"] {
+            let url = home.root.appendingPathComponent(path)
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("x".utf8).write(to: url)
+        }
+        // The ImageJ update site installs ImageJ under its version.
+        #expect(home.imageJJar.lastPathComponent == "ij-1.54f.jar")
+        #expect(home.hasImageJ)
+        let paths = home.classPath().map { String($0.path.dropFirst(home.root.path.count + 1)) }
+        #expect(paths == ["jars/ij-1.54f.jar"] + ["jars/a.jar", "jars/sub/b.jar", "jars/\(Platforms.current)/native.jar"].sorted())
+        // jars/ij.jar, as `mancora bridge setup` installs it, comes first.
+        try Data("x".utf8).write(to: home.jars.appendingPathComponent("ij.jar"))
+        #expect(home.imageJJar.lastPathComponent == "ij.jar")
+        #expect(!home.classPath().contains { $0.lastPathComponent == "ij-1.54f.jar" })
     }
 }
 
@@ -150,6 +172,70 @@ struct BridgeIntegrationTests {
 
     /// The P4 exit test: killing the helper loses nothing, and the next
     /// request starts a new one.
+    /// Bridges that start together on a new home (as test suites and app
+    /// windows do) compile the helper once between them, and none of them
+    /// runs a copy that another is still writing.
+    @Test func bridgesStartingTogetherShareTheHelper() async throws {
+        let first = try BridgeFixtures.bridge()
+        let config = await first.configuration
+        let image = fixture
+        let bridges = [first] + (1..<6).map { _ in Bridge(configuration: config) }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for bridge in bridges {
+                group.addTask {
+                    let result = try await bridge.run("Invert", images: [image])
+                    #expect(result.images.count == 1)
+                    #expect(await bridge.launchCount == 1)
+                    await bridge.stop()
+                }
+            }
+            try await group.waitForAll()
+        }
+        let helpers = try FileManager.default.contentsOfDirectory(atPath: config.home.root.appendingPathComponent("helper").path)
+        #expect(helpers.count == 1)
+        #expect(helpers.allSatisfy { !$0.hasPrefix(".") })
+    }
+
+    /// ImageJ shows a modal dialog for every macro error, which the helper
+    /// closes; however the close lands, the next request still runs.
+    @Test(.enabled(if: hasDisplay)) func macroErrorsNeverHang() async throws {
+        let first = try BridgeFixtures.bridge()
+        var config = await first.configuration
+        config.timeoutSeconds = 20
+        config.environment["MANCORA_WATCHDOG_MS"] = "1"
+        // Several helpers at once, as the parity suites run them, make the timing vary.
+        let bridges = (0..<6).map { _ in Bridge(configuration: config) }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for bridge in bridges {
+                group.addTask {
+                    for i in 0..<100 {
+                        let code = "for (i = 0; i < 2; i++) {\n    print(i)\n    print(\"next\");\n}\n"
+                        let result = try await bridge.runMacro(i % 2 == 0 ? code : "print(\"start\");\ny = x + 1;\n", images: [])
+                        #expect(result.macroError != nil)
+                    }
+                    await bridge.stop()
+                }
+            }
+            try await group.waitForAll()
+        }
+    }
+
+    /// A request that times out stops its helper, so the next one doesn't
+    /// wait behind it.
+    @Test func aTimedOutRequestRestartsTheHelper() async throws {
+        let first = try BridgeFixtures.bridge()
+        var config = await first.configuration
+        config.timeoutSeconds = 3
+        let bridge = Bridge(configuration: config)
+        await #expect(throws: BridgeError.timedOut(seconds: 3)) {
+            try await bridge.runMacro("wait(60000);", images: [])
+        }
+        let result = try await bridge.runMacro("return \"back\";", images: [])
+        #expect(result.value == "back")
+        #expect(await bridge.launchCount == 2)
+        await bridge.stop()
+    }
+
     @Test func recoversWhenTheHelperIsKilled() async throws {
         let bridge = try BridgeFixtures.bridge()
         try await bridge.start()
@@ -191,6 +277,32 @@ struct BridgeIntegrationTests {
         #expect(output.image.stack[0] == .gray8([255, 0]))  // the current slice
         #expect(output.image.stack[2] == .gray8([255, 0]))  // the others untouched
         #expect(result.log.contains("answered No"))
+        await bridge.stop()
+    }
+
+    @Test func opensOtherFormatsWithImageJ() async throws {
+        let bridge = try BridgeFixtures.bridge()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("mancora-open-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        // A binary PGM: ImageJ reads it, Mancora doesn't.
+        let pgm = folder.appendingPathComponent("ramp.pgm")
+        try Data(Array("P5\n4 3\n255\n".utf8) + (0..<12).map { UInt8($0 * 20) }).write(to: pgm)
+        let result = try await bridge.open(pgm.path)
+        let opened = try #require(result.images.first)
+        #expect(result.value == "ImageJ")
+        #expect(opened.title == "ramp.pgm")
+        #expect(opened.image.width == 4 && opened.image.height == 3)
+        #expect(opened.image.stack[0] == .gray8((0..<12).map { UInt8($0 * 20) }))
+        // A format nothing installed reads.
+        let unknown = folder.appendingPathComponent("data.xyz")
+        try Data("?".utf8).write(to: unknown)
+        do {
+            _ = try await bridge.open(unknown.path)
+            Issue.record("expected an error")
+        } catch let error as BridgeError {
+            #expect(error.description.contains("Bio-Formats isn't installed"), "\(error)")
+        }
         await bridge.stop()
     }
 

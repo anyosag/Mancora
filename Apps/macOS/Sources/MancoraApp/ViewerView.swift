@@ -24,9 +24,11 @@ struct ViewerWindow: View {
             }
             .focusedSceneValue(\.viewer, model)
             .task(id: request) {
+                model.bridge = bridge
                 if let request { model.open(request) }
             }
             .onOpenURL { url in
+                model.bridge = bridge
                 // Files opened from the Finder: fill this window if it's empty.
                 if model.hasImage {
                     openWindow(id: "viewer", value: OpenRequest(url: url))
@@ -54,7 +56,7 @@ struct ViewerView: View {
                 ContentUnavailableView {
                     Label("No Image", systemImage: "photo")
                 } description: {
-                    Text("Open a TIFF file to view it.")
+                    Text("Open an image to view it: TIFF natively, other formats through ImageJ.")
                 } actions: {
                     Button("Open…") {
                         if let url = model.presentOpenPanel() { model.open(OpenRequest(url: url)) }

@@ -33,6 +33,7 @@ import ij.Macro;
 import ij.Menus;
 import ij.WindowManager;
 import ij.io.FileSaver;
+import ij.io.Opener;
 import ij.macro.Interpreter;
 import ij.measure.ResultsTable;
 import ij.process.LUT;
@@ -173,6 +174,8 @@ public class MancoraBridgeHelper {
             case "run":
             case "macro":
                 return runWithImages(method, params);
+            case "open":
+                return openFile(params);
             case "crash":
                 // For tests of the supervisor: die without answering.
                 Runtime.getRuntime().halt(3);
@@ -275,6 +278,96 @@ public class MancoraBridgeHelper {
     }
 
     /**
+     * Opens a file in any format ImageJ reads (with Fiji's extra file types,
+     * if installed), or with Bio-Formats when it's installed, and saves each
+     * image it opens as a TIFF for Mancora.
+     */
+    /** Opens every image in the file with Bio-Formats' {@code BF.openImagePlus}. */
+    static String openWithBioFormats(Class<?> bf, String path, List<ImagePlus> opened) throws Exception {
+        DialogWatchdog.reset();
+        ImagePlus[] all;
+        try {
+            all = (ImagePlus[]) bf.getMethod("openImagePlus", String.class).invoke(null, path);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            // Bio-Formats' own exception says what went wrong.
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            throw new IOException("Bio-Formats could not open " + path + ": " + cause, cause);
+        }
+        if (all != null) for (ImagePlus i : all) if (i != null) opened.add(i);
+        DialogWatchdog.check("Bio-Formats");
+        return "Bio-Formats";
+    }
+
+    static Map<String, Object> openFile(Map<String, Object> params) throws Exception {
+        closeAll();
+        resetSettings();
+        takeLog();
+        String path = (String) params.get("path");
+        File outputDir = new File((String) params.get("outputDir"));
+        List<ImagePlus> opened = new ArrayList<>();
+        String reader = "ImageJ";
+        Class<?> bf = findClass("loci.plugins.BF");
+        // ImageJ's Opener hands formats it doesn't know to Bio-Formats (then
+        // to HandleExtraFileTypes); ask Bio-Formats first here too, so the
+        // reader is known. Formats ImageJ knows go to ImageJ first.
+        int type = new Opener().getFileType(path);
+        boolean unknown = type == Opener.UNKNOWN || type == Opener.TEXT;
+        IOException bioFormatsError = null;
+        if (unknown && bf != null) {
+            try {
+                reader = openWithBioFormats(bf, path, opened);
+            } catch (IOException e) {
+                bioFormatsError = e;
+            }
+        }
+        if (opened.isEmpty()) {
+            DialogWatchdog.reset();
+            ImagePlus imp = IJ.openImage(path);
+            if (imp != null) {
+                opened.add(imp);
+                reader = "ImageJ";
+                DialogWatchdog.check("Opening " + new File(path).getName());
+            }
+        }
+        if (opened.isEmpty() && !unknown && bf != null) {
+            // ImageJ's "unsupported format" message doesn't count if Bio-Formats can.
+            reader = openWithBioFormats(bf, path, opened);
+        }
+        if (opened.isEmpty()) {
+            if (bioFormatsError != null) throw bioFormatsError;
+            throw new IOException("ImageJ could not open " + path + (bf == null ? " (Bio-Formats isn't installed)" : ", nor could Bio-Formats"));
+        }
+        List<Object> outputs = new ArrayList<>();
+        int n = 0;
+        for (ImagePlus i : opened) {
+            File out = new File(outputDir, String.format("output-%03d.tif", n++));
+            if (!new FileSaver(i).saveAsTiff(out.getPath())) throw new IOException("ImageJ could not save " + i.getTitle());
+            Map<String, Object> o = new LinkedHashMap<>();
+            o.put("path", out.getPath());
+            o.put("title", i.getTitle());
+            o.put("replaces", null);
+            outputs.add(o);
+            i.close();
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("outputs", outputs);
+        result.put("results", resultsTable());
+        result.put("log", takeLog());
+        result.put("value", reader);
+        closeAll();
+        return result;
+    }
+
+    /** A class from ImageJ's class path or its plugins folder, or null. */
+    static Class<?> findClass(String name) {
+        try {
+            return Class.forName(name, true, IJ.getClassLoader());
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
      * Nobody can answer a dialog here: ImageJ's errors, "Process all
      * slices?" and dialogs a command's options didn't fill in would wait
      * forever. The watchdog closes each one as it appears: questions are
@@ -288,31 +381,58 @@ public class MancoraBridgeHelper {
         private static final Set<java.awt.Window> handled = Collections.newSetFromMap(new java.util.WeakHashMap<>());
 
         static void start() {
+            // How often to look for dialogs; tests make it short to try every timing.
+            String every = System.getenv("MANCORA_WATCHDOG_MS");
+            long interval = every == null ? 100 : Long.parseLong(every);
             Thread thread = new Thread(() -> {
                 while (true) {
-                    try { Thread.sleep(100); } catch (InterruptedException e) { return; }
-                    for (java.awt.Window w : java.awt.Window.getWindows()) {
-                        if (!(w instanceof java.awt.Dialog) || !w.isShowing() || handled.contains(w)) continue;
-                        handled.add(w);
-                        java.awt.Dialog d = (java.awt.Dialog) w;
-                        String text = text(d).trim();
-                        String message = text.isEmpty() ? d.getTitle() : text;
-                        if (d instanceof ij.gui.GenericDialog) {
-                            errors.add("ImageJ asked for input the options didn't give (\"" + d.getTitle() + "\" dialog)");
-                            java.awt.EventQueue.invokeLater(() ->
-                                d.dispatchEvent(new java.awt.event.WindowEvent(d, java.awt.event.WindowEvent.WINDOW_CLOSING)));
-                        } else if (d instanceof ij.gui.YesNoCancelDialog) {
-                            questions.add(message);
-                            java.awt.EventQueue.invokeLater(d::dispose);  // neither yes nor cancel: no
-                        } else {
-                            errors.add(message);
-                            java.awt.EventQueue.invokeLater(d::dispose);
-                        }
+                    try { Thread.sleep(interval); } catch (InterruptedException e) { return; }
+                    try {
+                        closeNewDialogs();
+                    } catch (Throwable t) {
+                        // keep watching: a dialog nobody closes would stop the helper
                     }
                 }
             }, "Mancora dialog watchdog");
             thread.setDaemon(true);
             thread.start();
+        }
+
+        /**
+         * Whether a thread waits in a modal dialog's event loop. A modal
+         * dialog is showing a moment before that loop starts, and one closed
+         * in that moment never releases the thread that showed it.
+         */
+        static boolean modalLoopRunning() {
+            for (StackTraceElement[] stack : Thread.getAllStackTraces().values()) {
+                for (StackTraceElement frame : stack) {
+                    if ("java.awt.WaitDispatchSupport".equals(frame.getClassName()) && "enter".equals(frame.getMethodName()))
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        static void closeNewDialogs() {
+            for (java.awt.Window w : java.awt.Window.getWindows()) {
+                if (!(w instanceof java.awt.Dialog) || !w.isShowing() || handled.contains(w)) continue;
+                java.awt.Dialog d = (java.awt.Dialog) w;
+                if (d.isModal() && !modalLoopRunning()) continue;  // next time
+                handled.add(w);
+                String text = text(d).trim();
+                String message = text.isEmpty() ? d.getTitle() : text;
+                if (d instanceof ij.gui.GenericDialog) {
+                    errors.add("ImageJ asked for input the options didn't give (\"" + d.getTitle() + "\" dialog)");
+                    java.awt.EventQueue.invokeLater(() ->
+                        d.dispatchEvent(new java.awt.event.WindowEvent(d, java.awt.event.WindowEvent.WINDOW_CLOSING)));
+                } else if (d instanceof ij.gui.YesNoCancelDialog) {
+                    questions.add(message);
+                    java.awt.EventQueue.invokeLater(d::dispose);  // neither yes nor cancel: no
+                } else {
+                    errors.add(message);
+                    java.awt.EventQueue.invokeLater(d::dispose);
+                }
+            }
         }
 
         static void reset() {

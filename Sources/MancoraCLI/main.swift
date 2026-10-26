@@ -5,7 +5,8 @@
 //   mancora lut <file.lut>                 describe a LUT file
 //   mancora luts                           list the built-in LUTs
 //   mancora update [--download <dir>]      check for a newer release
-//   mancora bridge <setup|info|commands|run|macro> …   ImageJ and its plugins in a Java helper
+//   mancora bridge <setup|info|commands|run|macro|open> …   ImageJ and its plugins in a Java helper
+//   mancora update-sites <list|add|enable|disable|status|update> …   Fiji update sites for the bridge
 //   mancora [--headless] -macro <macro.ijm> [arg]   run a macro, as ImageJ's -macro and -batch do
 //   mancora [--headless] -eval "<code>"             run macro code and print what it returns
 //   mancora --version
@@ -29,6 +30,8 @@ let usage = """
            mancora bridge info | commands [--plugins]
            mancora bridge run "<command>" "<options>" <in.tif> [<out.tif>]
            mancora bridge macro <macro.ijm> [<in.tif> …]
+           mancora bridge open <file> [<out.tif>]     open any format ImageJ or Bio-Formats reads
+           mancora update-sites <command> …           Fiji update sites (see mancora update-sites help)
            mancora [--headless] -macro <macro.ijm> [<argument>]   (also -batch, or macro)
            mancora [--headless] -eval "<macro code>"
            mancora --version
@@ -114,6 +117,8 @@ case ("update", 1), ("update", 3):
     await checkForUpdate(downloadTo: args.count == 3 ? args[2] : nil)
 case ("bridge", 2...):
     await bridgeCommand(Array(args.dropFirst()))
+case ("update-sites", 1...):
+    await updateSitesCommand(Array(args.dropFirst()))
 case ("luts", 1):
     for lut in LUT.builtIn { print(lut.name) }
 case ("--version", 1), ("version", 1):
@@ -207,6 +212,18 @@ func bridgeCommand(_ args: [String]) async {
                 guard let first = result.images.first else { fail("mancora: the command produced no image") }
                 try TIFFExporter.write(first.image, to: args[4])
                 print("saved \(first.title) to \(args[4])")
+            }
+        case ("open", 2), ("open", 3):
+            let result = try await bridge.open(args[1])
+            if !result.log.isEmpty { print(result.log, terminator: result.log.hasSuffix("\n") ? "" : "\n") }
+            for (k, opened) in result.images.enumerated() {
+                print("\(opened.title) (read by \(result.value ?? "ImageJ"))")
+                print(describe(opened.image))
+                if args.count == 3 {
+                    let path = result.images.count == 1 ? args[2] : args[2].replacingOccurrences(of: ".tif", with: "-\(k + 1).tif")
+                    try TIFFExporter.write(opened.image, to: path)
+                    print("saved to \(path)")
+                }
             }
         case ("macro", 2...):
             let code = try String(contentsOfFile: args[1], encoding: .utf8)

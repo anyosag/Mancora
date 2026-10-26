@@ -8,8 +8,9 @@ public enum BridgeError: Error, Equatable, Sendable, CustomStringConvertible {
     case compileFailed(String)
     case imageJMissing(path: String)
     case verificationFailed(file: String, expected: String, actual: String)
-    /// The helper process ended (or was killed) before answering.
-    case helperExited(status: Int32)
+    /// The helper process ended (or was killed) before answering; `output`
+    /// is the end of what it wrote to standard error, such as Java's error.
+    case helperExited(status: Int32, output: String = "")
     /// The helper answered with an error, e.g. an unknown command.
     case helper(String, log: String)
     case invalidResponse(String)
@@ -23,7 +24,8 @@ public enum BridgeError: Error, Equatable, Sendable, CustomStringConvertible {
         case .imageJMissing(let path): "ImageJ isn't installed at \(path)."
         case .verificationFailed(let file, let expected, let actual):
             "\(file) failed verification (SHA-1 \(actual), expected \(expected))."
-        case .helperExited(let status): "The Java helper stopped (status \(status))."
+        case .helperExited(let status, let output):
+            "The Java helper stopped (status \(status))." + (output.isEmpty ? "" : "\n" + output)
         case .helper(let message, let log): log.isEmpty ? message : "\(message)\n\(log)"
         case .invalidResponse(let detail): "The Java helper sent an unexpected response: \(detail)"
         case .timedOut(let seconds): "The Java helper didn't answer within \(Int(seconds)) s."
@@ -104,6 +106,11 @@ struct MacroParams: Encodable {
     let code: String
     let argument: String
     let inputs: [String]
+    let outputDir: String
+}
+
+struct OpenParams: Encodable {
+    let path: String
     let outputDir: String
 }
 

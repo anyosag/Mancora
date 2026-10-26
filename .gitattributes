@@ -20,3 +20,4 @@ Tests/Fixtures/** -text
 
 # The Fiji sources kept for reference are not Mancora's code; keep their bytes as they are.
 legacy/** -text linguist-vendored
+Tests/MancoraPluginsTests/Fixtures/** -text
