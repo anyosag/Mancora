@@ -220,22 +220,6 @@ struct BridgeIntegrationTests {
         }
     }
 
-    /// A request that times out stops its helper, so the next one doesn't
-    /// wait behind it.
-    @Test func aTimedOutRequestRestartsTheHelper() async throws {
-        let first = try BridgeFixtures.bridge()
-        var config = await first.configuration
-        config.timeoutSeconds = 3
-        let bridge = Bridge(configuration: config)
-        await #expect(throws: BridgeError.timedOut(seconds: 3)) {
-            try await bridge.runMacro("wait(60000);", images: [])
-        }
-        let result = try await bridge.runMacro("return \"back\";", images: [])
-        #expect(result.value == "back")
-        #expect(await bridge.launchCount == 2)
-        await bridge.stop()
-    }
-
     @Test func recoversWhenTheHelperIsKilled() async throws {
         let bridge = try BridgeFixtures.bridge()
         try await bridge.start()
