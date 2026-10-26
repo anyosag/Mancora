@@ -82,13 +82,21 @@ public struct FeretValues: Sendable, Hashable {
     /// The diameter's starting point (the left end), in pixels.
     public var startX: Double
     public var startY: Double
+    /// The ends of the diameter and of the minimum caliper width, in
+    /// uncalibrated pixels: x1, y1, x2, y2 of each (ImageJ's
+    /// `FERET_ARRAY_POINTOFFSET` elements).
+    public var points: [Double]
 
-    public init(diameter: Double, angle: Double, minimum: Double, startX: Double, startY: Double) {
+    public init(
+        diameter: Double, angle: Double, minimum: Double, startX: Double, startY: Double,
+        points: [Double] = Array(repeating: 0, count: 8)
+    ) {
         self.diameter = diameter
         self.angle = angle
         self.minimum = minimum
         self.startX = startX
         self.startY = startY
+        self.points = points
     }
 
     /// Computed on the convex hull of `polygon`, with pixel sizes `pw` × `ph`.
@@ -121,6 +129,7 @@ public struct FeretValues: Sendable, Hashable {
         // The smallest caliper width: for each hull side, the farthest point from it.
         var x0 = xs[n - 1], y0 = ys[n - 1]
         var minFeret = Double.greatestFiniteMagnitude
+        var ends = [Double](repeating: 0, count: 4), candidate = [Double](repeating: 0, count: 4)
         for i in 0..<n {
             let (xprev, yprev) = (x0, y0)
             (x0, y0) = (xs[i], ys[i])
@@ -132,10 +141,17 @@ public struct FeretValues: Sendable, Hashable {
             var maxDist = 0.0
             for j in 0..<n {
                 let dist = (xs[j] - x0) * xnorm + (ys[j] - y0) * ynorm
-                if dist > maxDist { maxDist = dist }
+                if dist > maxDist {
+                    maxDist = dist
+                    candidate = [xs[j], ys[j], xs[j] - (xnorm / pw * dist) / pw, ys[j] - (ynorm / ph * dist) / ph]
+                }
             }
-            if maxDist < minFeret { minFeret = maxDist }
+            if maxDist < minFeret {
+                minFeret = maxDist
+                ends = candidate
+            }
         }
         minimum = minFeret
+        points = [xf1, yf1, xf2, yf2] + ends
     }
 }
