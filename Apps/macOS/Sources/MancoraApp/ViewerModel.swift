@@ -118,6 +118,7 @@ final class ViewerModel {
             } else {
                 self.image?.title = url.lastPathComponent
                 fileURL = url
+                AppRecorder.shared.recordSave(url)
             }
         }
     }
@@ -142,6 +143,7 @@ final class ViewerModel {
             }
             do {
                 try registry.run(name, options: MacroOptions(options), in: &context)
+                AppRecorder.shared.record(name, options: options)
                 var created: [Hyperstack] = []
                 for open in context.images {
                     if open.id == -1 { replace(with: open.image) } else { created.append(open.image) }
@@ -158,7 +160,9 @@ final class ViewerModel {
         isBusy = true
         defer { isBusy = false }
         do {
-            return handle(try await bridge.run(name, options: options, on: image))
+            let result = try await bridge.run(name, options: options, on: image)
+            AppRecorder.shared.record(name, options: options)
+            return handle(result)
         } catch {
             errorMessage = "\(error)"
             return []
@@ -201,12 +205,11 @@ final class ViewerModel {
         return saveForNewWindows(created)
     }
 
-    /// Keeps the position and title when a command changes the image in place.
+    /// Keeps the position (within the new dimensions) when a command changes
+    /// the image in place.
     private func replace(with changed: Hyperstack) {
-        var updated = changed
-        updated.title = image?.title ?? changed.title
-        let dims = updated.dimensions
-        image = updated
+        let dims = changed.dimensions
+        image = changed
         channel = min(channel, dims.channels - 1)
         slice = min(slice, dims.slices - 1)
         frame = min(frame, dims.frames - 1)

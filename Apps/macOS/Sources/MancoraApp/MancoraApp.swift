@@ -48,6 +48,10 @@ struct MancoraApp: App {
                 .disabled(updater.isBusy)
             }
         }
+        Window("Recorder", id: "recorder") {
+            RecorderView(recorder: AppRecorder.shared)
+        }
+        .defaultSize(width: 520, height: 280)
         Settings {
             SettingsView(updater: updater)
         }
@@ -93,6 +97,7 @@ struct ViewerCommands: Commands {
         let panelOwner = viewer ?? ViewerModel()
         guard let url = panelOwner.presentOpenPanel(virtual: virtual) else { return }
         let request = OpenRequest(url: url, virtual: virtual)
+        AppRecorder.shared.recordOpen(url, virtual: virtual)
         if let viewer, !viewer.hasImage {
             viewer.open(request)
         } else {
@@ -122,7 +127,10 @@ struct PluginCommands: Commands {
         CommandMenu("Plugins") {
             Button("Find Command…") { viewer?.showsCommandFinder = true }
                 .keyboardShortcut("l")
-            Button("Run Macro File…") { runMacroFile() }
+            Menu("Macros") {
+                Button("Record…") { openWindow(id: "recorder") }
+                Button("Run…") { runMacroFile() }
+            }
             Divider()
             switch bridge.state {
             case .idle, .failed:

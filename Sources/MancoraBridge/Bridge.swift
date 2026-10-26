@@ -299,7 +299,7 @@ public actor Bridge {
                     virtualDisplay = (process, ":\(number)")
                     return ":\(number)"
                 }
-                usleep(50_000)
+                Thread.sleep(forTimeInterval: 0.05)
             }
             process.terminate()  // lost a race for this number, or Xvfb failed: try the next one
         }
