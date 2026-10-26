@@ -39,7 +39,8 @@ public struct ImageJMenu: Sendable, Hashable, Identifiable {
     public static func parse(_ table: String) -> [ImageJMenu] {
         var order: [String] = []
         var rows: [String: [(command: String, shortcut: String)]] = [:]
-        for line in table.split(separator: "\n", omittingEmptySubsequences: true) where !line.hasPrefix("#") {
+        // Any line ending: "\r\n" is one Character, which "\n" doesn't split.
+        for line in table.split(whereSeparator: \.isNewline) where !line.hasPrefix("#") {
             let fields = line.split(separator: "\t", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
             guard fields.count >= 2 else { continue }
             let path = fields[0]
