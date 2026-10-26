@@ -965,11 +965,16 @@ enum MacroCorpus {
         .init("Array.show", #"""
             a = newArray(1, 2.5, 3);
             b = newArray("x", "y");
+            // ImageJ brings a new table window to the front asynchronously;
+            // selectWindow waits for it, so the title-less calls see it.
             Array.show("Mancora Arrays (row numbers)", a, b);
+            selectWindow("Mancora Arrays");
             print(Table.title, Table.size, Table.headings, Table.getString("b", 2) + "|", Table.get("a", 1));
             Array.show(a);
+            selectWindow("a");
             print(Table.title, Table.headings);
             Array.show("Mancora Idx (indexes)", b);
+            selectWindow("Mancora Idx");
             print(Table.title, Table.headings, Table.get("Index", 1));
             close("Mancora Arrays");
             close("a");
