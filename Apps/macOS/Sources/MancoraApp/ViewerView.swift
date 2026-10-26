@@ -1,3 +1,4 @@
+import AppKit
 import MancoraCore
 import SwiftUI
 
@@ -91,6 +92,9 @@ struct ViewerView: View {
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
         }
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                ToolPicker(session: AppSession.shared)
+            }
             ToolbarItem {
                 Menu("LUT", systemImage: "paintpalette") {
                     ForEach(LUT.builtIn, id: \.name) { lut in
@@ -125,8 +129,8 @@ struct ViewerView: View {
     }
 }
 
-/// The image at the current zoom, with nearest-neighbour magnification and
-/// a pixel readout under the pointer.
+/// The image at the current zoom, with nearest-neighbour magnification, a
+/// pixel readout under the pointer, and the selection tools.
 struct ImageCanvas: View {
     @Bindable var model: ViewerModel
     let bitmap: CGImage
@@ -136,11 +140,31 @@ struct ImageCanvas: View {
         GeometryReader { geometry in
             let scale = displayScale(in: geometry.size)
             let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+            let tool = AppSession.shared.tool
             ScrollView([.horizontal, .vertical]) {
                 Image(decorative: bitmap, scale: 1)
                     .interpolation(scale >= 1 ? .none : .medium)
                     .resizable()
                     .frame(width: size.width, height: size.height)
+                    .overlay {
+                        SelectionOverlay(
+                            selection: model.selection, draft: model.draft, vertices: model.vertices,
+                            pointer: model.pointer, tool: tool, scale: scale)
+                    }
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                model.drag(
+                                    from: pixel(value.startLocation, scale), to: pixel(value.location, scale), tool: tool,
+                                    shift: NSEvent.modifierFlags.contains(.shift))
+                            }
+                            .onEnded { value in
+                                model.endDrag(
+                                    at: pixel(value.location, scale), tool: tool, clicks: NSApp.currentEvent?.clickCount ?? 1,
+                                    option: NSEvent.modifierFlags.contains(.option))
+                            }
+                    )
                     .onContinuousHover { phase in
                         switch phase {
                         case .active(let point): model.pointerMoved(to: point, displaySize: size)
@@ -152,7 +176,24 @@ struct ImageCanvas: View {
                     )
             }
             .background(Color(nsColor: .underPageBackgroundColor))
+            .focusable()
+            .focusEffectDisabled()
+            .onKeyPress(.escape) {
+                guard !model.vertices.isEmpty else { return .ignored }
+                model.cancelVertices()
+                return .handled
+            }
+            .onKeyPress(.return) {
+                guard !model.vertices.isEmpty else { return .ignored }
+                model.finishVertices(tool)
+                return .handled
+            }
         }
+    }
+
+    /// A point on the displayed image, in pixels.
+    private func pixel(_ point: CGPoint, _ scale: CGFloat) -> CGPoint {
+        CGPoint(x: point.x / scale, y: point.y / scale)
     }
 
     private func displayScale(in available: CGSize) -> CGFloat {
@@ -187,7 +228,7 @@ struct StatusBar: View {
                 PositionSlider(label: "t", value: $model.frame, count: dims.frames)
             }
             HStack {
-                Text(model.pointerText ?? summary)
+                Text(model.selectionText ?? model.pointerText ?? summary)
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

@@ -42,6 +42,16 @@ final class ViewerModel {
     /// A command waiting for its dialog's answers.
     var pendingDialog: PendingDialog?
 
+    /// The selection being drawn, shown instead of the image's.
+    var draft: Roi?
+    /// The vertices placed so far with the polygon, segmented line or angle tool.
+    var vertices: [Roi.IntPoint] = []
+    /// The pointer over the image, in pixels.
+    private(set) var pointer: CGPoint?
+    /// The size and position of the selection being drawn, for the status bar.
+    var selectionText: String?
+    @ObservationIgnored var gesture: SelectionGesture?
+
     struct LastCommand: Equatable {
         let name: String
         let options: String
@@ -535,10 +545,14 @@ final class ViewerModel {
     func pointerMoved(to point: CGPoint?, displaySize: CGSize) {
         guard let image, let point, displaySize.width > 0, displaySize.height > 0 else {
             pointerText = nil
+            pointer = nil
             return
         }
-        let x = Int(point.x / displaySize.width * CGFloat(image.width))
-        let y = Int(point.y / displaySize.height * CGFloat(image.height))
+        let px = point.x / displaySize.width * CGFloat(image.width)
+        let py = point.y / displaySize.height * CGFloat(image.height)
+        if !vertices.isEmpty { pointer = CGPoint(x: px, y: py) }
+        let x = Int(px)
+        let y = Int(py)
         guard (0..<image.width).contains(x), (0..<image.height).contains(y), let plane = currentPlane else {
             pointerText = nil
             return

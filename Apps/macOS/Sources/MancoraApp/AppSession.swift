@@ -16,6 +16,8 @@ final class AppSession {
     var tables: [String: ResultsTable] = [:]
     var log: [String] = []
     var settings = CommandSettings()
+    /// The toolbar's tool, the same for every window.
+    var tool = CanvasTool.rectangle
     /// Bumped when a command adds results or log lines, so their windows come forward.
     private(set) var resultsAdded = 0
     private(set) var logAdded = 0
