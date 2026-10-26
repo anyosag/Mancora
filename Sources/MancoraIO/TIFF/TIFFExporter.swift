@@ -105,7 +105,7 @@ public enum TIFFExporter {
         let writeAllIFDs = planeCount > 1 && imageOffset + stackBytes + planeCount * 512 < Int(UInt32.max)
         w.patch(firstIFD, tag: TIFFTag.stripOffsets, value: UInt32(imageOffset))
         w.reserve(stackBytes)
-        for plane in image.stack.planes { w.pixels(plane) }
+        for k in 0..<image.stack.count { w.pixels(image.stack[k]) }
         if writeAllIFDs {
             w.patchNextIFD(of: firstIFD, to: UInt32(w.count))
             for k in 1..<planeCount {

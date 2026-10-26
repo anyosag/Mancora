@@ -51,15 +51,16 @@ public enum Plane: Sendable, Equatable {
         }
     }
 
-    /// Smallest and largest finite value, or `nil` for an empty plane or a
-    /// float plane with no finite values. RGB planes report `0...255`.
+    /// Smallest and largest value, ignoring NaN as ImageJ's `findMinAndMax`
+    /// does (±Infinity counts), or `nil` for an empty or all-NaN plane. RGB
+    /// planes report `0...255`.
     public func valueRange() -> ClosedRange<Double>? {
         switch self {
         case .gray8(let p): return Self.range(p)
         case .gray16(let p): return Self.range(p)
         case .gray32Float(let p):
             var lo = Float.infinity, hi = -Float.infinity
-            for v in p where v.isFinite {
+            for v in p where !v.isNaN {
                 if v < lo { lo = v }
                 if v > hi { hi = v }
             }
