@@ -167,11 +167,11 @@ public enum MacroSupport {
     /// Top-level built-ins that only ImageJ has (user interface, plots,
     /// fitting, overlays, drawing text...).
     static let unsupportedFunctions: Set<String> = [
-        "Dialog", "doCommand", "doWand", "drawString", "exec", "Ext",
+        "doCommand", "doWand", "drawString", "exec", "Ext",
         "Fit", "floodFill", "getCursorLoc", "getDisplayedArea", "getFontList", "getImageInfo",
         "getLine", "getLocationAndSize", "getProfile", "getStringWidth", "makeArrow", "makeEllipse",
         "makeRotatedRectangle", "makeText", "newMenu", "Overlay", "Plot", "selectionContains", "setLut",
-        "showText", "waitForUser",
+        "showText",
     ]
 
     /// `Family.member` built-ins that need a person to choose a file or
@@ -203,7 +203,7 @@ public enum MacroSupport {
             "nameWithoutExtension", "rename", "copy", "append", "saveString", "setDefaultDir", "getDefaultDir",
             "getLength", "length", "getNameWithoutExtension", "getName", "getDirectory", "getAbsolutePath",
             "getParent", "exists", "isDirectory", "isFile", "makeDirectory", "mkdir", "lastModified",
-            "dateLastModified", "delete",
+            "dateLastModified", "delete", "openDialog",
         ],
         "Stack": [
             "size", "isHyperstack", "isHyperStack", "getDimensions", "setPosition", "setChannel", "setSlice",
@@ -219,5 +219,12 @@ public enum MacroSupport {
         "Property": ["get", "set", "getInfo", "setInfo", "getSliceLabel"],
         "Image": ["title", "name", "width", "height"],
         "Color": ["foreground", "background", "setForeground", "setBackground"],
+        "Dialog": [
+            "create", "createNonBlocking", "addString", "addDirectory", "addFile", "addImageChoice", "addNumber",
+            "addSlider", "addCheckbox", "addCheckboxGroup", "addRadioButtonGroup", "addMessage", "addHelp",
+            "addChoice", "setInsets", "addImage", "addToSameRow", "enableYesNoCancel", "setLocation", "getLocation",
+            "show", "getString", "getNumber", "getCheckbox", "getChoice", "getImageChoice", "getRadioButton",
+            "getYesNoCancel",
+        ],
     ]
 }

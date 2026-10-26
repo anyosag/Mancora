@@ -22,6 +22,8 @@ final class Functions {
     /// The file `File.open` opened, which `print(f, ...)` writes to.
     var writer: FileHandle?
     var writerPath: String?
+    /// The dialog `Dialog.create` made (ImageJ's `gd`).
+    var dialog: MacroDialog?
     /// The image whose processor `getProcessor()` last set up (ImageJ's `defaultIP`).
     var cachedProcessor: Int?
     /// The drawing position `moveTo` and `lineTo` use.
@@ -136,6 +138,7 @@ final class Functions {
         case MAKE_ELLIPSE: try makeEllipse()
         case TO_SCALED: try toScaled()
         case TO_UNSCALED: try toUnscaled()
+        case WAIT_FOR_USER: try waitForUser()
         case SET_JUSTIFICATION, SET_KEY_DOWN, RESTORE_PREVIOUS_TOOL:
             try skipArgs()
         default:
@@ -647,7 +650,9 @@ final class Functions {
 
     private func print() throws(MacroSignal) {
         interp.inPrint = true
-        var s = try getFirstString()
+        try interp.getLeftParen()
+        let first = try interp.getString()
+        var s = first ?? "null"
         if interp.nextToken() == ch(",") {
             if javaStartsWith(s, "[") && javaEndsWith(s, "]") {
                 try printToWindow(s)
@@ -663,9 +668,13 @@ final class Functions {
             repeat {
                 s += " " + (try getNextString())
             } while interp.nextToken() == ch(",")
+            try interp.getRightParen()
+            interp.log(s)
+            interp.inPrint = false
+            return
         }
         try interp.getRightParen()
-        interp.log(s)
+        interp.log(first)
         interp.inPrint = false
     }
 
@@ -725,38 +734,6 @@ final class Functions {
         }
         interp.finishUp()
         throw .exit(message: msg)
-    }
-
-    // MARK: - Dialogs (macros run without a person to answer them)
-
-    private func getNumber() throws(MacroSignal) -> Double {
-        let prompt = try getFirstString()
-        let defaultValue = try getLastArg()
-        return session.askNumber(prompt, defaultValue: defaultValue) ?? defaultValue
-    }
-
-    private func getBoolean() throws(MacroSignal) -> Double {
-        try interp.getLeftParen()
-        let prompt = try getString()
-        if interp.nextToken() == ch(",") {
-            _ = try getNextString()
-            _ = try getNextString()
-        }
-        try interp.getRightParen()
-        return session.askYesNo(prompt) ? 1 : 0
-    }
-
-    private func getStringDialog() throws(MacroSignal) -> String {
-        try interp.getLeftParen()
-        let prompt = try getString()
-        try interp.getComma()
-        let defaultString = try getString()
-        try interp.getRightParen()
-        return session.askString(prompt, defaultValue: defaultString) ?? defaultString
-    }
-
-    private func doDialog() throws(MacroSignal) -> String? {
-        try unsupported("Dialog functions")
     }
 
     // MARK: - Strings
@@ -1659,7 +1636,7 @@ final class Functions {
         let title = try getStringArg()
         if Self.directoryKeys.contains(javaToLowerCase(title)) { return session.directory(title) ?? "" }
         if javaToLowerCase(title) == "preferences" { try unsupported("getDirectory(\"preferences\")") }
-        try unsupported("getDirectory(\"\(title)\") with a folder chooser")
+        return try chooseDirectory(title)
     }
 
     private func doFile() throws(MacroSignal) -> String? {
@@ -1753,7 +1730,9 @@ final class Functions {
             return nil
         case "getDefaultDir":
             return session.defaultDirectory ?? ""
-        case "openSequence", "openDialog", "openUrlAsString":
+        case "openDialog":
+            return try openDialog()
+        case "openSequence", "openUrlAsString":
             try unsupported("File." + name)
         default:
             break
@@ -1987,6 +1966,7 @@ final class Functions {
         "ij.IJ.pad", "java.lang.System.getProperty", "ij.IJ.freeMemory", "ij.IJ.maxMemory", "java.lang.Thread.sleep",
         "ij.IJ.wait", "ij.Prefs.get", "ij.Prefs.set", "ij.IJ.log", "java.lang.System.currentTimeMillis",
         "java.lang.System.gc", "ij.gui.ImageWindow.setNextLocation", "ij.gui.ImageWindow.centerNextImage",
+        "ij.Macro.getOptions", "ij.Macro.setOptions",
     ]
 
     private func call() throws(MacroSignal) -> String? {
@@ -1995,6 +1975,13 @@ final class Functions {
         while interp.nextToken() == ch(",") { args.append(try getNextString()) }
         try interp.getRightParen()
         switch fullName {
+        case "ij.Macro.getOptions":
+            guard args.isEmpty else { break }
+            return session.macroOptions.map { $0 + " " }
+        case "ij.Macro.setOptions":
+            guard args.count == 1 else { break }
+            session.macroOptions = args[0].isEmpty ? nil : args[0]
+            return nil
         case "ij.IJ.log":
             guard args.count == 1 else { break }
             session.log(args[0])

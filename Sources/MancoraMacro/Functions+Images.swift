@@ -80,6 +80,8 @@ extension Functions {
             arg2 = try getString()
             try interp.getRightParen()
         }
+        // IJ.run leaves no macro options behind, the macro's own included.
+        defer { session.macroOptions = nil }
         try runCommand(arg1, options: arg2)
     }
 
@@ -195,14 +197,25 @@ extension Functions {
 
     func open() throws(MacroSignal) {
         try interp.getLeftParen()
-        if interp.nextToken() == ch(")") { try unsupported("open() with a file dialog") }
-        let path = try getString()
         var n = Double.nan
+        if interp.nextToken() == ch(")") {
+            // IJ.open(): the file an "Open" dialog gives.
+            try interp.getRightParen()
+            guard let file = chooseFile("Open") else { throw .exit(message: nil) }
+            try open(file.directory + file.name, n)
+            return
+        }
+        let path = try getString()
         if interp.nextToken() == ch(",") {
             try interp.getComma()
             if isStringArg() { _ = try getString() } else { n = try interp.getExpression() }
         }
         try interp.getRightParen()
+        try open(path, n)
+    }
+
+    /// Opens `path`: an image (at plane `n` when given), a selection or a ROI set.
+    private func open(_ path: String, _ n: Double) throws(MacroSignal) {
         let lower = path.lowercased()
         if lower.hasSuffix(".ijm") || lower.hasSuffix(".txt") || lower.hasSuffix(".csv") || lower.hasSuffix(".roi")
             || lower.hasSuffix(".zip")

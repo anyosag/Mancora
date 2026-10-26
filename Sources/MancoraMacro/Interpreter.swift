@@ -277,8 +277,13 @@ public final class Interpreter {
         session.log(s)
     }
 
-    func log(_ s: String) {
-        if evaluating { evalOutput = s } else { session.log(s) }
+    /// Prints `s`; `IJ.log` ignores a null string.
+    func log(_ s: String?) {
+        if evaluating {
+            evalOutput = s
+        } else if let s {
+            session.log(s)
+        }
     }
 
     /// ImageJ's: it stops growing (and shrinking) at depth 9.

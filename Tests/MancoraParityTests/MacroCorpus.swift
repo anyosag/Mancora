@@ -592,4 +592,105 @@ enum MacroCorpus {
             print(parseFloat(t) > 1e12, call("ij.IJ.pad", "7", "3"));
             """#),
     ]
+
+    /// Dialogs read from macro options, as GenericDialog does in macro mode.
+    /// ImageJ only sees options on a thread `IJ.run` has named "Run$_...",
+    /// so each case runs a command before `ij.Macro.setOptions`; and a
+    /// dialog without options would wait for a person, so each case has them.
+    static let dialogs: [MacroParityCase] = [
+        .init("Dialog fields from macro options", #"""
+            run("Select None");
+            call("ij.Macro.setOptions", "count=7 name=[two words] fast mode=Median size=2.5 color=green");
+            print(call("ij.Macro.getOptions"));
+            Dialog.create("Options");
+            Dialog.addNumber("Count:", 3);
+            Dialog.addString("Name:", "first");
+            Dialog.addCheckbox("Fast", false);
+            Dialog.addCheckbox("Slow", true);
+            Dialog.addChoice("Mode:", newArray("Mean", "Median", "Max"));
+            Dialog.addSlider("Size", 0, 5, 1.5);
+            Dialog.addNumber("Missing", 4.25);
+            Dialog.addRadioButtonGroup("Color", newArray("red", "green"), 1, 2, "red");
+            Dialog.addMessage("A message", 14, "blue");
+            Dialog.addHelp("https://imagej.net");
+            Dialog.setInsets(5, 0, 5);
+            Dialog.show();
+            n = Dialog.getNumber();
+            s = Dialog.getString();
+            f = Dialog.getCheckbox();
+            w = Dialog.getCheckbox();
+            m = Dialog.getChoice();
+            z = Dialog.getNumber();
+            miss = Dialog.getNumber();
+            c = Dialog.getRadioButton();
+            print(n, s, f, w, m, z, miss, c, Dialog.getYesNoCancel());
+            print(n + 1, f + w);
+            call("ij.Macro.setOptions", "");
+            """#, on: .gray8),
+        .init("Dialog keys of repeated labels, folders and image choices", #"""
+            run("Select None");
+            call("ij.Macro.setOptions", "value=10 value_1=20 folder=/data folder_1=b image=gray8.tif step=0.3");
+            Dialog.create("Repeated");
+            Dialog.addNumber("Value:", 1);
+            Dialog.addNumber("Value:", 2);
+            Dialog.addNumber("Value:", 3, 2, 6, "px");
+            Dialog.addDirectory("Folder:", "/tmp");
+            Dialog.addString("Folder", "x");
+            Dialog.addFile("File:", "/tmp/a.tif");
+            Dialog.addImageChoice("Image:");
+            Dialog.addSlider("Step", 0, 1, 0.5, 0.1);
+            Dialog.addCheckboxGroup(2, 2, newArray("A", "B", "C"), newArray(1, 0, 1));
+            Dialog.enableYesNoCancel("Do", "Don't");
+            Dialog.show();
+            print(Dialog.getNumber(), Dialog.getNumber(), Dialog.getNumber());
+            print(Dialog.getString(), Dialog.getString(), Dialog.getString(), Dialog.getImageChoice(), Dialog.getNumber());
+            print(Dialog.getCheckbox(), Dialog.getCheckbox(), Dialog.getCheckbox(), Dialog.getYesNoCancel());
+            call("ij.Macro.setOptions", "");
+            """#, on: .gray8),
+        .init("Dialog values naming variables", #"""
+            run("Select None");
+            width = 42;
+            label = "from var";
+            call("ij.Macro.setOptions", "width=&width title=&label size=0x1f");
+            Dialog.create("Vars");
+            Dialog.addNumber("Width", 1);
+            Dialog.addString("Title", "t");
+            Dialog.addNumber("Size", 1);
+            Dialog.show();
+            print(Dialog.getNumber(), Dialog.getString(), Dialog.getNumber());
+            call("ij.Macro.setOptions", "");
+            """#, on: .gray8),
+        .init("prompts and choosers from macro options", #"""
+            run("Select None");
+            call("ij.Macro.setOptions", "enter=12.5 your=Ann choose=/tmp/data select=/tmp/folder/a.tif");
+            print(getNumber("Enter a value", 3), getString("Your name:", "Bob"));
+            print(getNumber("Other", 8), getString("Missing", "default"));
+            print(getDirectory("Choose a folder"));
+            path = File.openDialog("Select a file");
+            print(path, File.name, File.directory);
+            call("ij.Macro.setOptions", "");
+            """#, on: .gray8),
+        .init("run() clears macro options", #"""
+            run("Select None");
+            call("ij.Macro.setOptions", "count=5");
+            print(call("ij.Macro.getOptions"));
+            run("Select None");
+            print(call("ij.Macro.getOptions"));
+            """#, on: .gray8),
+        .init("Dialog error past the last field", #"""
+            run("Select None");
+            call("ij.Macro.setOptions", "a=4");
+            Dialog.create("E");
+            Dialog.addNumber("A", 1);
+            Dialog.show();
+            print(Dialog.getNumber(), Dialog.getString(), Dialog.getCheckbox(), Dialog.getChoice());
+            call("ij.Macro.setOptions", "");
+            Dialog.addString("B", "b");
+            print(Dialog.getString());
+            x = Dialog.getNumber();
+            """#, on: .gray8),
+        .init("Dialog before Dialog.create", #"""
+            x = Dialog.getNumber();
+            """#),
+    ]
 }
