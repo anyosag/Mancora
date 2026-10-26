@@ -59,28 +59,70 @@ enum BuiltInCommands {
 
     // MARK: Process ▸ Enhance Contrast
 
-    /// `ij.plugin.ContrastEnhancer` without `normalize` or `equalize`: sets
-    /// the current channel's display range from the saturated histogram.
+    /// `ij.plugin.ContrastEnhancer` without `equalize`: sets the current
+    /// channel's display range from the saturated histogram (of the
+    /// selection, if any), or with `normalize` (which `process_all` implies)
+    /// stretches the pixels to the full range.
     static let enhanceContrast = CommandDefinition("Enhance Contrast...", menu: "Process") { context, options in
         let name = "Enhance Contrast..."
-        guard !options.flag(forLabel: "normalize"), !options.flag(forLabel: "equalize") else {
-            throw CommandError.notNative(name)  // these change pixels; the bridge can run them
+        var text = options.text
+        if text.contains("normalize_all") { text = text.replacing("normalize_all", with: "process_all") }
+        let macro = MacroOptions(text)
+        guard !macro.flag(forLabel: "Equalize histogram") else {
+            throw CommandError.notNative(name)  // it changes pixels; the bridge can run it
         }
-        let saturated = options.number(forLabel: "saturated", default: ContrastEnhancer.defaultSaturated)
+        let saturated = min(max(macro.number(forLabel: "Saturated pixels:", default: ContrastEnhancer.defaultSaturated), 0), 100)
         try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in
-            let range: ClosedRange<Double>?
+            let image = open.image
+            guard image.pixelType != .rgb8 else { throw .notNative(name) }
+            // The histogram is the selection's (`ip.setRoi(imp.getRoi())`).
+            if let roi = open.roi, !roi.isArea { throw .notNative(name) }
+            let region = try FilterCommands.selectionRegion(open, name)
+            let width = image.width
+            func selected(_ plane: Plane) -> Plane { region.map { plane.values(in: $0, width: width) } ?? plane }
+            // showDialog: a composite (several channels) counts as one image and has no Normalize.
+            let composite = image.channels.count > 1
+            let stackSize = composite ? 1 : image.stack.count
+            var normalize = !composite && macro.flag(forLabel: "Normalize")
+            let areaSelection = open.roi != nil && !composite
+            let updateSelectionOnly = areaSelection && !macro.flag(forLabel: "Update all when normalizing") && normalize
+            let processStack = stackSize > 1 && macro.flag(forLabel: "Process_all")
+            let useStack = stackSize > 1 && macro.flag(forLabel: "Use stack histogram")
+            if processStack { normalize = true }
+            let current = image.dimensions.planeIndex(channel: open.channel, slice: open.slice, frame: open.frame)
+            guard selected(image.stack[current]).count > 0 else { return }
             do {
-                range =
-                    options.flag(forLabel: "use") && open.image.stack.count > 1
-                    ? try ContrastEnhancer.displayRange(forStack: open.image.stack, saturated: saturated)
-                    : try ContrastEnhancer.displayRange(for: open.currentPlane, saturated: saturated)
+                let stackStatistics = useStack
+                    ? try ImageStatistics(stack: ImageStack(
+                        width: selected(image.stack[0]).count, height: 1, planes: image.stack.planes.map(selected)))
+                    : nil
+                for index in processStack ? Array(0..<image.stack.count) : [current] {
+                    let statistics = try stackStatistics ?? ImageStatistics(selected(image.stack[index]))
+                    if !normalize {
+                        guard let range = ContrastEnhancer.displayRange(for: statistics, saturated: saturated) else { continue }
+                        var display = open.image.channels[open.channel]
+                        display.displayRange = range
+                        open.image.setDisplay(display, forChannel: open.channel)
+                        continue
+                    }
+                    guard let (lo, hi) = ContrastEnhancer.limits(for: statistics, saturated: saturated) else { continue }
+                    let original = image.stack[index]
+                    var plane = ContrastEnhancer.normalized(original, min: lo, max: hi)
+                    // The table applies within the selection (normalizeFloat ignores it).
+                    if updateSelectionOnly, let region, image.pixelType != .gray32Float {
+                        plane = plane.restricted(to: region, original: original, width: width)
+                    }
+                    try open.image.setPlane(plane, at: index)
+                }
             } catch {
-                throw .notNative(name)  // RGB images
+                throw .failed(command: name, detail: "\(error)")
             }
-            guard let range else { return }
-            var display = open.image.channels[open.channel]
-            display.displayRange = range
-            open.image.setDisplay(display, forChannel: open.channel)
+            if normalize {
+                // run(): the current processor shows the full range.
+                var display = open.image.channels[open.channel]
+                display.displayRange = image.pixelType == .gray32Float ? 0...1 : image.pixelType == .gray16 ? 0...65535 : 0...255
+                open.image.setDisplay(display, forChannel: open.channel)
+            }
         }
     }
 

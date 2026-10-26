@@ -32,6 +32,34 @@ struct ParityTests {
             ParityCase("Enhance Contrast...", "saturated=0.5 use", on: .stack32),
             ParityCase("Enhance Contrast...", "saturated=0.35", on: .hyperstack),
             ParityCase("Enhance Contrast...", "saturated=0.35", on: .fixtureHyperstack),
+            // The histogram is the selection's.
+            ParityCase("Enhance Contrast...", "saturated=0.35", on: .rectangleROI),
+            ParityCase("Enhance Contrast...", "saturated=0.35", on: .ovalROI),
+            ParityCase("Enhance Contrast...", "saturated=1", on: .polygonROI),
+            ParityCase("Enhance Contrast...", "saturated=0.35", on: .edgeROI),
+            // A composite has no "Use stack histogram"; saturation is limited to 0–100%.
+            ParityCase("Enhance Contrast...", "saturated=0.35 use", on: .hyperstack),
+            ParityCase("Enhance Contrast...", "saturated=150", on: .gray16),
+        ])
+    }
+
+    /// Enhance Contrast with Normalize, which "Process all" implies.
+    @Test func normalize() async throws {
+        try await Parity.check([
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize", on: .gray8),
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize", on: .gray16),
+            ParityCase("Enhance Contrast...", "saturated=1 normalize", on: .gray32),
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize", on: .stack8),
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize process_all", on: .stack16),
+            ParityCase("Enhance Contrast...", "saturated=0.35 process_all use", on: .stack32),
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize_all", on: .stack8),
+            // Only the selection, unless "Update all when normalizing" (32-bit: all).
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize", on: .ovalROI),
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize update", on: .ovalROI),
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize", on: .rectangleROI),
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize", on: .polygonROI),
+            // Composites aren't normalized.
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize", on: .hyperstack),
         ])
     }
 
