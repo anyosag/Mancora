@@ -5,7 +5,7 @@ import MancoraProcess
 enum BuiltInCommands {
     static var all: [CommandDefinition] {
         lutCommands + [invertLUT, enhanceContrast, rename, close, closeAll, duplicate, properties, setScale]
-            + [setMeasurements, measure, clearResults] + FilterCommands.all
+            + [setMeasurements, measure, clearResults] + FilterCommands.all + ProcessCommands.all
     }
 
     // MARK: Image ▸ Lookup Tables

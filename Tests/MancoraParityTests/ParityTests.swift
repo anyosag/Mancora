@@ -183,3 +183,81 @@ struct FilterParityTests {
                 ])
     }
 }
+
+/// Image ▸ Type, Process ▸ Math, Image Calculator and the stack and channel tools.
+@Suite("ImageJ parity: types, math and stacks", .enabled(if: Parity.available, "needs MANCORA_TEST_IJ_JAR, a JDK and a display or Xvfb"))
+struct ProcessParityTests {
+    @Test func types() async throws {
+        try await Parity.check(
+            [ParityInput.gray16, .gray32, .rgb, .stack16, .hyperstack, .calibrated, .fixtureHyperstack, .fixtureFire]
+                .map { ParityCase("8-bit", on: $0) }
+                + [ParityInput.gray8, .gray32, .stack32, .rgb].map { ParityCase("16-bit", on: $0) }
+                + [ParityInput.gray8, .gray16, .rgb, .hyperstack, .fixtureHyperstack].map { ParityCase("32-bit", on: $0) }
+                + [ParityInput.gray8, .gray16, .gray32, .fixtureFire, .stack8].map { ParityCase("RGB Color", on: $0) })
+    }
+
+    @Test func math() async throws {
+        try await Parity.check([
+            ParityCase("Add...", "value=25", on: .gray8),
+            ParityCase("Add...", "value=1000 stack", on: .stack16),
+            ParityCase("Add...", "value=0.5", on: .gray32),
+            ParityCase("Add...", "value=7", on: .stack8),
+            ParityCase("Subtract...", "value=10", on: .rgb),
+            ParityCase("Multiply...", "value=1.5", on: .gray16),
+            ParityCase("Divide...", "value=3", on: .gray32),
+            ParityCase("Divide...", "value=0", on: .gray8),
+            ParityCase("Min...", "value=100", on: .gray8),
+            ParityCase("Max...", "value=2000", on: .gray16),
+            ParityCase("Min...", "value=0", on: .gray32),
+            ParityCase("Gamma...", "value=0.7", on: .gray16),
+            ParityCase("Gamma...", "value=1.5", on: .gray8),
+            ParityCase("Set...", "value=7", on: .gray32),
+            ParityCase("Log", on: .gray8), ParityCase("Log", on: .gray16), ParityCase("Log", on: .gray32),
+            ParityCase("Exp", on: .gray32), ParityCase("Square", on: .gray16), ParityCase("Square Root", on: .gray32),
+            ParityCase("Reciprocal", on: .gray32), ParityCase("Abs", on: .gray32),
+            ParityCase("AND...", "value=11110000", on: .gray8),
+            ParityCase("XOR...", "value=1010", on: .gray16),
+            ParityCase("Invert", on: .gray8), ParityCase("Invert", on: .gray16), ParityCase("Invert", on: .gray32),
+            ParityCase("Invert", on: .rgb), ParityCase("Invert", "stack", on: .stack16), ParityCase("Invert", on: .stack8),
+        ])
+    }
+
+    @Test func imageCalculator() async throws {
+        try await Parity.check([
+            ParityCase("Image Calculator...", "image1=gray8.tif operation=Add image2=binary.tif create", on: .gray8, .binary),
+            ParityCase("Image Calculator...", "image1=gray16.tif operation=Multiply image2=gray8.tif create", on: .gray8, .gray16),
+            ParityCase("Image Calculator...", "image1=gray32.tif operation=Divide image2=gray8.tif create 32-bit", on: .gray8, .gray32),
+            ParityCase("Image Calculator...", "image1=gray8.tif operation=AND image2=binary.tif", on: .binary, .gray8),
+            ParityCase("Image Calculator...", "image1=gray8.tif operation=Difference image2=gray16.tif create 32-bit", on: .gray16, .gray8),
+            ParityCase("Image Calculator...", "image1=stack8.tif operation=Average image2=gray8.tif create stack", on: .gray8, .stack8),
+        ])
+    }
+
+    @Test func stacksAndChannels() async throws {
+        try await Parity.check([
+            ParityCase("Z Project...", "projection=[Max Intensity]", on: .stack16),
+            ParityCase("Z Project...", "start=2 stop=4 projection=[Average Intensity]", on: .stack8),
+            ParityCase("Z Project...", "projection=[Sum Slices]", on: .stack32),
+            ParityCase("Z Project...", "projection=[Standard Deviation]", on: .stack16),
+            ParityCase("Z Project...", "projection=Median", on: .stack8),
+            ParityCase("Z Project...", "projection=[Max Intensity] all", on: .hyperstack),
+            ParityCase("Z Project...", "projection=[Min Intensity]", on: .hyperstack),
+            ParityCase("Z Project...", "projection=[Max Intensity] all", on: .fixtureHyperstack),
+            ParityCase("Split Channels", on: .hyperstack),
+            ParityCase("Split Channels", on: .rgb),
+            ParityCase("Split Channels", on: .fixtureHyperstack),
+            ParityCase("Merge Channels...", "c1=gray8.tif c2=binary.tif create", on: .gray8, .binary),
+            ParityCase("Merge Channels...", "c1=gray8.tif c2=binary.tif", on: .gray8, .binary),
+            ParityCase("Merge Channels...", "c3=gray8.tif c6=binary.tif create keep", on: .gray8, .binary),
+            ParityCase("Make Substack...", "slices=2-4", on: .stack16),
+            ParityCase("Make Substack...", "slices=1,3,5", on: .stack8),
+            // (One channel of a composite stays a one-channel composite in both;
+            // ImageJ's FileSaver then saves it with a gray LUT, Mancora with its color.)
+            ParityCase("Make Substack...", "channels=1-2 slices=2 frames=1-2", on: .hyperstack),
+            ParityCase("Reduce Dimensionality...", "channels slices keep", on: .hyperstack),
+            ParityCase("Reduce Dimensionality...", "frames", on: .hyperstack),
+            ParityCase("Arrange Channels...", "new=21", on: .hyperstack),
+            ParityCase("Arrange Channels...", "new=2", on: .fixtureHyperstack),
+        ])
+    }
+}
