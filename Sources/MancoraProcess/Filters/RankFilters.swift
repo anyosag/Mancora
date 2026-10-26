@@ -49,15 +49,23 @@ extension Plane {
     ///     Filters ▸ Show Circular Masks): 0.5 is the 4-neighborhood, 1 a
     ///     3×3 square. Must be finite and not negative.
     ///   - width: The plane's width in pixels.
-    public func rankFiltered(_ filter: RankFilter, radius: Double, width: Int) -> Plane {
+    ///   - rect: A selection's bounds, within the plane, or `nil` for the
+    ///     whole plane. Only the rectangle changes; the kernel reads the
+    ///     pixels around it, and each row's running sums start at its left
+    ///     edge, as in ImageJ.
+    public func rankFiltered(_ filter: RankFilter, radius: Double, width: Int, rect: RoiBounds? = nil) -> Plane {
         let height = filterHeight(width: width)
         precondition(radius.isFinite && radius >= 0, "rank filter radius must be finite and not negative")
         guard count > 0 else { return self }
+        let rect = rect ?? .whole(width: width, height: height)
+        guard !rect.isEmpty else { return self }
         let kernel = RankKernel(radius: radius)
         switch self {
         case .gray8(let p):
             let out = p.withUnsafeBufferPointer { src in
-                RankFilters.filterIntegers(src, width: width, height: height, kernel: kernel, filter: filter, maxValue: 255) {
+                RankFilters.filterIntegers(
+                    src, width: width, height: height, rect: rect, kernel: kernel, filter: filter, maxValue: 255
+                ) {
                     Float($0)
                 } store: {
                     UInt8(truncatingIfNeeded: JavaNumerics.int32($0 + 0.5))
@@ -66,7 +74,9 @@ extension Plane {
             return .gray8(out)
         case .gray16(let p):
             let out = p.withUnsafeBufferPointer { src in
-                RankFilters.filterIntegers(src, width: width, height: height, kernel: kernel, filter: filter, maxValue: 65535) {
+                RankFilters.filterIntegers(
+                    src, width: width, height: height, rect: rect, kernel: kernel, filter: filter, maxValue: 65535
+                ) {
                     Float($0)
                 } store: {
                     UInt16(truncatingIfNeeded: JavaNumerics.int32($0 + 0.5))
@@ -77,26 +87,30 @@ extension Plane {
             var out = p
             p.withUnsafeBufferPointer { src in
                 out.withUnsafeMutableBufferPointer { dst in
-                    RankFilters.filter(width: width, height: height, kernel: kernel, filter: filter, isFloat: true, maxValue: .nan) {
-                        y, line in
+                    RankFilters.filter(
+                        width: width, height: height, rect: rect, kernel: kernel, filter: filter, isFloat: true, maxValue: .nan
+                    ) { y, line in
                         for x in 0..<width { line[x] = src[y * width + x] }
                     } writeLine: { y, values in
-                        for x in 0..<width { dst[y * width + x] = values[x] }
+                        for x in rect.x..<(rect.x + rect.width) { dst[y * width + x] = values[x] }
                     }
                 }
             }
             return .gray32Float(out)
         case .rgb8(let p):
-            var out = [UInt32](repeating: 0xFF00_0000, count: p.count)
+            var out = p
             p.withUnsafeBufferPointer { src in
                 out.withUnsafeMutableBufferPointer { dst in
                     for shift: UInt32 in [16, 8, 0] {
-                        RankFilters.filter(width: width, height: height, kernel: kernel, filter: filter, isFloat: false, maxValue: 255) {
-                            y, line in
+                        RankFilters.filter(
+                            width: width, height: height, rect: rect, kernel: kernel, filter: filter, isFloat: false, maxValue: 255
+                        ) { y, line in
                             for x in 0..<width { line[x] = Float((src[y * width + x] >> shift) & 0xFF) }
                         } writeLine: { y, values in
-                            for x in 0..<width {
-                                dst[y * width + x] |= UInt32(truncatingIfNeeded: JavaNumerics.int32(values[x] + 0.5)) << shift
+                            let keep = ~(UInt32(0xFF) << shift)
+                            for x in rect.x..<(rect.x + rect.width) {
+                                let v = UInt32(truncatingIfNeeded: JavaNumerics.int32(values[x] + 0.5)) & 0xFF
+                                dst[y * width + x] = (dst[y * width + x] & keep) | v << shift
                             }
                         }
                     }
@@ -108,8 +122,8 @@ extension Plane {
 
     /// Process ▸ Noise ▸ Despeckle: a median filter of radius 1, as ImageJ
     /// runs it.
-    public func despeckled(width: Int) -> Plane {
-        rankFiltered(.median, radius: 1, width: width)
+    public func despeckled(width: Int, rect: RoiBounds? = nil) -> Plane {
+        rankFiltered(.median, radius: 1, width: width, rect: rect)
     }
 }
 
@@ -166,8 +180,8 @@ struct RankKernel: Equatable {
     var kNPoints: Int { lineRadii[lineRadii.count - 2] }
 }
 
-/// A port of the filtering core of ImageJ 1.54p's `RankFilters`, for whole
-/// planes and one thread. Lines are read through the same padded line cache,
+/// A port of the filtering core of ImageJ 1.54p's `RankFilters`, for a
+/// rectangle of a plane and one thread. Lines are read through the same padded line cache,
 /// in the same order, with the same incremental sums and the same median
 /// search, so float results match bit for bit.
 enum RankFilters {
@@ -178,25 +192,28 @@ enum RankFilters {
     /// Filters 8 or 16-bit data, converting through `Float` like ImageJ's
     /// `readLineToCache` and `writeLineToPixels`.
     static func filterIntegers<T>(
-        _ src: UnsafeBufferPointer<T>, width: Int, height: Int, kernel: RankKernel, filter: RankFilter, maxValue: Float,
-        load: (T) -> Float, store: (Float) -> T
+        _ src: UnsafeBufferPointer<T>, width: Int, height: Int, rect: RoiBounds, kernel: RankKernel, filter: RankFilter,
+        maxValue: Float, load: (T) -> Float, store: (Float) -> T
     ) -> [T] {
-        if case .removeNaNs = filter { return Array(src) }
-        return [T](unsafeUninitializedCapacity: src.count) { dst, initialized in
-            RankFilters.filter(width: width, height: height, kernel: kernel, filter: filter, isFloat: false, maxValue: maxValue) {
-                y, line in
+        var out = Array(src)
+        if case .removeNaNs = filter { return out }
+        out.withUnsafeMutableBufferPointer { dst in
+            RankFilters.filter(
+                width: width, height: height, rect: rect, kernel: kernel, filter: filter, isFloat: false, maxValue: maxValue
+            ) { y, line in
                 for x in 0..<width { line[x] = load(src[y * width + x]) }
             } writeLine: { y, values in
-                for x in 0..<width { (dst.baseAddress! + y * width + x).initialize(to: store(values[x])) }
+                for x in rect.x..<(rect.x + rect.width) { dst[y * width + x] = store(values[x]) }
             }
-            initialized = src.count
         }
+        return out
     }
 
-    /// Filters one channel. `readLine(y, line)` fills `line` with row `y`
-    /// as floats; `writeLine(y, values)` receives the filtered row.
+    /// Filters one channel within `rect`. `readLine(y, line)` fills `line`
+    /// with row `y` as floats; `writeLine(y, values)` receives each row of
+    /// the rectangle, filtered within it (`values` is indexed by image x).
     static func filter(
-        width: Int, height: Int, kernel: RankKernel, filter: RankFilter, isFloat: Bool, maxValue: Float,
+        width: Int, height: Int, rect: RoiBounds, kernel: RankKernel, filter: RankFilter, isFloat: Bool, maxValue: Float,
         readLine: (Int, UnsafeMutablePointer<Float>) -> Void,
         writeLine: (Int, UnsafePointer<Float>) -> Void
     ) {
@@ -216,7 +233,7 @@ enum RankFilters {
         case .removeNaNs:
             guard isFloat else {  // ImageJ refuses; integer data has no NaNs
                 withUnsafeTemporaryAllocation(of: Float.self, capacity: width) { line in
-                    for y in 0..<height {
+                    for y in rect.y..<(rect.y + rect.height) {
                         readLine(y, line.baseAddress!)
                         writeLine(y, line.baseAddress!)
                     }
@@ -261,9 +278,9 @@ enum RankFilters {
                 cache: cacheBase, pointers: pointers, values: values, buf1: buf1, buf2: buf2,
                 kind: kind, sign: sign, threshold: threshold, maxValue: maxValue, isFloat: isFloat,
                 kNPoints: kernel.kNPoints, smallKernel: kRadius < 2)
-            for y in 0..<height {
-                if y == 0 {
-                    for yy in -(kHeight / 2)...(kHeight / 2) { readToCache(yy) }
+            for y in rect.y..<(rect.y + rect.height) {
+                if y == rect.y {
+                    for yy in (y - kHeight / 2)...(y + kHeight / 2) { readToCache(yy) }
                 } else {
                     readToCache(y + kHeight / 2)
                 }
@@ -274,7 +291,7 @@ enum RankFilters {
                 }
                 let cacheLineP = slot(y) * cacheWidth + kRadius
                 for x in 0..<width { values[x] = cacheBase[cacheLineP + x] }
-                line.filterLine(width: width, cacheLineP: cacheLineP)
+                line.filterLine(from: rect.x, to: rect.x + rect.width, cacheLineP: cacheLineP)
                 writeLine(y, values.baseAddress!)
             }
         }
@@ -322,17 +339,18 @@ enum RankFilters {
             self.smallKernel = smallKernel
         }
 
-        /// Filters one line; `values` holds the line's input on entry (for
-        /// the float median's first guess and Remove NaNs) and the result on
-        /// return.
-        mutating func filterLine(width: Int, cacheLineP: Int) {
+        /// Filters points `xFrom..<xTo` of one line; `values` holds the
+        /// line's input on entry (for the float median's first guess and
+        /// Remove NaNs) and the result on return. Running sums start at `xFrom`.
+        mutating func filterLine(from xFrom: Int, to xTo: Int, cacheLineP: Int) {
             let minOrMax = kind == .minimum || kind == .maximum
             let minOrMaxOrOutliers = minOrMax || kind == .outliers
             let sumFilter = kind == .mean || kind == .variance
             var max: Float = 0
-            var median: Float = cache[cacheLineP].isNaN ? 0 : cache[cacheLineP]  // a first guess
+            let first = cache[cacheLineP + xFrom]
+            var median: Float = first.isNaN ? 0 : first  // a first guess
             var fullCalculation = true
-            for x in 0..<width {
+            for x in xFrom..<xTo {
                 if fullCalculation {
                     fullCalculation = smallKernel  // a small kernel always uses the full area
                     if minOrMaxOrOutliers { max = areaMax(x, ignoreRight: 0, start: -Float.greatestFiniteMagnitude) }

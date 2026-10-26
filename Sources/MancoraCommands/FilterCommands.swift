@@ -42,6 +42,37 @@ enum FilterCommands {
         }
     }
 
+    /// `PlugInFilterRunner.prepareProcessor`: the region an area selection
+    /// gives the filter, or `nil` for none (lines and points count as none).
+    /// Selections whose mask Mancora can't compute are left to ImageJ.
+    static func selectionRegion(_ name: String, _ open: OpenImage) throws(CommandError) -> FilterRegion? {
+        guard open.image.encodedROI != nil else { return nil }
+        guard let roi = open.roi else { throw .notNative(name) }  // a selection Mancora can't read
+        do {
+            return try FilterRegion(selection: roi, width: open.image.width, height: open.image.height)
+        } catch {
+            throw .notNative(name)
+        }
+    }
+
+    /// Runs `filter` on each target plane within the selection, as
+    /// `PlugInFilterRunner` runs a filter: `filter` gets the selection's
+    /// bounds (`nil` without an area selection) and, for filters that
+    /// support masking, the pixels of the bounds outside a non-rectangular
+    /// selection are put back afterwards (`ip.reset(mask)`).
+    static func applyInSelection(
+        _ name: String, _ context: inout CommandContext, _ options: MacroOptions, masking: Bool = true,
+        _ filter: (Plane, Int, OpenImage, FilterRegion?) throws -> Plane
+    ) throws {
+        guard let open = context.current else { throw CommandError.noImage(name) }
+        let region = try selectionRegion(name, open)
+        try apply(name, &context, options) { plane, width, open in
+            let filtered = try filter(plane, width, open, region)
+            guard masking, let region else { return filtered }
+            return region.restoringOutsideMask(filtered, snapshot: plane, width: width)
+        }
+    }
+
     /// The current channel's LUT is inverted (`ImageProcessor.isInvertedLut`).
     static func hasInvertedLUT(_ open: OpenImage) -> Bool {
         open.image.pixelType.usesLUT && open.image.channels[open.channel].lut.isInverted
@@ -60,25 +91,31 @@ enum FilterCommands {
         }
         var sigma = abs(macro.number(forLabel: "Sigma (Radius):", default: 2))
         if oldMacro { sigma /= 2.5 }
-        try apply("Gaussian Blur...", &context, macro) { plane, width, open in
+        try applyInSelection("Gaussian Blur...", &context, macro) { plane, width, open, region in
             let cal = open.image.calibration
             let scaled = cal.unit != "pixel" && cal.unit != "pixels" && macro.flag(forLabel: "Scaled Units")
             let sigmaX = scaled ? sigma / cal.pixelWidth : sigma
             let sigmaY = scaled ? sigma / cal.pixelHeight : sigma
-            return plane.gaussianBlurred(sigmaX: sigmaX, sigmaY: sigmaY, width: width)
+            return plane.gaussianBlurred(sigmaX: sigmaX, sigmaY: sigmaY, width: width, rect: region?.rect)
         }
     }
 
     static let smooth = CommandDefinition("Smooth", menu: "Process") { context, options in
-        try apply("Smooth", &context, options) { plane, width, _ in plane.smoothed(width: width) }
+        try applyInSelection("Smooth", &context, options) { plane, width, _, region in
+            plane.smoothed(width: width, rect: region?.rect)
+        }
     }
 
     static let sharpen = CommandDefinition("Sharpen", menu: "Process") { context, options in
-        try apply("Sharpen", &context, options) { plane, width, _ in plane.sharpened(width: width) }
+        try applyInSelection("Sharpen", &context, options) { plane, width, _, region in
+            plane.sharpened(width: width, rect: region?.rect)
+        }
     }
 
     static let findEdges = CommandDefinition("Find Edges", menu: "Process") { context, options in
-        try apply("Find Edges", &context, options) { plane, width, _ in plane.findingEdges(width: width) }
+        try applyInSelection("Find Edges", &context, options) { plane, width, _, region in
+            plane.findingEdges(width: width, rect: region?.rect)
+        }
     }
 
     /// `RankFilters`: Mean, Minimum, Maximum, Variance, Median, Remove
@@ -90,10 +127,12 @@ enum FilterCommands {
             let radius = options.number(forLabel: "Radius", default: 2)
             let threshold = options.number(forLabel: "Threshold:", default: 50)
             let dark = options.value(forLabel: "Which outliers") == "Dark"
-            try apply("Remove Outliers...", &context, options) { plane, width, open in
+            try applyInSelection("Remove Outliers...", &context, options) { plane, width, open, region in
                 // ImageJ swaps the sides for an image shown with an inverted LUT.
                 let side: RankFilter.Outliers = dark != hasInvertedLUT(open) ? .dark : .bright
-                return plane.rankFiltered(.removeOutliers(side, threshold: Double(Float(threshold))), radius: radius, width: width)
+                return plane.rankFiltered(
+                    .removeOutliers(side, threshold: Double(Float(threshold))), radius: radius, width: width,
+                    rect: region?.rect)
             }
         },
     ]
@@ -101,7 +140,9 @@ enum FilterCommands {
     static func rank(_ name: String, _ filter: RankFilter) -> CommandDefinition {
         CommandDefinition(name, menu: name == "Remove NaNs..." ? "Process>Noise" : "Process>Filters") { context, options in
             let radius = options.number(forLabel: "Radius", default: 2)
-            try apply(name, &context, options) { plane, width, _ in plane.rankFiltered(filter, radius: radius, width: width) }
+            try applyInSelection(name, &context, options) { plane, width, _, region in
+                plane.rankFiltered(filter, radius: radius, width: width, rect: region?.rect)
+            }
             if filter == .variance { try varianceDisplayRange(name, &context) }
         }
     }
@@ -120,7 +161,9 @@ enum FilterCommands {
 
     /// `RankFilters("despeckle")`: a radius-1 median.
     static let despeckle = CommandDefinition("Despeckle", menu: "Process>Noise") { context, options in
-        try apply("Despeckle", &context, options) { plane, width, _ in plane.despeckled(width: width) }
+        try applyInSelection("Despeckle", &context, options) { plane, width, _, region in
+            plane.despeckled(width: width, rect: region?.rect)
+        }
     }
 
     /// `Convolver`: the kernel in `text1=` (rows on separate lines, or
@@ -132,8 +175,11 @@ enum FilterCommands {
         }
         let kernel = try parseKernel(text, command: name)
         let normalize = options.flag(forLabel: "Normalize Kernel")
-        try apply(name, &context, options) { plane, width, _ in plane.convolved(with: kernel, normalize: normalize, width: width) }
-        try resetDisplayRange(name, &context)
+        try applyInSelection(name, &context, options) { plane, width, _, region in
+            plane.convolved(with: kernel, normalize: normalize, width: width, rect: region?.rect)
+        }
+        // The final step resets the display range only without a selection (of any kind).
+        if context.current?.image.encodedROI == nil { try resetDisplayRange(name, &context) }
     }
 
     /// `ImageProcessor.resetMinAndMax` on the current plane, as filters with
@@ -207,37 +253,20 @@ enum FilterCommands {
             throw CommandError.failed(command: name, detail: "8-bit binary (0 and 255 only) image required.")
         }
         let settings = context.settings
-        let singlePlane = targetPlanes(open, options).count == 1
-        try apply(name, &context, options) { plane, width, open in
-            if operation == .outline, settings.blackBackground, singlePlane {
-                return try snapshotOutline(plane, width: width)
-            }
-            let black = operation == .outline ? settings.blackBackground : settings.blackBackground != hasInvertedLUT(open)
+        // PlugInFilterRunner keeps a snapshot of a single image (for undo)
+        // and of a stack plane it masks; Outline then reads it (Binary runs
+        // in snapshot copy mode).
+        let masked = try selectionRegion(name, open)?.mask != nil
+        let readsSnapshot = targetPlanes(open, options).count == 1 || masked
+        // Skeletonize resets the processor's selection, and its mask with it.
+        try applyInSelection(name, &context, options, masking: operation != .skeletonize) { plane, width, open, region in
+            let inverted = hasInvertedLUT(open)
+            let black = operation == .outline ? settings.blackBackground : settings.blackBackground != inverted
             let binaryOptions = BinaryOptions(
                 blackBackground: black, iterations: settings.binaryIterations, count: settings.binaryCount,
-                padEdges: settings.padEdges)
-            return try plane.binary(operation, options: binaryOptions, width: width)
+                padEdges: settings.padEdges, invertedLUT: inverted, outlineReadsSnapshot: readsSnapshot)
+            return try plane.binary(operation, options: binaryOptions, width: width, rect: region?.rect)
         }
-    }
-
-    /// Outline with Black background on one plane, as ImageJ computes it:
-    /// `Binary.outline` inverts the plane, but the undo snapshot ImageJ took
-    /// of a single plane is what `BinaryProcessor` then reads (snapshot copy
-    /// mode), so it outlines the original's black regions and inverts that.
-    /// The outline ends up on the background side of white objects; edge
-    /// pixels keep their values.
-    static func snapshotOutline(_ plane: Plane, width: Int) throws -> Plane {
-        guard case .gray8(let original) = plane,
-            case .gray8(let outlined) = try plane.binary(.outline, options: BinaryOptions(blackBackground: false), width: width)
-        else { return plane }
-        let height = original.count / width
-        var out = original
-        for y in 1..<max(height - 1, 1) {
-            for x in 1..<max(width - 1, 1) {
-                out[y * width + x] = 255 - outlined[y * width + x]
-            }
-        }
-        return .gray8(out)
     }
 
     /// Process ▸ Binary ▸ Options: iterations, count, Black background and
