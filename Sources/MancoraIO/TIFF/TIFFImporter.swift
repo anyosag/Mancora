@@ -167,8 +167,14 @@ public enum TIFFImporter {
         }
 
         var channels = Hyperstack.defaultChannels(for: stack, dimensions: dims)
-        if dims.channels == 1, stack.pixelType.usesLUT {
-            channels[0].lut = singleChannelLUT(first, name: LUTReader.baseName(of: title))
+        // Channels saved without a mode or the hyperstack flag (RGB Stack, HSB
+        // Stack) don't make a composite (Opener.makeComposite): each shows
+        // through the file's one LUT.
+        let plain = dims.channels > 1 && samplePlanes == 1 && description != nil
+            && description?.compositeMode == nil && description?.isHyperstack == false
+        if dims.channels == 1 || plain, stack.pixelType.usesLUT {
+            let lut = singleChannelLUT(first, name: LUTReader.baseName(of: title))
+            for c in channels.indices { channels[c].lut = lut }
         }
         let savedRanges = metadata?.ranges ?? []
         if dims.channels > 1, savedRanges.count == dims.channels * 2 {

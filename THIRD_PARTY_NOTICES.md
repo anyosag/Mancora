@@ -16,7 +16,8 @@ The Fiji contributors, https://fiji.sc. **GPL-3.0-or-later.**
 The macros in `Resources/Macros/`, the sample scripts in
 `Resources/Scripts/` and everything under `legacy/fiji/` come from the
 Fiji project. `legacy/fiji/LICENSES` lists the licenses of the individual
-Fiji components.
+Fiji components. Image ▸ Hyperstacks ▸ Re-order Hyperstack is a port of
+Fiji's `Hyperstack_rearranger` (Fiji_Plugins, GPL-2.0-or-later).
 
 ## Lookup tables (`Resources/LUTs/`)
 
