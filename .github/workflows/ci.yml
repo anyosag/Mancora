@@ -106,3 +106,29 @@ jobs:
         run: swift test --skip-build
       - name: Build the macOS app
         run: swift build --package-path Apps/macOS -Xswiftc -warnings-as-errors
+      - name: Screenshots of every window
+        # Opens each window in each state, light and dark, and saves a PNG of it (plus
+        # index.md) so the design can be reviewed without a Mac. Never fails the job
+        # while the mode is new.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          # While the mode is new, also save screencapture's picture of each window next
+          # to the in-process one, to compare them.
+          MANCORA_SCREENSHOTS_COMPARE: "1"
+        run: |
+          mkdir -p "$RUNNER_TEMP/screenshots"
+          app="$(swift build --package-path Apps/macOS --show-bin-path)/MancoraApp"
+          # The log goes to a file, so a helper process the app leaves behind can't hold this step open.
+          status=0
+          "$app" --screenshots "$RUNNER_TEMP/screenshots" > "$RUNNER_TEMP/screenshots.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/screenshots.log"
+          cp "$RUNNER_TEMP/screenshots.log" "$RUNNER_TEMP/screenshots/run.log"
+          exit "$status"
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: ${{ runner.temp }}/screenshots
+          if-no-files-found: warn

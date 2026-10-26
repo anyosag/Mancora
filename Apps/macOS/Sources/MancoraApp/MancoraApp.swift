@@ -30,6 +30,11 @@ struct MancoraApp: App {
                 exit(1)
             }
         }
+        // `Mancora --screenshots dir` opens each window in each state, saves a
+        // PNG of it in light and dark mode, and exits (see Screenshots.swift).
+        if let i = args.firstIndex(of: "--screenshots"), i + 1 < args.count {
+            Screenshots.configure(path: args[i + 1])
+        }
         // Run from `swift run` there is no app bundle; make it a regular app
         // so it gets a Dock icon, a menu bar and keyboard focus.
         NSApplication.shared.setActivationPolicy(.regular)
@@ -38,7 +43,8 @@ struct MancoraApp: App {
     var body: some Scene {
         WindowGroup("Mancora", id: "viewer", for: OpenRequest.self) { $request in
             ViewerWindow(request: $request, bridge: bridge)
-                .task { updater.checkAtLaunch() }
+                .task { if !Screenshots.isActive { updater.checkAtLaunch() } }
+                .screenshotDriver(bridge: bridge)
         }
         .commands {
             ImageJMenuCommands(bridge: bridge)
