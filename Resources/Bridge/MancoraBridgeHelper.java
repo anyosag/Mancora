@@ -299,7 +299,14 @@ public class MancoraBridgeHelper {
         if (imp == null && bf != null) {
             // ImageJ's "unsupported format" message doesn't count if Bio-Formats can.
             DialogWatchdog.reset();
-            ImagePlus[] all = (ImagePlus[]) bf.getMethod("openImagePlus", String.class).invoke(null, path);
+            ImagePlus[] all;
+            try {
+                all = (ImagePlus[]) bf.getMethod("openImagePlus", String.class).invoke(null, path);
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                // Bio-Formats' own exception says what went wrong.
+                Throwable cause = e.getCause() == null ? e : e.getCause();
+                throw new IOException("Bio-Formats could not open " + path + ": " + cause, cause);
+            }
             if (all != null) for (ImagePlus i : all) if (i != null) opened.add(i);
             reader = "Bio-Formats";
             DialogWatchdog.check("Bio-Formats");

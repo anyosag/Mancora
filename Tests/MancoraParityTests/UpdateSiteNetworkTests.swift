@@ -97,9 +97,11 @@ struct UpdateSiteNetworkTests {
         try manager.addSite(name: "Fiji", url: nil)
         try await manager.refresh(client: client)
         // Only Bio-Formats' ImageJ plugin (the current record, wherever the sites keep it), and what it needs.
+        let candidates = manager.files.files.filter { $0.unversionedFilename.hasSuffix("/bio-formats_plugins.jar") }
+        let records = manager.files.files.filter { $0.filename.contains("bio-formats") || $0.filename.contains("formats-") }
+            .map { "\($0.filename) [\($0.updateSite ?? "local")] \($0.status.rawValue) \($0.timestamp) overrides \($0.overriddenUpdateSites.map(\.site))" }
         let plugin = try #require(
-            manager.files.files.filter { $0.unversionedFilename.hasSuffix("/bio-formats_plugins.jar") && $0.current != nil }
-                .max { $0.timestamp < $1.timestamp })
+            candidates.filter { $0.current != nil }.max { $0.timestamp < $1.timestamp }, "records: \(records)")
         try manager.select([plugin.filename])
         let (changes, conflicts) = manager.plan()
         // The bridge's own ImageJ may differ from the ImageJ site's: that's a warning, and it stays.
@@ -123,7 +125,7 @@ struct UpdateSiteNetworkTests {
             result = try await bridge.open(nrrd.path)
         } catch {
             await bridge.stop()
-            Issue.record("\(error)\ninstalled: \(installed.joined(separator: ", "))")
+            Issue.record("\(error)\ninstalled: \(installed.joined(separator: ", "))\nrecords: \(records.joined(separator: "\n"))")
             return
         }
         await bridge.stop()
