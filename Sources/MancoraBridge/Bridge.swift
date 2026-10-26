@@ -295,6 +295,9 @@ public actor Bridge {
         #endif
         var environment = config.environment
         #if os(Linux)
+        // Java names files in the locale's encoding (sun.jnu.encoding): outside a
+        // UTF-8 locale it can't open a path, or an input titled, beyond ASCII.
+        if !Self.isUTF8Locale(environment) { environment["LC_ALL"] = "C.UTF-8" }
         let display = (environment["DISPLAY"] ?? "") + (environment["WAYLAND_DISPLAY"] ?? "")
         if display.isEmpty {
             if config.useVirtualDisplay, let name = startVirtualDisplay() {
@@ -377,6 +380,14 @@ public actor Bridge {
     static func fileName(for title: String) -> String {
         let cleaned = String(title.map { "/\\:*?\"<>|".contains($0) || $0.isNewline ? "_" : $0 })
         return cleaned.trimmingCharacters(in: .whitespaces).isEmpty ? "Untitled.tif" : cleaned
+    }
+
+    /// Whether the locale `environment` selects for character types (`LC_ALL`,
+    /// else `LC_CTYPE`, else `LANG`) is a UTF-8 one.
+    static func isUTF8Locale(_ environment: [String: String]) -> Bool {
+        let locale = ["LC_ALL", "LC_CTYPE", "LANG"].lazy.compactMap { environment[$0] }.first { !$0.isEmpty } ?? ""
+        let lowered = locale.lowercased()
+        return lowered.contains("utf-8") || lowered.contains("utf8")
     }
 
     static func findOnPath(_ tool: String, environment: [String: String]) -> URL? {

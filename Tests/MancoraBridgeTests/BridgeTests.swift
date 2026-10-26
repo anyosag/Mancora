@@ -238,6 +238,31 @@ struct BridgeIntegrationTests {
         await bridge.stop()
     }
 
+    /// Titles and paths outside ASCII reach Java intact even when Mancora runs
+    /// in a locale that isn't UTF-8 (where Java's file names would be ASCII).
+    @Test func unicodeTitlesAndPathsInAnyLocale() async throws {
+        var config = try await BridgeFixtures.bridge().configuration
+        config.environment["LC_ALL"] = "C"
+        let bridge = Bridge(configuration: config)
+        var image = fixture
+        image.title = "größe ü 😀.tif"
+        let result = try await bridge.runMacro("print(getTitle()); run(\"Invert\", \"stack\");", images: [image])
+        #expect(result.log.contains("größe ü 😀.tif"))
+        let output = try #require(result.images.first)
+        #expect(output.title == "größe ü 😀.tif")
+        #expect(output.replacesInput == 0)
+
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("mancora open é \(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let pgm = folder.appendingPathComponent("rämp ü.pgm")
+        try Data(Array("P5\n2 1\n255\n".utf8) + [10, 20]).write(to: pgm)
+        let opened = try await bridge.open(pgm.path)
+        #expect(opened.images.first?.title == "rämp ü.pgm")
+        #expect(opened.images.first?.image.stack[0] == .gray8([10, 20]))
+        await bridge.stop()
+    }
+
     /// Dialogs nobody can answer don't hang the helper: ImageJ's errors come
     /// back as errors, and "Process all slices?" is answered No.
     @Test(.enabled(if: hasDisplay)) func dialogsAreAnswered() async throws {
