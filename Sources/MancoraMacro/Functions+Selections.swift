@@ -88,8 +88,13 @@ extension Functions {
         while interp.token == ch(",") {
             let x = Int32(truncatingIfNeeded: javaMathRound(try interp.getExpression()))
             if points.count == 2 && interp.nextToken() == ch(")") {
+                // makeLine(x1, y1, x2, y2, lineWidth), Line.updateWideLine: the
+                // width, and the ROI color at 30% opacity.
                 try interp.getRightParen()
-                try unsupported("makeLine with a line width")
+                let line = Roi.Line(x1: x1, y1: y1, x2: x2, y2: y2)
+                try setSelection(
+                    Roi(.line(line), strokeColor: Self.defaultRoiColor & 0x00FF_FFFF | 0x4D00_0000, strokeWidth: max(Float(x), 0)))
+                return
             }
             try interp.getComma()
             let y = Int32(truncatingIfNeeded: javaMathRound(try interp.getExpression()))
@@ -124,15 +129,15 @@ extension Functions {
         if interp.nextToken() == ch(",") { options = try getNextString() }
         try interp.getRightParen()
         _ = try image()
-        if options != nil { try unsupported("makePoint with options") }
+        if let options {
+            // new PointRoi(x, y, options): always subpixel, with the options' type, size and color.
+            try setSelection(try pointRoi(.subpixel([Roi.FloatPoint(x: Float(x), y: Float(y))]), options: options))
+            return
+        }
         let vertices: Roi.Vertices =
             Double(jInt(x)) == x && Double(jInt(y)) == y
             ? .integer([Roi.IntPoint(x: jInt(x), y: jInt(y))]) : .subpixel([Roi.FloatPoint(x: Float(x), y: Float(y))])
         try setSelection(Roi(.points(Roi.Points(vertices))))
-    }
-
-    func makeEllipse() throws(MacroSignal) {
-        try unsupported("makeEllipse")
     }
 
     func makeSelection() throws(MacroSignal) {
@@ -178,8 +183,13 @@ extension Functions {
             let p = vertices.floatPoints
             roi = Roi(.line(Roi.Line(x1: Double(p[0].x), y1: Double(p[0].y), x2: Double(p[1].x), y2: Double(p[1].y))))
         case .point:
-            if let type, type != "point" { try unsupported("makeSelection(\"\(type)\", ...)") }
-            roi = Roi(.points(Roi.Points(vertices)))
+            if let type, type != "point" {
+                // new PointRoi(x, y, type): every element of the arrays, as floats.
+                let all = (0..<min(x.count, y.count)).map { Roi.FloatPoint(x: Float(x[$0]), y: Float(y[$0])) }
+                roi = try pointRoi(.subpixel(all), options: type)
+            } else {
+                roi = Roi(.points(Roi.Points(vertices)))
+            }
         default:
             let polygonKind: Roi.Polygon.Kind =
                 switch kind {
@@ -311,125 +321,7 @@ extension Functions {
         return roi
     }
 
-    // MARK: - Results
-
-    /// The table a results function works on: "Results", or the named table.
-    private func table(_ title: String?) throws(MacroSignal) -> ResultsTable {
-        guard let title, title != "Results" else { return session.context.results }
-        guard let table = session.context.tables[title] else { try interp.fail("\"\(title)\" table not found") }
-        return table
-    }
-
-    func setTable(_ title: String?, _ table: ResultsTable) {
-        if let title, title != "Results" { session.context.tables[title] = table } else { session.context.results = table }
-    }
-
-    /// `getResult(column, row, title)`, which is also `Table.get`.
-    func getResult() throws(MacroSignal) -> Double {
-        try interp.getLeftParen()
-        let column = try getString()
-        var row = -1
-        if interp.nextToken() == ch(",") {
-            try interp.getComma()
-            row = jIntI(try interp.getExpression())
-        }
-        var title: String?
-        if interp.nextToken() == ch(",") {
-            try interp.getComma()
-            title = try getString()
-        }
-        let rt = try table(title)
-        if title == nil && rt.count == 0 { try interp.fail("No results found") }
-        try interp.getRightParen()
-        let counter = rt.count
-        if row == -1 { row = counter - 1 }
-        if row < 0 || row >= counter { try interp.fail("Row (\(row)) out of range") }
-        guard rt.columns.contains(column) else { return .nan }
-        switch rt.value(column, row: row) {
-        case .number(let n)?: return n
-        case .text(let s)?: return s == "NaN" ? .nan : toolsParseDouble(s)
-        case nil: return rt.number(column, row: row)
-        }
-    }
-
-    /// `getResultString(column, row, title)`, which is also `Table.getString`.
-    func getResultString() throws(MacroSignal) -> String {
-        try interp.getLeftParen()
-        let column = try getString()
-        var row = -1
-        if interp.nextToken() == ch(",") {
-            try interp.getComma()
-            row = jIntI(try interp.getExpression())
-        }
-        var title: String?
-        if interp.nextToken() == ch(",") {
-            try interp.getComma()
-            title = try getString()
-        }
-        try interp.getRightParen()
-        let rt = try table(title)
-        if title == nil && rt.count == 0 { try interp.fail("No results found") }
-        if row == -1 { row = rt.count - 1 }
-        if row < 0 || row >= rt.count { try interp.fail("Row (\(row)) out of range") }
-        if rt.columns.contains(column) {
-            switch rt.value(column, row: row) {
-            case .text(let s)?: return s
-            default:
-                return ResultsFormatter.cell(
-                    rt.number(column, row: row), column: column, of: rt, decimalPlaces: session.context.settings.decimalPlaces)
-            }
-        }
-        if column == "Label" { return rt.labels[row] ?? "null" }
-        return "null"
-    }
-
-    func getResultLabel() throws(MacroSignal) -> String {
-        let row = jIntI(try getArg())
-        let rt = session.context.results
-        if rt.count == 0 { try interp.fail("No results found") }
-        if row < 0 || row >= rt.count { try interp.fail("Row (\(row)) out of range") }
-        if let label = rt.labels[row] { return label }
-        if case .text(let s)? = rt.value("Label", row: row) { return s }
-        return ""
-    }
-
-    func setResult() throws(MacroSignal) {
-        try interp.getLeftParen()
-        let column = try getString()
-        try interp.getComma()
-        let row = jIntI(try interp.getExpression())
-        try interp.getComma()
-        var value = 0.0
-        var stringValue: String?
-        let isLabel = column == "Label"
-        if isStringArg() || isLabel { stringValue = try getString() } else { value = try interp.getExpression() }
-        var title: String?
-        if interp.nextToken() == ch(",") {
-            try interp.getComma()
-            title = try getString()
-        }
-        try interp.getRightParen()
-        var rt = title.map { session.context.tables[$0] ?? ResultsTable() } ?? session.context.results
-        if title == "Results" { rt = session.context.results }
-        if row < 0 || row > rt.count { try interp.fail("Row (\(row)) out of range") }
-        if row == rt.count { rt.addRow() }
-        if let stringValue {
-            if isLabel { rt.setLabel(stringValue, row: row) } else { rt.set(column, row: row, .text(stringValue)) }
-        } else {
-            rt.set(column, row: row, value)
-        }
-        setTable(title, rt)
-    }
-
-    func renameResults() throws(MacroSignal) {
-        let arg1 = try getFirstString()
-        var arg2: String?
-        if interp.nextToken() == ch(")") { try interp.getRightParen() } else { arg2 = try getLastString() }
-        let (from, to) = arg2 == nil ? ("Results", arg1) : (arg1, arg2!)
-        let rt = try table(from)
-        if from == "Results" { session.context.results = ResultsTable() } else { session.context.tables[from] = nil }
-        setTable(to, rt)
-    }
+    // MARK: - Measurements
 
     /// `List.setMeasurements`: every measurement of the current image and selection.
     func setListMeasurements() throws(MacroSignal) {
@@ -456,421 +348,14 @@ extension Functions {
         for column in table.columns { props[column] = javaString(table.number(column, row: 0)) }
     }
 
-    // MARK: - The ROI Manager
-
-    func roiManager() throws(MacroSignal) -> Double {
-        let cmd = try getFirstString().lowercased()
-        var path: String?
-        var index = 0
-        var dx = 0.0, dy = 0.0
-        var countOrIndex = Double.nan
-        let twoArgCommand = ["open", "save", "rename", "set color", "set fill color", "set line width", "associate",
-            "centered", "usenames", "save selected"].contains(cmd)
-        let select = cmd == "select"
-        var multiSelect = false
-        let add = cmd == "add"
-        if twoArgCommand {
-            path = try getLastString()
-        } else if add {
-            if interp.nextToken() == ch(",") {
-                try interp.getComma()
-                _ = try interp.getString()
-                try unsupported("roiManager(\"add\", color)")
-            }
-            try interp.getRightParen()
-        } else if select {
-            try interp.getComma()
-            multiSelect = isArrayArg()
-            if !multiSelect {
-                index = jIntI(try interp.getExpression())
-                try interp.getRightParen()
-            }
-        } else if cmd == "translate" {
-            dx = try getNextArg()
-            dy = try getLastArg()
-        } else {
-            try interp.getRightParen()
-        }
-        var rm = session.roiManager
-        defer { session.roiManager = rm }
-        if multiSelect {
-            let indexes = try getNumericArray().map { jIntI($0) }
-            try interp.getRightParen()
-            for i in indexes where i < 0 || i >= rm.count { try interp.fail("Invalid index: \(i)") }
-            rm.selected = indexes
-            if indexes.count == 1 { try setSelection(rm.entries[indexes[0]].roi) }
-            return .nan
-        }
-        switch cmd {
-        case "open":
-            session.roiManager = rm
-            try roiManagerOpen(path!)
-            rm = session.roiManager
-        case "save":
-            let entries = rm.entries.map { RoiSet.Entry(name: $0.name, roi: $0.roi) }
-            do { try Data(RoiSet.encode(entries)).write(to: URL(fileURLWithPath: path!)) } catch { try interp.fail("\(error)") }
-        case "rename":
-            guard let i = rm.selected.first ?? (rm.count > 0 ? nil : nil) else { try interp.fail("Exactly one item in the list must be selected.") }
-            rm.entries[i].name = path!
-            rm.entries[i].roi.name = path!
-        case "add":
-            let open = try image()
-            guard var roi = open.roi else { try interp.fail("The active image does not have a selection.") }
-            if open.image.stack.count > 1 && roi.position == .none {
-                let d = open.image.dimensions
-                roi.position = open.isHyperstackPosition ? .hyperstack(channel: d.channels > 1 ? open.channel + 1 : 0,
-                    slice: d.slices > 1 ? open.slice + 1 : 0, frame: d.frames > 1 ? open.frame + 1 : 0) : .stack(open.currentSliceNumber)
-            }
-            // The manager names the ROI with its label.
-            let name = roi.name ?? Self.roiManagerLabel(open, roi)
-            roi.name = name
-            rm.entries.append(.init(name: name, roi: roi))
-        case "select":
-            try checkIndex(index, 0, rm.count - 1)
-            rm.selected = [index]
-            let entry = rm.entries[index]
-            try selectRoiPosition(entry.roi)
-            try setSelection(entry.roi)
-        case "count", "size":
-            countOrIndex = Double(rm.count)
-        case "index":
-            countOrIndex = Double(rm.selected.first ?? -1)
-        case "translate":
-            let targets = rm.selected.isEmpty ? Array(rm.entries.indices) : rm.selected
-            for i in targets { rm.entries[i].roi = Self.translated(rm.entries[i].roi, dx: dx, dy: dy) }
-            return .nan
-        case "reset":
-            rm = RoiManagerList()
-        case "delete":
-            if rm.selected.isEmpty {
-                rm = RoiManagerList()
-            } else {
-                let remove = Set(rm.selected)
-                rm.entries = rm.entries.enumerated().filter { !remove.contains($0.offset) }.map(\.element)
-                rm.selected = []
-            }
-        case "deselect":
-            rm.selected = []
-            try? modifyImage { $0.roi = nil }
-        case "measure":
-            session.roiManager = rm
-            try roiManagerMeasure()
-        case "update":
-            guard let i = rm.selected.first, let roi = try image().roi else { break }
-            rm.entries[i].roi = roi
-        case "show all", "show none", "show all with labels", "show all without labels", "usenames", "associate",
-            "centered", "remove slice info", "sort":
-            if cmd == "sort" { rm.entries.sort { javaCompare($0.name, $1.name) < 0 } }
-        default:
-            try unsupported("roiManager(\"\(cmd)\")")
-        }
-        return countOrIndex
-    }
-
-    /// Opens a `.roi` file or a `RoiSet.zip` into the ROI Manager.
-    func roiManagerOpen(_ path: String) throws(MacroSignal) {
-        do {
-            if path.lowercased().hasSuffix(".zip") {
-                for entry in try RoiSet.read(path: path) {
-                    session.roiManager.entries.append(.init(name: entry.name, roi: entry.roi))
-                }
-            } else {
-                let roi = try RoiCodec.read(path: path)
-                let name = roi.name ?? (Self.javaFileName(path) as NSString).deletingPathExtension
-                session.roiManager.entries.append(.init(name: name, roi: roi))
-            }
-        } catch {
-            try interp.fail("\(error)")
-        }
-    }
-
-    /// `RoiManager.measure`: each selected ROI (all of them when none is), on its own plane.
-    private func roiManagerMeasure() throws(MacroSignal) {
-        let rm = session.roiManager
-        let indexes = rm.selected.isEmpty ? Array(rm.entries.indices) : rm.selected
-        if indexes.isEmpty { try interp.fail("The ROI Manager is empty") }
-        let original = try image()
-        for i in indexes {
-            let roi = rm.entries[i].roi
-            try selectRoiPosition(roi)
-            try setSelection(roi)
-            try runCommand("Measure", options: nil)
-        }
-        try modifyImage { open in
-            (open.channel, open.slice, open.frame) = (original.channel, original.slice, original.frame)
-            open.roi = original.roi
-        }
-    }
-
-    /// Moves to a ROI's stack position, as selecting it in the ROI Manager does.
-    private func selectRoiPosition(_ roi: Roi) throws(MacroSignal) {
-        try modifyImage { open in
-            let d = open.image.dimensions
-            switch roi.position {
-            case .none: break
-            case .stack(let n):
-                guard n >= 1 && n <= open.image.stack.count else { break }
-                let p = d.position(ofPlane: n - 1)
-                (open.channel, open.slice, open.frame) = (p.channel, p.slice, p.frame)
-            case .hyperstack(let c, let z, let t):
-                if c > 0 { open.channel = min(c, d.channels) - 1 }
-                if z > 0 { open.slice = min(z, d.slices) - 1 }
-                if t > 0 { open.frame = min(t, d.frames) - 1 }
-            }
-        }
-    }
-
-    /// `RoiManager.getLabel`: "yyyy-xxxx" from the selection's center, with the slice first for stacks.
-    static func roiManagerLabel(_ open: OpenImage, _ roi: Roi) -> String {
-        let r = roi.bounds
-        var xc = r.x + r.width / 2
-        var yc = r.y + r.height / 2
-        if xc < 0 { xc = 0 }
-        if yc < 0 { yc = 0 }
-        var digits = 4
-        digits = max(digits, String(xc).count, String(yc).count)
-        if digits == 4 && (open.image.stack.count >= 10000 || open.image.height >= 10000) { digits = 5 }
-        func padded(_ n: Int) -> String {
-            let s = "000000" + String(n)
-            return String(s.suffix(digits))
-        }
-        var label = padded(yc) + "-" + padded(xc)
-        if open.image.stack.count > 1 { label = padded(open.currentSliceNumber) + "-" + label }
-        return label
-    }
-
     // MARK: - Variable functions
 
     /// The name after `X.` in `X.name(...)`.
-    private func memberName() throws(MacroSignal) -> String {
+    func memberName() throws(MacroSignal) -> String {
         interp.getToken()
         if interp.token != ch(".") { try interp.error("'.' expected") }
         interp.getToken()
         return interp.tokenString ?? ""
-    }
-
-    func doTable() throws(MacroSignal) -> Variable? {
-        let name = try memberName()
-        /// The optional last argument naming the table.
-        func optionalTitle() throws(MacroSignal) -> String? {
-            if interp.nextToken() == ch(",") {
-                try interp.getComma()
-                return try getString()
-            }
-            return nil
-        }
-        switch name {
-        case "size":
-            var title: String?
-            if interp.nextToken() == ch("(") {
-                try interp.getLeftParen()
-                if interp.nextToken() != ch(")") { title = try getString() }
-                try interp.getRightParen()
-            }
-            return Variable(Double(try table(title).count))
-        case "title":
-            try interp.getParens()
-            return Variable("Results")
-        case "headings":
-            var title: String?
-            if interp.nextToken() == ch("(") {
-                try interp.getLeftParen()
-                if interp.nextToken() != ch(")") { title = try getString() }
-                try interp.getRightParen()
-            }
-            return Variable(ResultsFormatter.headings(try table(title)))
-        case "get":
-            // Java's Table.get and Table.getString are getResult and getResultString.
-            return Variable(try getResult())
-        case "getString":
-            return Variable(try getResultString())
-        case "set":
-            let column = try getFirstString()
-            try interp.getComma()
-            let row = jIntI(try interp.getExpression())
-            try interp.getComma()
-            var value: ResultsTable.Value
-            if isStringArg() { value = .text(try getString()) } else { value = .number(try interp.getExpression()) }
-            let title = try optionalTitle()
-            try interp.getRightParen()
-            var rt = try table(title)
-            if row < 0 || row > rt.count { try interp.fail("Row (\(row)) out of range") }
-            if row == rt.count { rt.addRow() }
-            if column == "Label", case .text(let s) = value { rt.setLabel(s, row: row) } else { rt.set(column, row: row, value) }
-            setTable(title, rt)
-            return nil
-        case "getColumn":
-            let column = try getFirstString()
-            let title = try optionalTitle()
-            try interp.getRightParen()
-            let rt = try table(title)
-            guard rt.columns.contains(column) else { try interp.fail("\"\(column)\" column not found") }
-            return Variable(VariableArray((0..<rt.count).map { row -> Variable in
-                if case .text(let s)? = rt.value(column, row: row) { return Variable(s) }
-                return Variable(rt.number(column, row: row))
-            }))
-        case "setColumn":
-            let column = try getFirstString()
-            try interp.getComma()
-            let values = try getArray()
-            let title = try optionalTitle()
-            try interp.getRightParen()
-            var rt = try table(title)
-            let initialSize = rt.count
-            while rt.count < values.count { rt.addRow() }
-            for (row, v) in values.elements.enumerated() {
-                if let s = v.getString() { rt.set(column, row: row, .text(s)) } else { rt.set(column, row: row, v.getValue()) }
-            }
-            // ResultsTable.setColumn empties the rest of a short column, and the new rows of the others.
-            for row in values.count..<max(values.count, rt.count) { rt.set(column, row: row, .text("")) }
-            if initialSize > 0 {
-                for other in rt.columns where other != column {
-                    for row in initialSize..<rt.count { rt.set(other, row: row, .text("")) }
-                }
-            }
-            setTable(title, rt)
-            return nil
-        case "columnExists":
-            let column = try getFirstString()
-            let title = try optionalTitle()
-            try interp.getRightParen()
-            return Variable(try table(title).columns.contains(column) ? 1 : 0)
-        case "create", "reset":
-            let title = try getStringArg()
-            setTable(title, ResultsTable())
-            return nil
-        case "save":
-            // ResultsTable.saveAs: tabs unless the path ends in .csv.
-            let path = try getFirstString()
-            let title = try optionalTitle()
-            try interp.getRightParen()
-            let rt = try table(title)
-            try saveTable(rt, to: path, rowNumbers: rt.showsRowNumbers ?? ((title ?? "Results") == "Results"))
-            return nil
-        case "open":
-            let path = try getFirstString()
-            let title = try optionalTitle() ?? Self.javaFileName(path)
-            try interp.getRightParen()
-            do {
-                setTable(title, try ResultsTableIO.read(path: path, parse: { javaParseDouble($0) }))
-            } catch {
-                try interp.fail("\(error)")
-            }
-            return nil
-        case "showRowNumbers", "hideRowNumbers":
-            var show = false
-            var title: String?
-            if name == "showRowNumbers" {
-                show = jIntI(try getFirstArg()) != 0
-                title = try optionalTitle()
-                try interp.getRightParen()
-            } else if interp.nextToken() == ch("(") {
-                try interp.getLeftParen()
-                if interp.nextToken() != ch(")") { title = try getString() }
-                try interp.getRightParen()
-            }
-            var rt = try table(title)
-            rt.showsRowNumbers = show
-            setTable(title, rt)
-            return nil
-        case "update", "show", "showRowIndexes", "setLocationAndSize", "applyMacro", "sort",
-            "deleteRows", "deleteColumn", "renameColumn", "rename", "setSelection", "getSelectionStart",
-            "getSelectionEnd", "list", "allHeadings":
-            if name == "update" || name == "show" {
-                if interp.nextToken() == ch("(") { try interp.skipParens() }
-                return nil
-            }
-            try unsupported("Table." + name)
-        default:
-            try interp.error("Unrecognized Table function")
-            return nil
-        }
-    }
-
-    func doRoi() throws(MacroSignal) -> Variable? {
-        let name = try memberName()
-        switch name {
-        case "size":
-            try interp.getParens()
-            guard let roi = try image().roi else { return Variable(0) }
-            return Variable(Double(Self.roiSize(roi)))
-        case "getBounds":
-            try getBounds()
-            return nil
-        case "getCoordinates":
-            try getCoordinates()
-            return nil
-        case "getName":
-            try interp.getParens()
-            return Variable(try image().roi?.name ?? "")
-        case "setName":
-            try setSelectionName()
-            return nil
-        case "getType":
-            try interp.getParens()
-            guard let roi = try image().roi else { return Variable("") }
-            let names = ["rectangle", "oval", "polygon", "freehand", "traced", "line", "polyline", "freeline", "angle",
-                "composite", "point"]
-            return Variable(names[roi.kind.rawValue])
-        case "move":
-            let x = try getFirstArg()
-            let y = try getLastArg()
-            guard let roi = try image().roi else { try interp.fail("Selection required") }
-            let b = roi.bounds
-            try setSelection(Self.translated(roi, dx: x - Double(b.x), dy: y - Double(b.y)))
-            return nil
-        case "translate":
-            let dx = try getFirstArg()
-            let dy = try getLastArg()
-            guard let roi = try image().roi else { try interp.fail("Selection required") }
-            try setSelection(Self.translated(roi, dx: dx, dy: dy))
-            return nil
-        case "remove":
-            try interp.getParens()
-            try setSelection(nil)
-            return nil
-        case "contains":
-            let x = try getFirstArg()
-            let y = try getLastArg()
-            guard let roi = try image().roi else { try interp.fail("Selection required") }
-            return Variable(Self.roiContains(roi, x, y) ? 1 : 0)
-        default:
-            try unsupported("Roi." + name)
-        }
-    }
-
-    /// `Roi.contains(x, y)` for area selections: whether the pixel is in the mask.
-    static func roiContains(_ roi: Roi, _ x: Double, _ y: Double) -> Bool {
-        guard roi.isArea, let mask = try? roi.mask() else { return false }
-        return mask[x: jIntI(x), y: jIntI(y)]
-    }
-
-    func doRoiManager() throws(MacroSignal) -> Variable? {
-        let name = try memberName()
-        switch name {
-        case "size":
-            try interp.getParens()
-            return Variable(Double(session.roiManager.count))
-        case "selected":
-            try interp.getParens()
-            return Variable(Double(session.roiManager.selected.count))
-        case "getName":
-            let i = jIntI(try getArg())
-            try checkIndex(i, 0, session.roiManager.count - 1)
-            return Variable(session.roiManager.entries[i].name)
-        case "getIndex":
-            let label = try getStringArg()
-            return Variable(Double(session.roiManager.entries.firstIndex { $0.name == label } ?? -1))
-        case "select":
-            let i = jIntI(try getArg())
-            try checkIndex(i, 0, session.roiManager.count - 1)
-            session.roiManager.selected = [i]
-            try selectRoiPosition(session.roiManager.entries[i].roi)
-            try setSelection(session.roiManager.entries[i].roi)
-            return nil
-        default:
-            try unsupported("RoiManager." + name)
-        }
     }
 
     func doProperty() throws(MacroSignal) -> Variable? {
@@ -1070,6 +555,6 @@ enum ResultsFormatter {
 
     /// `getColumnHeadings()`: the row numbers' column, Label, then the columns, tab-separated.
     static func headings(_ rt: ResultsTable) -> String {
-        " \t" + (rt.labels.contains { $0 != nil } ? "Label\t" : "") + rt.columns.joined(separator: "\t")
+        ResultsTableIO.headingLine(rt, csv: false, rowNumbers: true)
     }
 }

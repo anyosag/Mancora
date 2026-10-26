@@ -730,6 +730,504 @@ enum MacroCorpus {
             """#),
     ]
 
+    /// Saving, options and `call` targets that change what a macro gets.
+    static let filesAndOptions: [MacroParityCase] = [
+        .init("getInfo keys for selections, overlays and fonts", #"""
+            makeRectangle(2, 2, 5, 5);
+            print(getInfo("selection.color"), getInfo("overlay") + "|", getInfo("font.name"));
+            Roi.setStrokeColor("magenta");
+            print(getInfo("roi.color"));
+            setFont("Serif", 14, "bold");
+            print(getInfo("font.name"));
+            setFont("user");
+            print(getInfo("font.name"));
+            """#, on: .gray8),
+        .init("save and saveAs keep ImageJ's names", #"""
+            dir = getDirectory("temp");
+            save(dir + "mancora-save.tif");
+            print(getTitle(), File.exists(dir + "mancora-save.tif"));
+            save(dir + "mancora-save-noext");
+            print(getTitle(), File.exists(dir + "mancora-save-noext.tif"));
+            saveAs("Tiff", dir + "mancora-saveas.png");
+            print(getTitle(), File.exists(dir + "mancora-saveas.tif"), File.exists(dir + "mancora-saveas.png"));
+            makeRectangle(2, 3, 10, 12);
+            saveAs("Selection", dir + "mancora-sel.txt");
+            print(File.exists(dir + "mancora-sel.roi"));
+            names = newArray("mancora-save.tif", "mancora-save-noext.tif", "mancora-saveas.tif", "mancora-sel.roi");
+            for (i = 0; i < names.length; i++) ok = File.delete(dir + names[i]);
+            """#, on: .gray8),
+        .init("Roi.contains rounds", #"""
+            makeRectangle(10, 10, 10, 10);
+            print(Roi.contains(9.6, 9.6), Roi.contains(9.4, 10), Roi.contains(19.4, 10), Roi.contains(19.6, 10));
+            makeOval(5, 5, 20, 20);
+            print(Roi.contains(14.5, 14.5), Roi.contains(5.2, 5.2), Roi.contains(24.6, 15));
+            """#, on: .gray8),
+        .init("getList keys and setOption InvertY", #"""
+            a = getList("Image.Titles");
+            print(a.length, a[0]);
+            m = getList("THRESHOLD.methods");
+            print(m.length, m[0], m[m.length - 1]);
+            setOption("InvertY", true);
+            print(is("InvertY"));
+            x = 3; y = 4;
+            toScaled(x, y);
+            print(x, y);
+            makeRectangle(5, 6, 10, 4);
+            List.setMeasurements;
+            print(List.getValue("Y"), List.getValue("BY"));
+            setOption("InvertY", false);
+            print(is("InvertY"));
+            setOption("Changes", false);
+            print(is("changes"));
+            """#, on: .gray8),
+        .init("call targets Mancora runs", #"""
+            call("ij.IJ.log", "logged by call");
+            call("java.lang.System.gc");
+            call("ij.gui.ImageWindow.setNextLocation", "10", "20");
+            t = call("java.lang.System.currentTimeMillis");
+            print(parseFloat(t) > 1e12, call("ij.IJ.pad", "7", "3"));
+            """#),
+    ]
+
+    /// Dialogs read from macro options, as GenericDialog does in macro mode.
+    /// ImageJ only sees options on a thread `IJ.run` has named "Run$_...",
+    /// so each case runs a command before `ij.Macro.setOptions`; and a
+    /// dialog without options would wait for a person, so each case has them.
+    static let dialogs: [MacroParityCase] = [
+        .init("Dialog fields from macro options", #"""
+            run("Select None");
+            call("ij.Macro.setOptions", "count=7 name=[two words] fast mode=Median size=2.5 color=green");
+            print(call("ij.Macro.getOptions"));
+            Dialog.create("Options");
+            Dialog.addNumber("Count:", 3);
+            Dialog.addString("Name:", "first");
+            Dialog.addCheckbox("Fast", false);
+            Dialog.addCheckbox("Slow", true);
+            Dialog.addChoice("Mode:", newArray("Mean", "Median", "Max"));
+            Dialog.addSlider("Size", 0, 5, 1.5);
+            Dialog.addNumber("Missing", 4.25);
+            Dialog.addRadioButtonGroup("Color", newArray("red", "green"), 1, 2, "red");
+            Dialog.addMessage("A message", 14, "blue");
+            Dialog.addHelp("https://imagej.net");
+            Dialog.setInsets(5, 0, 5);
+            Dialog.show();
+            n = Dialog.getNumber();
+            s = Dialog.getString();
+            f = Dialog.getCheckbox();
+            w = Dialog.getCheckbox();
+            m = Dialog.getChoice();
+            z = Dialog.getNumber();
+            miss = Dialog.getNumber();
+            c = Dialog.getRadioButton();
+            print(n, s, f, w, m, z, miss, c, Dialog.getYesNoCancel());
+            print(n + 1, f + w);
+            call("ij.Macro.setOptions", "");
+            """#, on: .gray8),
+        .init("Dialog keys of repeated labels, folders and image choices", #"""
+            run("Select None");
+            call("ij.Macro.setOptions", "value=10 value_1=20 folder=/data folder_1=b image=gray8.tif step=0.3");
+            Dialog.create("Repeated");
+            Dialog.addNumber("Value:", 1);
+            Dialog.addNumber("Value:", 2);
+            Dialog.addNumber("Value:", 3, 2, 6, "px");
+            Dialog.addDirectory("Folder:", "/tmp");
+            Dialog.addString("Folder", "x");
+            Dialog.addFile("File:", "/tmp/a.tif");
+            Dialog.addImageChoice("Image:");
+            Dialog.addSlider("Step", 0, 1, 0.5, 0.1);
+            Dialog.addCheckboxGroup(2, 2, newArray("A", "B", "C"), newArray(1, 0, 1));
+            Dialog.enableYesNoCancel("Do", "Don't");
+            Dialog.show();
+            print(Dialog.getNumber(), Dialog.getNumber(), Dialog.getNumber());
+            print(Dialog.getString(), Dialog.getString(), Dialog.getString(), Dialog.getImageChoice(), Dialog.getNumber());
+            print(Dialog.getCheckbox(), Dialog.getCheckbox(), Dialog.getCheckbox(), Dialog.getYesNoCancel());
+            call("ij.Macro.setOptions", "");
+            """#, on: .gray8),
+        .init("Dialog values naming variables", #"""
+            run("Select None");
+            width = 42;
+            label = "from var";
+            call("ij.Macro.setOptions", "width=&width title=&label size=0x1f");
+            Dialog.create("Vars");
+            Dialog.addNumber("Width", 1);
+            Dialog.addString("Title", "t");
+            Dialog.addNumber("Size", 1);
+            Dialog.show();
+            print(Dialog.getNumber(), Dialog.getString(), Dialog.getNumber());
+            call("ij.Macro.setOptions", "");
+            """#, on: .gray8),
+        .init("prompts and choosers from macro options", #"""
+            run("Select None");
+            call("ij.Macro.setOptions", "enter=12.5 your=Ann choose=/tmp/data select=/tmp/folder/a.tif");
+            print(getNumber("Enter a value", 3), getString("Your name:", "Bob"));
+            print(getNumber("Other", 8), getString("Missing", "default"));
+            print(getDirectory("Choose a folder"));
+            path = File.openDialog("Select a file");
+            print(path, File.name, File.directory);
+            call("ij.Macro.setOptions", "");
+            """#, on: .gray8),
+        .init("run() clears macro options", #"""
+            run("Select None");
+            call("ij.Macro.setOptions", "count=5");
+            print(call("ij.Macro.getOptions"));
+            run("Select None");
+            print(call("ij.Macro.getOptions"));
+            """#, on: .gray8),
+        .init("Dialog error past the last field", #"""
+            run("Select None");
+            call("ij.Macro.setOptions", "a=4");
+            Dialog.create("E");
+            Dialog.addNumber("A", 1);
+            Dialog.show();
+            print(Dialog.getNumber(), Dialog.getString(), Dialog.getCheckbox(), Dialog.getChoice());
+            call("ij.Macro.setOptions", "");
+            Dialog.addString("B", "b");
+            print(Dialog.getString());
+            x = Dialog.getNumber();
+            """#, on: .gray8),
+        .init("Dialog before Dialog.create", #"""
+            x = Dialog.getNumber();
+            """#),
+    ]
+
+    /// Tables: the current table, Table.* members, CSV and TSV files,
+    /// Array.show and Table.applyMacro. Each case closes the tables it
+    /// opened, since ImageJ keeps their windows from case to case.
+    static let tables: [MacroParityCase] = [
+        .init("Table calls without a title use the front table", #"""
+            Table.create("Mancora T1");
+            Table.set("A", 0, 1.5);
+            Table.set("B", 0, "x");
+            Table.set("A", 1, 2);
+            print(Table.size, Table.title, Table.headings);
+            print(Table.get("A", 1), Table.getString("B", 0), Table.getString("A", 0), Table.get("Missing", 0));
+            print(Table.columnExists("B"), Table.columnExists("C"), nResults);
+            Table.create("Mancora T2");
+            Table.set("C", 0, 3);
+            print(Table.title, Table.size, Table.size("Mancora T1"), Table.get("A", 0, "Mancora T1"));
+            Table.reset("Mancora T1");
+            print(Table.title, Table.size("Mancora T1"), Table.size("Mancora T2"));
+            selectWindow("Mancora T2");
+            print(Table.title);
+            close("Mancora T1");
+            close("Mancora T2");
+            """#),
+        .init("Table columns, sorting and deleting", #"""
+            Table.create("Mancora Sort");
+            Table.setColumn("Name", newArray("pear", "apple", "fig", "kiwi"));
+            Table.setColumn("Size", newArray(3, 1, 4, 1.5));
+            Table.sort("Size");
+            Array.print(Table.getColumn("Name"));
+            Array.print(Table.getColumn("Size"));
+            Table.sort("Name");
+            Array.print(Table.getColumn("Name"));
+            Table.renameColumn("Size", "Weight");
+            Table.deleteRows(0, 1);
+            print(Table.headings, Table.size);
+            Table.deleteColumn("Name");
+            print(Table.headings);
+            Table.setColumn("Extra", newArray(7));
+            Array.print(Table.getColumn("Extra"));
+            Table.setColumn("Longer", newArray(1, 2, 3));
+            print(Table.size, Table.getString("Weight", 2) + "|", Table.getString("Extra", 2) + "|", Table.get("Longer", 2));
+            Table.showRowNumbers(true);
+            print(Table.headings);
+            close("Mancora Sort");
+            """#),
+        .init("Table save and open", #"""
+            Table.create("Mancora Save");
+            Table.set("Area", 0, 12.5);
+            Table.set("Label", 0, "first");
+            Table.set("Count", 0, 3);
+            Table.set("Area", 1, 7);
+            Table.set("Count", 1, 4);
+            Table.set("Note", 1, "a, b");
+            dir = getDirectory("temp");
+            Table.save(dir + "mancora-table.csv");
+            print(File.openAsString(dir + "mancora-table.csv"));
+            Table.save(dir + "mancora-table.tsv");
+            print(File.openAsString(dir + "mancora-table.tsv"));
+            // ImageJ shows the tables Table.open and open() open without
+            // waiting for their windows to come to the front, so name them.
+            Table.open(dir + "mancora-table.csv", "Mancora Opened");
+            t = "Mancora Opened";
+            print(Table.title(t), Table.size(t), Table.headings(t));
+            print(Table.getString("Label", 0, t), Table.get("Area", 0, t), Table.getString("Note", 1, t), Table.get("Count", 1, t));
+            open(dir + "mancora-table.tsv");
+            t = "mancora-table.tsv";
+            print(Table.title(t), Table.size(t), Table.headings(t), Table.getString("Note", 1, t));
+            ok = File.delete(dir + "mancora-table.csv");
+            ok = File.delete(dir + "mancora-table.tsv");
+            close("Mancora Save");
+            close("Mancora Opened");
+            close("mancora-table.tsv");
+            """#),
+        .init("Array.show", #"""
+            a = newArray(1, 2.5, 3);
+            b = newArray("x", "y");
+            Array.show("Mancora Arrays (row numbers)", a, b);
+            print(Table.title, Table.size, Table.headings, Table.getString("b", 2) + "|", Table.get("a", 1));
+            Array.show(a);
+            print(Table.title, Table.headings);
+            Array.show("Mancora Idx (indexes)", b);
+            print(Table.title, Table.headings, Table.get("Index", 1));
+            close("Mancora Arrays");
+            close("a");
+            close("Mancora Idx");
+            """#),
+        .init("Table.applyMacro", #"""
+            Table.create("Mancora Apply");
+            Table.setColumn("X", newArray(1, 2, 3));
+            Table.setColumn("Y", newArray(10, 20, 30));
+            Table.applyMacro("Sum = X + Y; Y = Y * 2; z = row;");
+            print(Table.headings);
+            Array.print(Table.getColumn("Sum"));
+            Array.print(Table.getColumn("Y"));
+            close("Mancora Apply");
+            """#),
+        .init("results functions fall back to the front table", #"""
+            Table.create("Mancora Current");
+            Table.set("V", 0, 5);
+            print(getResult("V", 0), getResultString("V", 0), nResults);
+            setResult("Area", 0, 1);
+            print(nResults, getResult("Area", 0), getResultString("Area", 0));
+            updateResults();
+            close("Mancora Current");
+            """#),
+        .init("Table errors", #"""
+            Table.create("Mancora Err");
+            Table.set("A", 0, 1);
+            print(Table.get("A", 0, "Mancora Err"));
+            close("Mancora Err");
+            x = Table.get("A", 0, "Mancora Missing");
+            """#),
+    ]
+
+    /// Selections: the parametric constructors, Roi.* members and geometry queries.
+    static let rois: [MacroParityCase] = [
+        .init("selection constructors", #"""
+            makeEllipse(10, 20, 40, 30, 0.5);
+            print(selectionType(), Roi.getType, Roi.size);
+            getSelectionCoordinates(xs, ys);
+            print(xs.length, xs[0], ys[0], xs[18], ys[18], xs[45], ys[45]);
+            getSelectionBounds(x, y, w, h);
+            print(x, y, w, h, getValue("Area"), getValue("Mean"));
+            makeRotatedRectangle(5, 5, 40, 25, 8);
+            // (Roi.getType says "polygon" here: Mancora keeps the selection as
+            // its .roi bytes, and ImageJ's own decoder reads these back as one.)
+            print(selectionType(), getValue("Area"));
+            getSelectionCoordinates(xs, ys);
+            Array.print(xs);
+            Array.print(ys);
+            makeArrow(5, 5, 30, 20, "notched large");
+            print(selectionType(), Roi.getType, Roi.getStrokeWidth);
+            getLine(x1, y1, x2, y2, lw);
+            print(x1, y1, x2, y2, lw);
+            makeLine(3, 4, 30, 40, 5);
+            getLine(x1, y1, x2, y2, lw);
+            print(selectionType(), x1, y1, x2, y2, lw, Roi.size, Roi.getStrokeColor);
+            makeLine(3.5, 4, 30, 40.25);
+            getLine(x1, y1, x2, y2, lw);
+            print(x1, y2, lw, Roi.size, Roi.getStrokeColor);
+            run("Select None");
+            getLine(x1, y1, x2, y2, lw);
+            print(x1, lw);
+            makePoint(10.5, 12, "large cross red");
+            print(selectionType(), Roi.getType, Roi.getStrokeColor);
+            getSelectionCoordinates(xs, ys);
+            print(xs[0], ys[0]);
+            makeSelection("point dot", newArray(1, 5, 9), newArray(2, 6, 10));
+            print(selectionType(), Roi.size, Roi.getStrokeColor);
+            """#, on: .gray8),
+        .init("geometry queries", #"""
+            makeOval(10, 10, 20, 12);
+            Roi.getFeretPoints(xs, ys);
+            Array.print(xs);
+            Array.print(ys);
+            makePolygon(5, 5, 40, 8, 30, 40, 8, 30);
+            Roi.getFeretPoints(xs, ys);
+            Array.print(xs);
+            Array.print(ys);
+            print(selectionContains(10, 10), selectionContains(4, 4), selectionContains(29.6, 39.4));
+            makeRectangle(10, 10, 4, 3);
+            Roi.getContainedPoints(xs, ys);
+            print(xs.length);
+            Array.print(xs);
+            Array.print(ys);
+            makeLine(2, 2, 20, 30, 10, 40);
+            print(Roi.contains(10, 20), Roi.contains(3, 3), selectionContains(15, 25));
+            makePoint(7, 8);
+            print(Roi.contains(7, 8), Roi.contains(8, 8));
+            makeSelection("point", newArray(1.5, 4), newArray(2, 6));
+            Roi.getContainedPoints(xs, ys);
+            Array.print(xs);
+            makeLine(1, 1, 10, 10);
+            print(Roi.contains(5, 5));
+            """#, on: .gray8),
+        .init("Roi without a selection", #"""
+            run("Select None");
+            print(Roi.size);
+            c = Roi.getStrokeColor;
+            """#, on: .gray8),
+        // Last: after Roi.copy and Roi.paste, ImageJ no longer reports the
+        // next case's image as changed (state the bridge keeps between macros).
+        .init("Roi properties and colors", #"""
+            makeRectangle(5, 6, 20, 10);
+            print(Roi.getStrokeColor, Roi.getFillColor, Roi.getStrokeWidth, Roi.getGroup, Roi.getName + "|");
+            Roi.setStrokeColor("red");
+            Roi.setStrokeWidth(3);
+            print(Roi.getStrokeColor, Roi.getStrokeWidth);
+            Roi.setStrokeColor(0, 128, 255);
+            print(Roi.getStrokeColor);
+            Roi.setStrokeColor("#80ff0000");
+            print(Roi.getStrokeColor);
+            Roi.setFillColor("cyan");
+            print(Roi.getFillColor, Roi.getStrokeColor);
+            Roi.setProperty("id", "42");
+            Roi.setProperty("flag");
+            Roi.setProperty("zeta", "z");
+            print(Roi.getProperty("id"), Roi.getProperty("flag"), Roi.getProperty("none") + "|");
+            print(Roi.getProperties);
+            Roi.setProperty("flag", "");
+            print(Roi.getProperties);
+            Roi.setPosition(3);
+            Roi.getPosition(c, z, t);
+            print(c, z, t);
+            Roi.setPosition(1, 2, 3);
+            Roi.getPosition(c, z, t);
+            print(c, z, t);
+            Roi.setName("box");
+            print(Roi.getName, selectionName());
+            Roi.getFloatBounds(x, y, w, h);
+            print(x, y, w, h);
+            makeRectangle(1.5, 2.25, 10.5, 4);
+            Roi.getFloatBounds(x, y, w, h);
+            print(x, y, w, h);
+            Roi.getBounds(x, y, w, h);
+            print(x, y, w, h);
+            print(Roi.getDefaultColor, Roi.getDefaultStrokeWidth, Roi.getDefaultGroup);
+            Roi.copy;
+            run("Select None");
+            print(selectionType());
+            Roi.paste;
+            print(selectionType());
+            Roi.move(3, 4);
+            Roi.translate(1, 1);
+            getSelectionBounds(x, y, w, h);
+            print(x, y, w, h);
+            Roi.selectNone;
+            print(selectionType(), Roi.size);
+            """#, on: .gray8),
+    ]
+
+    /// The ROI Manager: colors and widths, positions, saving, filling and Multi Measure.
+    static let roiManager: [MacroParityCase] = [
+        .init("ROI Manager colors, selection and saving", #"""
+            roiManager("reset");
+            makeRectangle(5, 5, 10, 10);
+            roiManager("add");
+            makeOval(20, 10, 15, 12);
+            roiManager("add", "red", 3);
+            makeRectangle(30, 30, 8, 6);
+            Roi.setName("box");
+            roiManager("add", "#00ff00");
+            print(roiManager("count"), RoiManager.getName(2), RoiManager.getIndex("box"));
+            roiManager("select", 1);
+            print(Roi.getStrokeColor, Roi.getStrokeWidth);
+            roiManager("select", 2);
+            print(Roi.getStrokeColor);
+            roiManager("deselect");
+            roiManager("set color", "blue");
+            roiManager("select", 0);
+            print(Roi.getStrokeColor, Roi.getFillColor);
+            roiManager("set fill color", "yellow");
+            print(Roi.getFillColor, Roi.getStrokeColor);
+            roiManager("select", 0);
+            print(Roi.getFillColor, Roi.getStrokeColor);
+            roiManager("deselect");
+            roiManager("set line width", 4);
+            roiManager("select", 2);
+            print(Roi.getStrokeWidth, Roi.getFillColor, Roi.getStrokeColor);
+            RoiManager.selectByName("box");
+            print(roiManager("index"));
+            RoiManager.setPosition(2);
+            roiManager("select", 2);
+            Roi.getPosition(c, z, t);
+            print(c, z, t);
+            RoiManager.selectPosition(0, 2, 0);
+            print(RoiManager.selected, roiManager("index"));
+            RoiManager.selectGroup(0);
+            print(RoiManager.selected);
+            RoiManager.translate(2, 3);
+            roiManager("select", 0);
+            getSelectionBounds(x, y, w, h);
+            print(x, y, w, h);
+            RoiManager.delete(1);
+            print(roiManager("count"), RoiManager.getName(1));
+            dir = getDirectory("temp");
+            roiManager("save", dir + "mancora-rois.zip");
+            roiManager("select", 1);
+            roiManager("save", dir + "mancora-one.roi");
+            roiManager("save selected", dir + "mancora-sel.zip");
+            roiManager("reset");
+            roiManager("open", dir + "mancora-sel.zip");
+            print(roiManager("count"), RoiManager.getName(0));
+            roiManager("open", dir + "mancora-rois.zip");
+            roiManager("open", dir + "mancora-one.roi");
+            print(roiManager("count"), RoiManager.getName(2), RoiManager.getName(3));
+            roiManager("select all");
+            print(RoiManager.selected);
+            ok = File.delete(dir + "mancora-rois.zip");
+            ok = File.delete(dir + "mancora-one.roi");
+            ok = File.delete(dir + "mancora-sel.zip");
+            roiManager("reset");
+            """#, on: .gray8),
+        .init("ROI Manager fill", #"""
+            setForegroundColor(200, 200, 200);
+            roiManager("reset");
+            makeRectangle(5, 5, 10, 10);
+            roiManager("add");
+            makeOval(20, 10, 15, 12);
+            roiManager("add");
+            roiManager("fill");
+            print(selectionType(), getPixel(7, 7), getPixel(27, 16), getPixel(1, 1));
+            roiManager("reset");
+            """#, on: .gray8),
+        .init("ROI Manager Multi Measure", #"""
+            run("Set Measurements...", "area mean min display redirect=None decimal=3");
+            roiManager("reset");
+            makeRectangle(5, 5, 10, 10);
+            roiManager("add");
+            makeOval(20, 10, 15, 12);
+            Roi.setName("ov");
+            roiManager("add");
+            roiManager("multi measure");
+            print(nResults, getResult("Mean1", 0), getResult("Area(ov)", 0), getResultLabel(0), selectionType());
+            roiManager("reset");
+            """#, on: .gray8),
+        .init("ROI Manager Multi Measure on a stack", #"""
+            roiManager("reset");
+            makeRectangle(5, 5, 10, 10);
+            roiManager("add");
+            roiManager("multi-measure measure_all one");
+            print(nResults, getResult("Mean1", 4), selectionType());
+            roiManager("reset");
+            """#, on: .stack8),
+        .init("ROI Manager slice info", #"""
+            roiManager("reset");
+            setSlice(3);
+            makeRectangle(2, 2, 5, 5);
+            roiManager("add");
+            print(RoiManager.getName(0));
+            roiManager("remove slice info");
+            print(RoiManager.getName(0));
+            roiManager("select", 0);
+            Roi.getPosition(c, z, t);
+            print(c, z, t, getSliceNumber());
+            roiManager("reset");
+            """#, on: .stack8),
+    ]
+
     /// What commands leave behind besides pixels: the invisible threshold
     /// of binary images, and selections on stacks.
     static let commandState: [MacroParityCase] = [
@@ -830,5 +1328,232 @@ enum MacroCorpus {
             run("Gaussian Blur...", "sigma=2");
             run("Convolve...", "text1=[1 1 1\n1 1 1\n1 1 1] normalize");
             """#, on: .gray16),
+    ]
+}
+
+extension MacroCorpus {
+    /// Prints an array's length and every value to 9 decimals, so profiles
+    /// and histograms must match ImageJ's to the last digit.
+    static let show = #"""
+        function show(label, a) {
+            s = label + " " + a.length + ":";
+            for (i = 0; i < a.length; i++) s = s + " " + d2s(a[i], 9);
+            print(s);
+        }
+        function showHist(label, values, counts) {
+            s = label + " " + values.length + "/" + counts.length + ":";
+            n = 0;
+            for (i = 0; i < counts.length; i++) n += counts[i];
+            s = s + " n=" + n;
+            for (i = 0; i < counts.length; i++)
+                if (counts.length <= 1000 || counts[i] > 0) s = s + " " + d2s(values[i], 9) + "=" + counts[i];
+            print(s);
+        }
+
+        """#
+
+    /// Line, polyline and rectangle profiles (`getProfile`) and `getLine`.
+    static let profiles: [MacroParityCase] = [
+        .init("straight line profiles", show + #"""
+            for (k = 1; k <= nImages; k++) {
+                selectImage(k);
+                t = getTitle();
+                makeLine(5, 7, 50, 30); show(t + " int", getProfile());
+                makeLine(3.5, 40.25, 57.75, 2.5); show(t + " sub", getProfile());
+                makeLine(10, 10, 10, 40); show(t + " vertical", getProfile());
+                makeLine(40, 20, 12, 20); show(t + " leftward", getProfile());
+                makeLine(0, 0, 60, 46); show(t + " corners", getProfile());
+                makeLine(-5, 10, 70, 35.5); show(t + " outside", getProfile());
+                makeLine(20.125, 11.75, 33.875, 41.25); show(t + " short", getProfile());
+                makeLine(30, 30, 30, 30); show(t + " point", getProfile());
+                getLine(x1, y1, x2, y2, w);
+                print(x1, y1, x2, y2, w);
+            }
+            """#, on: .gray8, .gray16, .gray32, .rgb),
+        .init("wide line profiles", show + #"""
+            for (k = 1; k <= nImages; k++) {
+                selectImage(k);
+                t = getTitle();
+                makeLine(5, 7, 50, 30, 3); show(t + " 3", getProfile());
+                makeLine(5, 7, 50, 30, 10); show(t + " 10", getProfile());
+                makeLine(10.5, 40.25, 50.75, 5.5, 4); show(t + " sub 4", getProfile());
+                makeLine(30, 5, 30, 40, 2); show(t + " vertical 2", getProfile());
+                makeLine(2, 2, 58, 44, 10); show(t + " edges 10", getProfile());
+                makeLine(50, 20, 10, 22, 7); show(t + " leftward 7", getProfile());
+                makeLine(-8, 30, 25, -3, 5); show(t + " outside 5", getProfile());
+                makeLine(5, 7, 50, 30, 1); show(t + " 1", getProfile());
+                getLine(x1, y1, x2, y2, w);
+                print(x1, y1, x2, y2, w, getValue("selection.width"));
+                makeLine(5, 7, 50, 30, 2.5);
+                getLine(x1, y1, x2, y2, w);
+                print(w);
+            }
+            """#, on: .gray8, .gray16, .gray32, .rgb),
+        .init("polyline and freeline profiles", show + #"""
+            for (k = 1; k <= nImages; k++) {
+                selectImage(k);
+                t = getTitle();
+                makeLine(5, 5, 20, 30, 45, 10, 55, 40); show(t + " polyline", getProfile());
+                makeLine(0, 0, 10, 20, 30, 20); show(t + " from origin", getProfile());
+                makeSelection("polyline", newArray(4.5, 20.25, 33.75, 50.5), newArray(6.25, 30.5, 12.125, 40));
+                show(t + " subpixel polyline", getProfile());
+                makeSelection("polyline", newArray(5, 40), newArray(10, 30)); show(t + " two points", getProfile());
+                makeSelection("freeline", newArray(5, 8, 12, 17, 23, 30, 38, 45), newArray(20, 22, 25, 24, 20, 18, 19, 23));
+                show(t + " freeline", getProfile());
+                makeSelection("freeline", newArray(5.5, 9.25, 14.75, 20.5, 26.125), newArray(30.5, 28.25, 27, 29.5, 33.75));
+                show(t + " subpixel freeline", getProfile());
+                getLine(x1, y1, x2, y2, w);
+                print(x1, y1, x2, y2, w);
+            }
+            """#, on: .gray8, .gray16, .gray32, .rgb),
+        .init("profiles without interpolation", show + #"""
+            setOption("InterpolateLines", false);
+            for (k = 1; k <= nImages; k++) {
+                selectImage(k);
+                t = getTitle();
+                makeLine(3.5, 40.25, 57.75, 2.5); show(t + " sub", getProfile());
+                makeLine(20.125, 11.75, 33.875, 41.25); show(t + " short", getProfile());
+                makeLine(5, 7, 50, 30, 5); show(t + " wide", getProfile());
+                makeLine(5, 5, 20, 30, 45, 10, 55, 40); show(t + " polyline", getProfile());
+                makeSelection("freeline", newArray(5.5, 9.25, 14.75, 20.5, 26.125), newArray(30.5, 28.25, 27, 29.5, 33.75));
+                show(t + " freeline", getProfile());
+            }
+            setOption("InterpolateLines", true);
+            makeLine(3.5, 40.25, 57.75, 2.5); show("interpolated again", getProfile());
+            """#, on: .gray8, .gray16, .gray32, .rgb),
+        .init("rectangle profiles and the alt key", show + #"""
+            for (k = 1; k <= nImages; k++) {
+                selectImage(k);
+                t = getTitle();
+                makeRectangle(10, 5, 20, 15); show(t + " rect", getProfile());
+                setKeyDown("alt"); show(t + " rows", getProfile()); setKeyDown("none");
+                makeRectangle(50, 40, 20, 15); show(t + " edge", getProfile());
+                setKeyDown("alt"); show(t + " edge rows", getProfile()); setKeyDown("none");
+                makeRectangle(10.5, 5.25, 20.25, 15.75); show(t + " subpixel", getProfile());
+                makeRectangle(5, 5, 1, 30); show(t + " column", getProfile());
+                setKeyDown("alt"); show(t + " column rows", getProfile()); setKeyDown("none");
+                makeRectangle(10, 10, 15, 12, 6); show(t + " rounded", getProfile());
+            }
+            print(isKeyDown("alt"), isKeyDown("shift"));
+            setKeyDown("alt");
+            print(isKeyDown("alt"), isKeyDown("shift"));
+            run("Select None");
+            print(isKeyDown("alt"));
+            setKeyDown("alt shift");
+            print(isKeyDown("alt"), isKeyDown("shift"));
+            makeRectangle(1, 1, 8, 8);
+            print(isKeyDown("alt"), isKeyDown("shift"), selectionType());
+            setKeyDown("alt");
+            makeLine(2, 3, 40, 30);
+            print(isKeyDown("alt"));
+            """#, on: .gray8, .gray16, .gray32, .rgb),
+        .init("profiles of stacks and calibrated images", show + #"""
+            for (k = 1; k <= nImages; k++) {
+                selectImage(k);
+                t = getTitle();
+                if (nSlices > 1) setSlice(2);
+                makeLine(5, 7, 50, 30); show(t + " line", getProfile());
+                makeLine(5, 7, 50, 30, 6); show(t + " wide", getProfile());
+                makeLine(5, 5, 20, 30, 45, 10); show(t + " polyline", getProfile());
+                makeRectangle(10, 5, 20, 15); show(t + " rect", getProfile());
+            }
+            selectImage(1);
+            run("Properties...", "unit=micron pixel_width=0.5 pixel_height=0.25 voxel_depth=1");
+            makeLine(5, 7, 50, 30); show("non-square", getProfile());
+            """#, on: .stack16, .calibrated, .functionCalibrated8, .functionCalibrated16, .hyperstack),
+        .init("wide polylines and freelines, angles and arrows", show + #"""
+            for (k = 1; k <= nImages; k++) {
+                selectImage(k);
+                getLine(x1, y1, x2, y2, w);
+                print(getTitle(), selectionType(), w);
+                show(getTitle(), getProfile());
+                run("Select None");
+            }
+            """#, on: .polylineROI, .subpixelPolylineROI, .freelineROI, .subpixelFreelineROI, .angleROI, .arrowROI),
+    ]
+
+    /// `getHistogram` with every bin count and range ImageJ supports.
+    static let histograms: [MacroParityCase] = [
+        .init("8-bit and RGB histograms", show + #"""
+            for (k = 1; k <= nImages; k++) {
+                selectImage(k);
+                t = getTitle();
+                bins = newArray(256, 1, 2, 10, 64, 100, 255, 257, 1000);
+                for (b = 0; b < bins.length; b++) {
+                    getHistogram(values, counts, bins[b]);
+                    showHist(t + " " + bins[b], values, counts);
+                }
+                makeRectangle(10, 5, 20, 15);
+                getHistogram(values, counts, 256); showHist(t + " rect", values, counts);
+                getHistogram(values, counts, 64); showHist(t + " rect 64 (whole image)", values, counts);
+                makeOval(12, 9, 33, 21);
+                getHistogram(values, counts, 256); showHist(t + " oval", values, counts);
+                makeLine(5, 5, 40, 30);
+                getHistogram(values, counts, 256); showHist(t + " line", values, counts);
+                makePoint(20, 15);
+                getHistogram(values, counts, 256); showHist(t + " point", values, counts);
+                run("Select None");
+                getHistogram(0, counts, 256);
+                print(counts.length);
+                getStatistics(area, mean, min, max, std, hist);
+                print(area, mean, min, max, std, hist[0], hist[100], hist[128], hist[200]);
+            }
+            """#, on: .gray8, .rgb, .functionCalibrated8),
+        .init("16-bit histograms", show + #"""
+            t = getTitle();
+            bins = newArray(256, 1, 3, 10, 100, 1000, 4096);
+            for (b = 0; b < bins.length; b++) {
+                getHistogram(values, counts, bins[b]);
+                showHist(t + " " + bins[b], values, counts);
+            }
+            ranges = newArray(1000, 2000, 0, 65535, 1500.5, 3000.25, 4000, 100, 5000, 6000, -100, 500, 0, 0, 1234, 1234);
+            for (r = 0; r < ranges.length; r += 2) {
+                getHistogram(values, counts, 50, ranges[r], ranges[r + 1]);
+                showHist(t + " " + ranges[r] + "-" + ranges[r + 1], values, counts);
+            }
+            getHistogram(values, counts, 65536);
+            s = "65536 " + counts.length + ":";
+            for (i = 0; i < 65536; i++) if (counts[i] > 0) s = s + " " + i + "=" + counts[i];
+            print(s);
+            makeRectangle(10, 5, 20, 15);
+            getHistogram(values, counts, 256); showHist(t + " rect", values, counts);
+            getHistogram(values, counts, 20, 1000, 3000); showHist(t + " rect range", values, counts);
+            counts2 = newArray(65536);
+            getHistogram(0, counts2, 65536);
+            n = 0;
+            for (i = 0; i < 65536; i++) n += counts2[i];
+            print(n);
+            makeOval(12, 9, 33, 21);
+            getHistogram(values, counts, 30); showHist(t + " oval", values, counts);
+            """#, on: .gray16),
+        .init("calibrated 16-bit histograms", show + #"""
+            t = getTitle();
+            getHistogram(values, counts, 256); showHist(t, values, counts);
+            getHistogram(values, counts, 40); showHist(t + " 40", values, counts);
+            getHistogram(values, counts, 40, 50, 150); showHist(t + " calibrated range", values, counts);
+            """#, on: .functionCalibrated16),
+        .init("32-bit histograms", show + #"""
+            t = getTitle();
+            bins = newArray(256, 1, 7, 100, 1000);
+            for (b = 0; b < bins.length; b++) {
+                getHistogram(values, counts, bins[b]);
+                showHist(t + " " + bins[b], values, counts);
+            }
+            ranges = newArray(-1, 1, 0, 0, 2, 1, -10, 10, 0.5, 0.75, 5, 6);
+            for (r = 0; r < ranges.length; r += 2) {
+                getHistogram(values, counts, 64, ranges[r], ranges[r + 1]);
+                showHist(t + " " + ranges[r] + "-" + ranges[r + 1], values, counts);
+            }
+            makeRectangle(10, 5, 20, 15);
+            getHistogram(values, counts, 33); showHist(t + " rect", values, counts);
+            run("Select None");
+            setPixel(3, 3, NaN);
+            setPixel(4, 3, 1/0);
+            getHistogram(values, counts, 16); showHist(t + " NaN", values, counts);
+            """#, on: .gray32),
+        .init("histogram range on an 8-bit image", show + #"""
+            getHistogram(values, counts, 256, 0, 100);
+            print("not reached");
+            """#, on: .gray8),
     ]
 }

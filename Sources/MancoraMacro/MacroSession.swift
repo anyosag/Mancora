@@ -19,10 +19,26 @@ public final class MacroSession {
     /// Shows `showMessage` text; returns `false` when the person cancels. Without
     /// a handler, messages go to the log and are never cancelled.
     public var onMessage: ((_ title: String, _ message: String, _ withCancel: Bool) -> Bool)?
+    /// Puts a macro's dialog in front of a person and returns what they did.
+    /// Without a handler, or when the macro has ``macroOptions``, nobody is
+    /// asked: fields keep their defaults (or take the options' values), as
+    /// when ImageJ runs a macro in batch mode, and choosers stop the macro.
+    public var onPrompt: ((MacroPrompt) -> MacroPrompt.Answer)?
+    /// The options the running macro was given (ImageJ's `Macro.getOptions()`,
+    /// as `run("My Macro", options)` sets them for an installed macro).
+    /// `Dialog.*`, `getNumber`, `getString` and the choosers read their
+    /// fields from them instead of asking, as GenericDialog does in macro
+    /// mode; `run()` clears them, as `IJ.run` does.
+    public var macroOptions: String?
 
     /// Batch mode: on from the start, as for a macro ImageJ runs without its window (`IJ.runMacro` headless).
     public var batchMode = true
     public var lineWidth = 1
+    /// The keys `setKeyDown` holds down (`IJ.altKeyDown()`, `IJ.shiftKeyDown()`…).
+    var keys = HeldKeys()
+    /// `setOption("Bicubic", …)` (`ImageProcessor.setUseBicubic`), which
+    /// ImageJ applies to every interpolated value.
+    var bicubic = false
     /// `random("seed", n)`'s seed, which ImageJ also uses for its noise filters.
     public var randomSeed = Double.nan
     /// The foreground and background colors (`0xRRGGBB`), kept in the command settings.
@@ -63,6 +79,18 @@ public final class MacroSession {
 
     /// The ROI Manager.
     public var roiManager = RoiManagerList()
+    /// The windows of the tables other than Results, oldest first.
+    var tableWindows: [String] = []
+    /// The table window in front: `Table.*` calls without a title use it,
+    /// as ImageJ uses its front table window.
+    var frontTable: String?
+    /// How each table numbers and saves its rows, by title.
+    var tableDisplay: [String: TableDisplay] = [:]
+    /// `Roi.copy`'s selection, for `Roi.paste`.
+    var roiClipboard: Roi?
+    /// `Roi.setDefaultStrokeWidth` and `Roi.setGroupNames`.
+    var defaultStrokeWidth = 0.0
+    var groupNames: String?
     /// Image IDs, most recently activated last (ImageJ's `imageActivations`).
     var activations: [Int] = []
     /// Settings `saveSettings()` keeps.
@@ -76,12 +104,19 @@ public final class MacroSession {
         for image in context.images { activations.append(image.id) }
     }
 
-    /// Runs `macro` in this session.
+    /// Runs `macro` in this session, with ``macroOptions`` set to `options` while it runs.
     @discardableResult
-    public func run(_ macro: String, argument: String? = nil, path: String? = nil) throws(MacroError) -> String? {
+    public func run(_ macro: String, argument: String? = nil, path: String? = nil, options: String? = nil)
+        throws(MacroError) -> String?
+    {
         let previousPath = macroPath
+        let previousOptions = macroOptions
         if let path { macroPath = path }
-        defer { macroPath = previousPath }
+        if let options { macroOptions = options.isEmpty ? nil : options }
+        defer {
+            macroPath = previousPath
+            if options != nil { macroOptions = previousOptions }
+        }
         return try Self.withLargeStack { () throws(MacroError) -> String? in
             try Interpreter(session: self).run(macro, argument: argument)
         }
@@ -157,10 +192,10 @@ public final class MacroSession {
         return true
     }
 
-    // Dialogs a person would answer; without one, the defaults stand, as with a macro's options.
-    func askNumber(_ prompt: String, defaultValue: Double) -> Double? { nil }
-    func askYesNo(_ prompt: String) -> Bool { true }
-    func askString(_ prompt: String, defaultValue: String) -> String? { nil }
+    /// What a person answers to `prompt`, or `nil` when nobody can be asked.
+    func ask(_ prompt: MacroPrompt) -> MacroPrompt.Answer? {
+        onPrompt?(prompt)
+    }
 
     // MARK: - Images
 
@@ -256,16 +291,15 @@ public final class MacroSession {
         case "plugins": return imageJDirectory.map { slash($0) + "plugins/" }
         case "macros": return imageJDirectory.map { slash($0) + "macros/" }
         case "luts": return imageJDirectory.map { slash($0) + "luts/" }
-        case "current", "cwd": return slash(fm.currentDirectoryPath)
-        case "default": return defaultDirectory.map(slash) ?? ""
+        case "cwd": return slash(fm.currentDirectoryPath)
+        // OpenDialog's default directory, as ImageJ gives for both.
+        case "current", "default": return defaultDirectory.map(slash) ?? ""
         case "file": return lastDirectory ?? ""
         case "image":
             guard let path = context.current?.image.properties["Mancora.path"] else { return "" }
             return slash((path as NSString).deletingLastPathComponent)
         case "downloads": return slash(fm.homeDirectoryForCurrentUser.path) + "Downloads/"
-        default:
-            if nameIn.contains("/") || nameIn.contains("\\") { return nil }
-            return nil
+        default: return nil
         }
     }
 
@@ -319,4 +353,17 @@ public struct RoiManagerList: Sendable {
     public init() {}
 
     public var count: Int { entries.count }
+}
+
+/// ImageJ's key state (`IJ.setKeyDown`/`setKeyUp`), which macros set with
+/// `setKeyDown` and some functions read: Alt makes `getProfile()` average
+/// the rows of a rectangle.
+struct HeldKeys {
+    var alt = false
+    var shift = false
+    var control = false
+    var space = false
+
+    /// `IJ.setKeyUp(IJ.ALL_KEYS)`.
+    mutating func releaseAll() { self = HeldKeys() }
 }

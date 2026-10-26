@@ -60,7 +60,7 @@ let package = Package(
         ),
         .testTarget(
             name: "MancoraCommandsTests",
-            dependencies: ["MancoraCommands", "MancoraCore"],
+            dependencies: ["MancoraCommands", "MancoraCore", "MancoraProcess"],
             swiftSettings: strictness
         ),
         .testTarget(

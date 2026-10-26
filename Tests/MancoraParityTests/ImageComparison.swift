@@ -1,5 +1,6 @@
 import MancoraBridge
 import MancoraCore
+import MancoraIO
 
 /// Describes how two images (or results tables) differ, in words a test
 /// failure can show.
@@ -116,6 +117,23 @@ enum ImageComparison {
             }
         }
         return out
+    }
+
+    /// The selections both images carry, decoded from their `.roi` bytes.
+    static func selectionDifferences(_ mancora: Hyperstack, _ imageJ: Hyperstack) -> [String] {
+        let a = mancora.encodedROI.flatMap { try? RoiCodec.decode($0) }
+        let b = imageJ.encodedROI.flatMap { try? RoiCodec.decode($0) }
+        guard a != b else { return [] }
+        return ["selection: Mancora \(describe(a)), ImageJ \(describe(b))"]
+    }
+
+    static func describe(_ roi: Roi?) -> String {
+        guard let roi else { return "none" }
+        if case .points(let p) = roi.shape {
+            let first = p.vertices.floatPoints.prefix(4).map { "(\($0.x), \($0.y))" }.joined(separator: " ")
+            return "\(p.vertices.count) points, size \(p.size), type \(p.pointType): \(first)…"
+        }
+        return "\(roi)"
     }
 
     static func close(_ a: Double, _ b: Double, tolerance: Double) -> Bool {
