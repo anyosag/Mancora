@@ -262,7 +262,7 @@ struct PlotView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .frame(minWidth: 420, minHeight: 320)
+        .frame(minWidth: 420, minHeight: 360)
         .navigationTitle(model.windowTitle)
         .toolbar { toolbarItems }
         .sheet(isPresented: $showsList) {
