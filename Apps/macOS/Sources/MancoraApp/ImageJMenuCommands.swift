@@ -9,6 +9,8 @@ import SwiftUI
 /// natively, others in ImageJ through the bridge; either way a command
 /// with a dialog asks for its options first. What belongs to the app
 /// itself (opening, closing, saving, zooming, windows) is done natively.
+/// With Fiji installed, the entries Fiji's menus have and ImageJ's lack
+/// (`FijiMenus`) are in them too.
 struct ImageJMenuCommands: Commands {
     let bridge: AppBridge
     @FocusedValue(\.viewer) private var viewer
@@ -35,24 +37,34 @@ struct ImageJMenuCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            MenuEntries(entries: Self.menu("File").entries, skipping: Self.systemItems, perform: perform)
+            MenuEntries(
+                entries: Self.menu("File").entries, path: "File", skipping: Self.systemItems, perform: perform,
+                performFiji: performFiji)
         }
         CommandGroup(after: .pasteboard) {
             Divider()
-            MenuEntries(entries: Self.menu("Edit").entries, skipping: Self.systemItems, perform: perform)
+            MenuEntries(
+                entries: Self.menu("Edit").entries, path: "Edit", skipping: Self.systemItems, perform: perform,
+                performFiji: performFiji)
         }
-        CommandMenu("Image") { MenuEntries(entries: Self.menu("Image").entries, perform: perform) }
-        CommandMenu("Process") { MenuEntries(entries: Self.menu("Process").entries, perform: perform) }
-        CommandMenu("Analyze") { MenuEntries(entries: Self.menu("Analyze").entries, perform: perform) }
+        CommandMenu("Image") {
+            MenuEntries(entries: Self.menu("Image").entries, path: "Image", perform: perform, performFiji: performFiji)
+        }
+        CommandMenu("Process") {
+            MenuEntries(entries: Self.menu("Process").entries, path: "Process", perform: perform, performFiji: performFiji)
+        }
+        CommandMenu("Analyze") {
+            MenuEntries(entries: Self.menu("Analyze").entries, path: "Analyze", perform: perform, performFiji: performFiji)
+        }
         CommandGroup(before: .windowArrangement) {
-            MenuEntries(entries: Self.menu("Window").entries, perform: perform)
+            MenuEntries(entries: Self.menu("Window").entries, path: "Window", perform: perform, performFiji: performFiji)
             Divider()
             Button("Results") { openWindow(id: "results") }
             Button("Log") { openWindow(id: "log") }
             Divider()
         }
         CommandGroup(replacing: .help) {
-            MenuEntries(entries: Self.menu("Help").entries, perform: perform)
+            MenuEntries(entries: Self.menu("Help").entries, path: "Help", perform: perform, performFiji: performFiji)
         }
     }
 
@@ -61,13 +73,21 @@ struct ImageJMenuCommands: Commands {
         if let editor, editor.perform(name) { return }
         AppMenuActions.perform(name, viewer: viewer, bridge: bridge, openWindow: openWindow)
     }
+
+    func performFiji(_ item: FijiMenuItem) {
+        AppMenuActions.performFiji(item, viewer: viewer, bridge: bridge, openWindow: openWindow)
+    }
 }
 
 /// A menu's items; submenus nest.
 struct MenuEntries: View {
     let entries: [ImageJMenu.Entry]
+    /// The menu they are in (`ImageJMenu.path`), to tell Fiji's entries among them.
+    var path = ""
     var skipping: Set<String> = []
     let perform: (String) -> Void
+    /// What an entry that only Fiji has does; without it every entry is ImageJ's.
+    var performFiji: ((FijiMenuItem) -> Void)?
 
     var body: some View {
         ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
@@ -76,11 +96,15 @@ struct MenuEntries: View {
                 Divider()
             case .command(let name, let shortcut):
                 if !skipping.contains(name) {
-                    MenuCommandButton(name: name, shortcut: shortcut, perform: perform)
+                    if let performFiji, let item = FijiMenus.shared.item(path: path, name: name) {
+                        FijiMenuButton(item: item, perform: performFiji)
+                    } else {
+                        MenuCommandButton(name: name, shortcut: shortcut, perform: perform)
+                    }
                 }
             case .submenu(let menu):
                 Menu(menu.title) {
-                    MenuEntries(entries: menu.entries, perform: perform)
+                    MenuEntries(entries: menu.entries, path: menu.path, perform: perform, performFiji: performFiji)
                 }
             }
         }
@@ -118,6 +142,34 @@ struct MenuCommandButton: View {
         let lower = Character(shortcut.lowercased())
         if lower == "h" { return nil }
         return (KeyEquivalent(lower), shortcut.isUppercase ? [.command, .shift] : .command)
+    }
+}
+
+/// An entry of Fiji's menus that ImageJ's lack, with the shortcut Fiji gives it (if nothing else has it).
+struct FijiMenuButton: View {
+    let item: FijiMenuItem
+    let perform: (FijiMenuItem) -> Void
+
+    var body: some View {
+        let button = Button(MenuCommandButton.title(item.label)) { perform(item) }
+        if let shortcut = item.shortcut {
+            button.keyboardShortcut(shortcut.keyEquivalent, modifiers: shortcut.modifiers)
+        } else {
+            button
+        }
+    }
+}
+
+extension FijiShortcut {
+    var keyEquivalent: KeyEquivalent { KeyEquivalent(key) }
+
+    /// Command always, as ImageJ's shortcuts are on a Mac.
+    var modifiers: EventModifiers {
+        var result: EventModifiers = .command
+        if shift { result.insert(.shift) }
+        if option { result.insert(.option) }
+        if control { result.insert(.control) }
+        return result
     }
 }
 
@@ -244,6 +296,37 @@ enum AppMenuActions {
                 CommandQueue.shared.next = name
                 openWindow(id: "viewer")
             }
+        }
+    }
+
+    /// An entry only Fiji's menus have. ImageJ 1.x ones run as the rest do (with the dialog shown natively
+    /// where that works). SciJava commands and scripts run in Fiji, which shows their dialog or window;
+    /// what they make comes back as images.
+    @MainActor
+    static func performFiji(_ item: FijiMenuItem, viewer: ViewerModel?, bridge: AppBridge, openWindow: OpenWindowAction) {
+        switch item.entry.kind {
+        case .imagej1:
+            perform(item.entry.command ?? item.label, viewer: viewer, bridge: bridge, openWindow: openWindow)
+        case .command, .script:
+            let target = viewer ?? ViewerModel()
+            Task {
+                for url in await target.runFiji(item, bridge: bridge) {
+                    openWindow(id: "viewer", value: OpenRequest(url: url))
+                }
+            }
+        case .separator:
+            break
+        }
+    }
+
+    /// Plugins ▸ Get Images from Fiji: the images in Fiji's windows that Mancora doesn't show.
+    @MainActor
+    static func fetchFijiImages(viewer: ViewerModel?, bridge: AppBridge, openWindow: OpenWindowAction) {
+        let target = viewer ?? ViewerModel()
+        Task {
+            let urls = await target.fijiImagesToShow(bridge: bridge, known: [])
+            if urls.isEmpty { viewer?.report = "Fiji has no images that Mancora isn’t showing." }
+            for url in urls { openWindow(id: "viewer", value: OpenRequest(url: url)) }
         }
     }
 

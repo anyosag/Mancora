@@ -122,16 +122,29 @@ struct CommandFinder: View {
     private var entries: [Entry] {
         var names = Set(CommandRegistry.standard.commands.keys)
         var plugins = Set<String>()
-        for command in bridge.commands where !names.contains(command.name) {
+        // What Fiji's menus have and ImageJ's lack: ImageJ 1.x ones are commands like the rest (the
+        // menu table knows where they are), SciJava commands and scripts are listed by their menu path.
+        var fiji: [Entry] = []
+        var fijiLabels = Set<String>()
+        for item in FijiMenus.shared.items {
+            if item.entry.kind == .imagej1 {
+                names.insert(item.label)
+            } else {
+                fijiLabels.insert(item.label)
+                fiji.append(
+                    Entry(name: item.key, title: MenuCommandButton.title(item.label), menu: item.menuTitle, shortcut: item.shortcut?.text))
+            }
+        }
+        for command in bridge.commands where !names.contains(command.name) && !fijiLabels.contains(command.name) {
             names.insert(command.name)
             if command.isPlugin { plugins.insert(command.name) }
         }
-        return names.map { name in
+        return (names.map { name in
             let place = CommandCatalog.places[name]
             return Entry(
                 name: name, title: MenuCommandButton.title(name),
                 menu: place?.menu ?? (plugins.contains(name) ? "Plugins" : nil), shortcut: place?.shortcut)
-        }
+        } + fiji)
         .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
 
@@ -331,7 +344,13 @@ struct CommandFinder: View {
         dismiss()
         Task {
             // As from the menus: a command with a dialog asks for its options first.
-            let created = await model.perform(name, bridge: bridge)
+            // One of Fiji's own entries runs in Fiji, which asks.
+            let created: [URL]
+            if let item = FijiMenus.shared.item(forKey: name), item.entry.kind != .imagej1 {
+                created = await model.runFiji(item, bridge: bridge)
+            } else {
+                created = await model.perform(name, bridge: bridge)
+            }
             openNewWindows(created)
         }
     }

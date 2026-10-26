@@ -110,9 +110,9 @@ struct MancoraApp: App {
     }
 }
 
-/// The Plugins menu: ImageJ's (Macros, Shortcuts, Utilities, New, …),
-/// Fiji's update sites, the bridge's state, and (without Fiji, whose own
-/// menus hold them) the commands of installed plugin jars.
+/// The Plugins menu: ImageJ's (Macros, Shortcuts, Utilities, New, …) with
+/// Fiji's merged in, Fiji's update sites, the bridge's state, and (without
+/// Fiji, whose own menus hold them) the commands of installed plugin jars.
 struct PluginCommands: Commands {
     let bridge: AppBridge
     @FocusedValue(\.viewer) private var viewer
@@ -120,9 +120,15 @@ struct PluginCommands: Commands {
 
     var body: some Commands {
         CommandMenu("Plugins") {
-            MenuEntries(entries: ImageJMenuCommands.menu("Plugins").entries, perform: perform)
+            MenuEntries(
+                entries: ImageJMenuCommands.menu("Plugins").entries, path: "Plugins", perform: perform, performFiji: performFiji)
             Divider()
             Button("Manage Update Sites…") { openWindow(id: "update-sites") }
+            if bridge.hasFijiWindows {
+                Button("Get Images from Fiji") {
+                    AppMenuActions.fetchFijiImages(viewer: viewer, bridge: bridge, openWindow: openWindow)
+                }
+            }
             switch bridge.state {
             case .idle, .failed:
                 Button("Start \(bridge.engineName)") { Task { await bridge.start() } }
@@ -142,6 +148,10 @@ struct PluginCommands: Commands {
                 }
             }
         }
+    }
+
+    private func performFiji(_ item: FijiMenuItem) {
+        AppMenuActions.performFiji(item, viewer: viewer, bridge: bridge, openWindow: openWindow)
     }
 
     private func perform(_ name: String) {
