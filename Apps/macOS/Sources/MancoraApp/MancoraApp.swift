@@ -9,7 +9,7 @@ struct MancoraApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var updater = AppUpdater()
     @State private var bridge = AppBridge()
-    @State private var updateSites = AppUpdateSites()
+    @State private var updateSites = AppUpdateSites.shared
 
     init() {
         let args = CommandLine.arguments
