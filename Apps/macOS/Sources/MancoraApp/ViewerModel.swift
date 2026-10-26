@@ -193,7 +193,7 @@ final class ViewerModel {
                 }
                 var value: String?
                 var failure: String?
-                do { value = try session.run(code) } catch { failure = error.description }
+                do throws(MacroError) { value = try session.run(code) } catch { failure = error.description }
                 var changed: Hyperstack?
                 var created: [Hyperstack] = []
                 for open in session.context.images {
