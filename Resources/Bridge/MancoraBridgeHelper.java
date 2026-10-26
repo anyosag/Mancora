@@ -381,31 +381,58 @@ public class MancoraBridgeHelper {
         private static final Set<java.awt.Window> handled = Collections.newSetFromMap(new java.util.WeakHashMap<>());
 
         static void start() {
+            // How often to look for dialogs; tests make it short to try every timing.
+            String every = System.getenv("MANCORA_WATCHDOG_MS");
+            long interval = every == null ? 100 : Long.parseLong(every);
             Thread thread = new Thread(() -> {
                 while (true) {
-                    try { Thread.sleep(100); } catch (InterruptedException e) { return; }
-                    for (java.awt.Window w : java.awt.Window.getWindows()) {
-                        if (!(w instanceof java.awt.Dialog) || !w.isShowing() || handled.contains(w)) continue;
-                        handled.add(w);
-                        java.awt.Dialog d = (java.awt.Dialog) w;
-                        String text = text(d).trim();
-                        String message = text.isEmpty() ? d.getTitle() : text;
-                        if (d instanceof ij.gui.GenericDialog) {
-                            errors.add("ImageJ asked for input the options didn't give (\"" + d.getTitle() + "\" dialog)");
-                            java.awt.EventQueue.invokeLater(() ->
-                                d.dispatchEvent(new java.awt.event.WindowEvent(d, java.awt.event.WindowEvent.WINDOW_CLOSING)));
-                        } else if (d instanceof ij.gui.YesNoCancelDialog) {
-                            questions.add(message);
-                            java.awt.EventQueue.invokeLater(d::dispose);  // neither yes nor cancel: no
-                        } else {
-                            errors.add(message);
-                            java.awt.EventQueue.invokeLater(d::dispose);
-                        }
+                    try { Thread.sleep(interval); } catch (InterruptedException e) { return; }
+                    try {
+                        closeNewDialogs();
+                    } catch (Throwable t) {
+                        // keep watching: a dialog nobody closes would stop the helper
                     }
                 }
             }, "Mancora dialog watchdog");
             thread.setDaemon(true);
             thread.start();
+        }
+
+        /**
+         * Whether a thread waits in a modal dialog's event loop. A modal
+         * dialog is showing a moment before that loop starts, and one closed
+         * in that moment never releases the thread that showed it.
+         */
+        static boolean modalLoopRunning() {
+            for (StackTraceElement[] stack : Thread.getAllStackTraces().values()) {
+                for (StackTraceElement frame : stack) {
+                    if ("java.awt.WaitDispatchSupport".equals(frame.getClassName()) && "enter".equals(frame.getMethodName()))
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        static void closeNewDialogs() {
+            for (java.awt.Window w : java.awt.Window.getWindows()) {
+                if (!(w instanceof java.awt.Dialog) || !w.isShowing() || handled.contains(w)) continue;
+                java.awt.Dialog d = (java.awt.Dialog) w;
+                if (d.isModal() && !modalLoopRunning()) continue;  // next time
+                handled.add(w);
+                String text = text(d).trim();
+                String message = text.isEmpty() ? d.getTitle() : text;
+                if (d instanceof ij.gui.GenericDialog) {
+                    errors.add("ImageJ asked for input the options didn't give (\"" + d.getTitle() + "\" dialog)");
+                    java.awt.EventQueue.invokeLater(() ->
+                        d.dispatchEvent(new java.awt.event.WindowEvent(d, java.awt.event.WindowEvent.WINDOW_CLOSING)));
+                } else if (d instanceof ij.gui.YesNoCancelDialog) {
+                    questions.add(message);
+                    java.awt.EventQueue.invokeLater(d::dispose);  // neither yes nor cancel: no
+                } else {
+                    errors.add(message);
+                    java.awt.EventQueue.invokeLater(d::dispose);
+                }
+            }
         }
 
         static void reset() {

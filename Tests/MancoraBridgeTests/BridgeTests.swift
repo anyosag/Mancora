@@ -196,6 +196,46 @@ struct BridgeIntegrationTests {
         #expect(helpers.allSatisfy { !$0.hasPrefix(".") })
     }
 
+    /// ImageJ shows a modal dialog for every macro error, which the helper
+    /// closes; however the close lands, the next request still runs.
+    @Test(.enabled(if: hasDisplay)) func macroErrorsNeverHang() async throws {
+        let first = try BridgeFixtures.bridge()
+        var config = await first.configuration
+        config.timeoutSeconds = 20
+        config.environment["MANCORA_WATCHDOG_MS"] = "1"
+        // Several helpers at once, as the parity suites run them, make the timing vary.
+        let bridges = (0..<6).map { _ in Bridge(configuration: config) }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for bridge in bridges {
+                group.addTask {
+                    for i in 0..<100 {
+                        let code = "for (i = 0; i < 2; i++) {\n    print(i)\n    print(\"next\");\n}\n"
+                        let result = try await bridge.runMacro(i % 2 == 0 ? code : "print(\"start\");\ny = x + 1;\n", images: [])
+                        #expect(result.macroError != nil)
+                    }
+                    await bridge.stop()
+                }
+            }
+            try await group.waitForAll()
+        }
+    }
+
+    /// A request that times out stops its helper, so the next one doesn't
+    /// wait behind it.
+    @Test func aTimedOutRequestRestartsTheHelper() async throws {
+        let first = try BridgeFixtures.bridge()
+        var config = await first.configuration
+        config.timeoutSeconds = 3
+        let bridge = Bridge(configuration: config)
+        await #expect(throws: BridgeError.timedOut(seconds: 3)) {
+            try await bridge.runMacro("wait(60000);", images: [])
+        }
+        let result = try await bridge.runMacro("return \"back\";", images: [])
+        #expect(result.value == "back")
+        #expect(await bridge.launchCount == 2)
+        await bridge.stop()
+    }
+
     @Test func recoversWhenTheHelperIsKilled() async throws {
         let bridge = try BridgeFixtures.bridge()
         try await bridge.start()

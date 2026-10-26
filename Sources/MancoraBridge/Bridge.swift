@@ -224,6 +224,8 @@ public actor Bridge {
         let timer = Task.detached {
             try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
             connection.fail(id: id, with: BridgeError.timedOut(seconds: timeout))
+            // A helper that doesn't answer may never answer again: the next request starts a new one.
+            connection.terminate()
         }
         defer { timer.cancel() }
         let data = try await connection.send(id: id, line: line)
