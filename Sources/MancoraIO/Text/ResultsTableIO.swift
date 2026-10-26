@@ -37,14 +37,24 @@ public enum ResultsTableIO {
     ///
     /// `format(value, fixed)` gives a number's text as the table shows it.
     /// `fixed` is true for a column ImageJ shows with its set number of
-    /// decimal places: one with a fraction in its first 25 rows (a value
-    /// that `(int)` changes). Other columns show integers without decimals.
-    public static func encode(_ rt: ResultsTable, csv: Bool, rowNumbers: Bool, format: (Double, Bool) -> String) -> String {
+    /// decimal places: by default one with a fraction in its first 25 rows
+    /// (a value that `(int)` changes). Other columns show integers without
+    /// decimals. Rows are numbered from `firstRowNumber` (`baseRowNumber`),
+    /// and the heading line is left out without `columnHeadings`
+    /// (`saveColumnHeaders(false)`).
+    public static func encode(
+        _ rt: ResultsTable, csv: Bool, rowNumbers: Bool, firstRowNumber: Int = 1, columnHeadings: Bool = true,
+        fixed: Set<String>? = nil, format: (Double, Bool) -> String
+    ) -> String {
         var out = ""
-        if !(rt.count == 0 && rt.columns.isEmpty) { out += headingLine(rt, csv: csv, rowNumbers: rowNumbers) + "\n" }
-        let fixed = fixedColumns(rt)
+        if columnHeadings && !(rt.count == 0 && rt.columns.isEmpty) {
+            out += headingLine(rt, csv: csv, rowNumbers: rowNumbers) + "\n"
+        }
+        let fixed = fixed ?? fixedColumns(rt)
         for row in 0..<rt.count {
-            out += rowLine(rt, row: row, csv: csv, rowNumbers: rowNumbers, fixed: fixed, format: format) + "\n"
+            out += rowLine(
+                rt, row: row, csv: csv, rowNumbers: rowNumbers, firstRowNumber: firstRowNumber, fixed: fixed, format: format)
+                + "\n"
         }
         return out
     }
@@ -71,10 +81,11 @@ public enum ResultsTableIO {
 
     /// `ResultsTable.getRowAsString(row)`, quoting for CSV as `saveAs` does.
     public static func rowLine(
-        _ rt: ResultsTable, row: Int, csv: Bool, rowNumbers: Bool, fixed: Set<String>, format: (Double, Bool) -> String
+        _ rt: ResultsTable, row: Int, csv: Bool, rowNumbers: Bool, firstRowNumber: Int = 1, fixed: Set<String>,
+        format: (Double, Bool) -> String
     ) -> String {
         let delimiter = csv ? "," : "\t"
-        var line = rowNumbers ? String(row + 1) + delimiter : ""
+        var line = rowNumbers ? String(row + firstRowNumber) + delimiter : ""
         if rt.labels.contains(where: { $0 != nil }) {
             if let label = rt.labels[row] { line += csv ? label.replacing(",", with: ";") : label }
             line += delimiter
@@ -94,10 +105,13 @@ public enum ResultsTableIO {
 
     /// Saves the table as `ResultsTable.saveAs(path)` does, with commas for
     /// `.csv` and tabs otherwise.
-    public static func save(_ rt: ResultsTable, to path: String, rowNumbers: Bool, format: (Double, Bool) -> String = defaultFormat)
-        throws(MancoraIOError)
-    {
-        let text = encode(rt, csv: isCSV(path), rowNumbers: rowNumbers, format: format)
+    public static func save(
+        _ rt: ResultsTable, to path: String, rowNumbers: Bool, firstRowNumber: Int = 1, columnHeadings: Bool = true,
+        fixed: Set<String>? = nil, format: (Double, Bool) -> String = defaultFormat
+    ) throws(MancoraIOError) {
+        let text = encode(
+            rt, csv: isCSV(path), rowNumbers: rowNumbers, firstRowNumber: firstRowNumber, columnHeadings: columnHeadings,
+            fixed: fixed, format: format)
         do {
             try Data(text.utf8).write(to: URL(fileURLWithPath: path))
         } catch {
@@ -144,7 +158,7 @@ public enum ResultsTableIO {
     {
         // IJ.openAsString: every line, whatever ended it, followed by "\n".
         var text = javaLines(fileText).map { $0 + "\n" }.joined()
-        if text.isEmpty { return ResultsTable() }
+        if text.isEmpty { return ResultsTable.custom() }
         let separator: Character = csv ? "," : "\t"
         var commasReplaced = false
         if csv, text.contains("\"") {
@@ -189,8 +203,16 @@ public enum ResultsTableIO {
             headings.insert(" ", at: 0)
             firstColumn = 1
         }
-        var rt = ResultsTable()
-        guard firstRow < lines.count else { return rt }
+        // A new ResultsTable: columns in the order they are first used.
+        var rt = ResultsTable.custom()
+        guard firstRow < lines.count else {
+            // Only headings: the columns, without rows.
+            for heading in headings[firstColumn...] where !rt.columns.contains(heading) {
+                rt.set(heading, row: rt.addRow(), .text(""))
+                rt.removeRows(0, 0)
+            }
+            return rt
+        }
         for line in lines[firstRow...] {
             let row = rt.addRow()
             let items = javaSplit(line, separator)

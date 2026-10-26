@@ -69,6 +69,8 @@ public final class Interpreter {
     var function: Functions!
     var inFunction = false
     var macroName: String?
+    /// The table `Table.applyMacro` runs this macro on, row by row: title-less `Table.*` calls use it.
+    var applyMacroTable: String?
     var argument: String?
     var returnValue: String?
     var calledMacro = false

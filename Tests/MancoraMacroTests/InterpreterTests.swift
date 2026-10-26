@@ -126,9 +126,9 @@ struct InterpreterTests {
 
     @Test func unsupportedFunctionsAreFound() {
         let found = MacroSupport.unsupported(
-            in: "makeEllipse(1,2,3,4,0.5); Overlay.addSelection(); run(\"Bio-Formats Importer\", \"\"); print(1);",
+            in: "makeText(\"a\",2,3); Overlay.addSelection(); run(\"Bio-Formats Importer\", \"\"); print(1);",
             registry: .standard)
-        #expect(found == ["makeEllipse", "Overlay", "run(\"Bio-Formats Importer\")"])
+        #expect(found == ["makeText", "Overlay", "run(\"Bio-Formats Importer\")"])
         #expect(MacroSupport.unsupported(in: "run(\"Gaussian Blur...\", \"sigma=2\"); x = Math.sqrt(4);", registry: .standard).isEmpty)
     }
 }

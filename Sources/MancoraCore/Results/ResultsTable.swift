@@ -23,8 +23,11 @@ public struct ResultsTable: Sendable, Hashable {
 
     /// Column headings as ImageJ orders them: the standard ones in their
     /// fixed order, then the others in the order they were first used.
+    /// Tables without ImageJ's default headings keep every column in the
+    /// order it was first used.
     public var columns: [String] {
-        used.filter { Self.standardIndex[$0] != nil }.sorted { Self.standardIndex[$0]! < Self.standardIndex[$1]! }
+        guard hasDefaultHeadings else { return used }
+        return used.filter { Self.standardIndex[$0] != nil }.sorted { Self.standardIndex[$0]! < Self.standardIndex[$1]! }
             + used.filter { Self.standardIndex[$0] == nil }
     }
     private var used: [String] = []
@@ -33,6 +36,10 @@ public struct ResultsTable: Sendable, Hashable {
     public private(set) var labels: [String?] = []
     /// Whether cells never set read as NaN rather than 0 (Set Measurements ▸ NaN empty cells).
     public var emptyCellsAreNaN = false
+    /// Whether the standard measurement headings have their fixed columns,
+    /// as in the Results table (`setDefaultHeadings`); a new table of
+    /// ImageJ's has none.
+    public var hasDefaultHeadings = true
     /// Columns shown with the table's decimal places, integers included:
     /// those that have held a value that isn't an int, and the shape
     /// descriptors (ImageJ's `decimalPlaces[column]` other than AUTO_FORMAT).
@@ -44,6 +51,13 @@ public struct ResultsTable: Sendable, Hashable {
     public var showsRowNumbers: Bool?
 
     public init() {}
+
+    /// An empty table whose columns stay in the order they are first used.
+    public static func custom() -> ResultsTable {
+        var table = ResultsTable()
+        table.hasDefaultHeadings = false
+        return table
+    }
 
     public var count: Int { cells.count }
     public var isEmpty: Bool { cells.isEmpty }
@@ -103,5 +117,36 @@ public struct ResultsTable: Sendable, Hashable {
         cells = []
         labels = []
         decimalColumns = []
+    }
+
+    /// Renames a column, keeping its place, values and format.
+    public mutating func renameColumn(_ old: String, to new: String) {
+        guard let i = used.firstIndex(of: old) else { return }
+        used[i] = new
+        for row in cells.indices {
+            if let value = cells[row].removeValue(forKey: old) { cells[row][new] = value }
+        }
+        if decimalColumns.remove(old) != nil { decimalColumns.insert(new) }
+    }
+
+    /// Removes a column and its values.
+    public mutating func removeColumn(_ column: String) {
+        used.removeAll { $0 == column }
+        for row in cells.indices { cells[row][column] = nil }
+        decimalColumns.remove(column)
+    }
+
+    /// Removes rows `first` through `last` (clamped to the table).
+    public mutating func removeRows(_ first: Int, _ last: Int) {
+        let lo = max(0, first), hi = min(cells.count - 1, last)
+        guard lo <= hi else { return }
+        cells.removeSubrange(lo...hi)
+        labels.removeSubrange(lo...hi)
+    }
+
+    /// Puts the rows in the order `order` lists them (each row once).
+    public mutating func reorderRows(_ order: [Int]) {
+        cells = order.map { cells[$0] }
+        labels = order.map { labels[$0] }
     }
 }
