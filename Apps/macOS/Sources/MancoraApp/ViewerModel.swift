@@ -62,8 +62,11 @@ final class ViewerModel {
     var thresholdMethod = AutoThresholder.Method.default
     var thresholdDark = false
     var thresholdStack = false
-    /// The plane's 256-bin histogram over the display range, for the Threshold section.
+    /// The plane's 256-bin histogram over its range of values, for the Brightness & Contrast
+    /// and Threshold controls. Counted while the inspector shows.
     private(set) var histogram: [Int] = []
+    /// The values the histogram's bins span.
+    private(set) var histogramRange: ClosedRange<Double> = 0...255
 
     struct LastCommand: Equatable {
         let name: String
@@ -79,6 +82,16 @@ final class ViewerModel {
 
     @ObservationIgnored private var autoState = BrightnessContrast.AutoState()
     @ObservationIgnored private var renderTask: Task<Void, Never>?
+    /// Counts the images shown (`show`, `replace`), so a histogram is counted again only when pixels change.
+    @ObservationIgnored private var imageGeneration = 0
+    @ObservationIgnored private var histogramSource: HistogramSource?
+
+    private struct HistogramSource: Equatable {
+        var generation: Int
+        var channel: Int
+        var slice: Int
+        var frame: Int
+    }
 
     var hasImage: Bool { image != nil }
     /// Unsaved changes (ImageJ's `ImagePlus.changes`): set when a command
@@ -161,6 +174,7 @@ final class ViewerModel {
     func show(_ image: Hyperstack, from url: URL?) {
         AppSession.shared.register(self)
         self.image = image
+        imageGeneration += 1
         fileURL = url
         channel = 0
         slice = 0
@@ -527,6 +541,7 @@ final class ViewerModel {
             }
         }
         image = changed
+        imageGeneration += 1
         isChanged = true
         channel = min(channel, dims.channels - 1)
         slice = min(slice, dims.slices - 1)
@@ -707,20 +722,27 @@ final class ViewerModel {
             return
         }
         let (c, z, t, levels) = (channel, slice, frame, threshold)
-        let range = displayRange
-        let wantsHistogram = showsThreshold && image.pixelType != .rgb8
+        // The histogram is counted again only when the plane changes, not for each display range step.
+        let source = HistogramSource(generation: imageGeneration, channel: c, slice: z, frame: t)
+        let wantsHistogram = image.pixelType.usesLUT && (showsInspector || showsThreshold)
+        let needsHistogram = wantsHistogram && (source != histogramSource || histogram.isEmpty)
         renderTask = Task {
-            let (pixels, bins) = await Task.detached(priority: .userInitiated) { () -> ([UInt32], [Int]) in
+            let (pixels, counted) = await Task.detached(priority: .userInitiated) {
+                () -> ([UInt32], (bins: [Int], range: ClosedRange<Double>)?) in
                 var pixels = DisplayMapper.render(image, channel: c, slice: z, frame: t)
                 let plane = image.plane(channel: c, slice: z, frame: t)
                 if let levels, image.dimensions.channels == 1 || image.compositeMode != .composite {
                     Self.paintThreshold(&pixels, plane: plane, levels: levels)
                 }
-                return (pixels, wantsHistogram ? Self.histogram(plane, range: range) : [])
+                return (pixels, needsHistogram ? Self.histogram(of: plane) : nil)
             }.value
             guard !Task.isCancelled else { return }
             rendered = Self.makeCGImage(pixels, width: image.width, height: image.height)
-            histogram = bins
+            if let counted {
+                histogram = counted.bins
+                histogramRange = counted.range
+                histogramSource = source
+            }
         }
     }
 

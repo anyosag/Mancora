@@ -95,6 +95,8 @@ struct ViewerView: View {
             }
         }
         .navigationTitle(model.image?.title ?? "Mancora")
+        // The inspector's histogram is counted only while it shows.
+        .onChange(of: showsInspector) { if showsInspector { model.render() } }
         .inspector(isPresented: $showsInspector) {
             DisplayInspector(model: model)
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
@@ -344,31 +346,48 @@ struct DisplayInspector: View {
             }
         }
         .formStyle(.grouped)
+        .controlSize(.small)
+        // The histogram is only counted while the inspector shows; count it for what is there now.
+        .onAppear { model.render() }
     }
 
     private func contrastSection(_ image: Hyperstack) -> some View {
-        let bounds = model.sliderBounds
-        let range = model.displayRange
-        let step = image.pixelType == .gray32Float ? 0 : 1.0
+        let isIntegral = image.pixelType != .gray32Float
         return Section("Brightness & Contrast") {
-            RangeSlider(
-                title: "Minimum",
-                value: Binding(
-                    get: { range.lowerBound },
-                    set: { model.setDisplayRange(min($0, range.upperBound)...range.upperBound) }),
-                bounds: bounds, step: step)
-            RangeSlider(
-                title: "Maximum",
-                value: Binding(
-                    get: { range.upperBound },
-                    set: { model.setDisplayRange(range.lowerBound...max($0, range.lowerBound)) }),
-                bounds: bounds, step: step)
-            HStack {
+            VStack(spacing: 8) {
+                LevelsHistogram(
+                    bins: model.histogram, binRange: model.histogramRange, domain: model.levelsDomain,
+                    values: Binding(get: { model.displayRange }, set: { model.setDisplayRange($0) }),
+                    limits: model.levelLimits, isIntegral: isIntegral, label: "Display range")
+                HStack {
+                    LevelField(
+                        title: "Min",
+                        value: Binding(
+                            get: { model.displayRange.lowerBound },
+                            set: {
+                                let upper = model.displayRange.upperBound
+                                model.setDisplayRange(min(model.clampedLevel($0), upper)...upper)
+                            }),
+                        isIntegral: isIntegral)
+                    Spacer(minLength: 8)
+                    LevelField(
+                        title: "Max",
+                        value: Binding(
+                            get: { model.displayRange.upperBound },
+                            set: {
+                                let lower = model.displayRange.lowerBound
+                                model.setDisplayRange(lower...max(model.clampedLevel($0), lower))
+                            }),
+                        isIntegral: isIntegral)
+                }
+            }
+            HStack(spacing: 8) {
                 Button("Auto") { model.autoContrast() }
                 Button("Reset") { model.resetContrast() }
                 Spacer()
-                Text(image.channels[model.channel].lut.name).foregroundStyle(.secondary)
+                Text(image.channels[min(model.channel, image.channels.count - 1)].lut.name).foregroundStyle(.secondary)
             }
+            .buttonStyle(.bordered)
         }
     }
 
@@ -423,32 +442,6 @@ struct DisplayInspector: View {
     }
 
     private static func number(_ v: Double) -> String { String(format: "%.4g", v) }
-}
-
-/// A labelled slider with its value, for the display range ends.
-struct RangeSlider: View {
-    let title: String
-    @Binding var value: Double
-    let bounds: ClosedRange<Double>
-    let step: Double
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Text(title)
-                Spacer()
-                Text(String(format: step == 0 ? "%.4g" : "%.0f", value)).monospacedDigit().foregroundStyle(.secondary)
-            }
-            let clamped = Binding(
-                get: { min(max(value, bounds.lowerBound), bounds.upperBound) },
-                set: { value = $0 })
-            if step > 0 {
-                Slider(value: clamped, in: bounds, step: step)
-            } else {
-                Slider(value: clamped, in: bounds)
-            }
-        }
-    }
 }
 
 /// What an ImageJ command or macro logged and measured.
