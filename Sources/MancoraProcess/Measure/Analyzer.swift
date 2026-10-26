@@ -166,6 +166,18 @@ public enum Analyzer {
         } else if image.stack.count > 1 {
             add("Slice", Double(position > 0 ? position : dims.planeIndex(channel: channel, slice: slice, frame: frame) + 1))
         }
+        // On an "FFT of" image: the period (R) and direction the point stands for.
+        if image.frequencyDomain != nil {
+            let center = Double(image.width) / 2.0
+            let x = Double(p.x)
+            let y = Double(image.height) - Double(p.y) - 1
+            var r = ((x - center) * (x - center) + (y - center) * (y - center)).squareRoot()
+            if r < 1.0 { r = 1.0 }
+            var theta = atan2(y - center, x - center) * 180.0 / Double.pi
+            if theta < 0 { theta = 360.0 + theta }
+            add("R", (Double(image.width) / r) * cal.pixelWidth)
+            add("Theta", theta)
+        }
     }
 
     /// `Roi.getFloatAngle(x1, y1, x2, y2)`: degrees from the x axis, y up, calibrated.

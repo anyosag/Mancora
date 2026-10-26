@@ -46,6 +46,8 @@ public struct Hyperstack: Sendable, Equatable {
     public var encodedROI: [UInt8]?
     /// The overlay, one ImageJ `.roi` record per element.
     public var encodedOverlay: [[UInt8]] = []
+    /// The transform an "FFT of" image shows (ImageJ's "FHT" property).
+    public var frequencyDomain: FrequencyDomain?
 
     public init(
         title: String,
