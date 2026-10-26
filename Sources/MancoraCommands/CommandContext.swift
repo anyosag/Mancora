@@ -50,6 +50,12 @@ public struct CommandSettings: Sendable, Hashable {
     /// macro drawing functions use instead of the foreground color.
     public var fillValue: Double?
     public var fillColor: UInt32?
+    /// Edit ▸ Options ▸ Plots ▸ Interpolate line profiles (on by default;
+    /// the macro's `setOption("InterpolateLines", …)`).
+    public var interpolateLineProfiles = true
+    /// Edit ▸ Options ▸ Plots ▸ Vertical profile: Plot Profile averages the
+    /// rows of a rectangle rather than its columns.
+    public var verticalProfile = false
 
     public init() {}
 }
