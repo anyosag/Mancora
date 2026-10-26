@@ -11,12 +11,13 @@ struct ChangeTracking: NSViewRepresentable {
     func updateNSView(_ view: NSView, context: Context) {
         let changed = model.isChanged
         let model = model
+        let coordinator = context.coordinator
         DispatchQueue.main.async {
             guard let window = view.window else { return }
             window.isDocumentEdited = changed
             if !(window.delegate is CloseQuestion) {
                 let question = CloseQuestion(original: window.delegate, model: model)
-                context.coordinator.question = question  // the window keeps its delegate weakly
+                coordinator.question = question  // the window keeps its delegate weakly
                 window.delegate = question
             }
         }

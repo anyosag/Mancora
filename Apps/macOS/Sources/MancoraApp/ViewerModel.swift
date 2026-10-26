@@ -184,16 +184,16 @@ final class ViewerModel {
 
     /// File ▸ Save As ▸ ZIP, PNG or GIF: the format ImageJ writes (PNG and
     /// GIF save the plane shown).
-    func presentSavePanel(as format: ImageOpener.Format, extension ext: String) {
+    func presentSavePanel(as format: ImageSaver.Format, extension ext: String) {
         guard let image else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType(filenameExtension: ext) ?? .data]
         let base = (image.title as NSString).deletingPathExtension
         panel.nameFieldStringValue = (base.isEmpty ? "Untitled" : base) + "." + ext
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let position = ImageOpener.Position(channel: channel, slice: slice, frame: frame)
+        let position = ImageSaver.Position(channel: channel, slice: slice, frame: frame)
         do throws(MancoraIOError) {
-            try ImageOpener.write(image, to: url.path, format: format, position: position)
+            try ImageSaver.write(image, to: url.path, format: format, position: position)
             AppRecorder.shared.recordLine("saveAs(\"\(ext == "zip" ? "ZIP" : ext.uppercased())\", \"\(MacroRecorder.escape(url.path))\");")
         } catch {
             errorMessage = error.description
