@@ -197,8 +197,8 @@ enum ProcessCommands {
         }
         let isHyper = dims.channels > 1 || (dims.slices > 1 && dims.frames > 1)
         let depth = isHyper ? (dims.slices > 1 ? dims.slices : dims.frames) : open.image.stack.count
-        let start = Int(options.number(forLabel: "Start slice:", default: 1))
-        let stop = Int(options.number(forLabel: "Stop slice:", default: Double(depth)))
+        let start = Int(JavaNumerics.int32(options.number(forLabel: "Start slice:", default: 1)))
+        let stop = Int(JavaNumerics.int32(options.number(forLabel: "Stop slice:", default: Double(depth))))
         let all = dims.frames > 1 && dims.slices > 1 && options.flag(forLabel: "All time frames")
         let slices = max(start, 1) - 1 <= min(stop, depth) - 1 ? (max(start, 1) - 1)...(min(stop, depth) - 1) : nil
         let result = ZProjector.project(open.image, method: method, slices: slices, allTimeFrames: all, frame: open.frame)

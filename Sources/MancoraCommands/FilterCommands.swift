@@ -293,15 +293,21 @@ enum FilterCommands {
     }
 
     /// Process ▸ Binary ▸ Options: iterations, count, Black background and
-    /// Pad edges, then `do=` one of the binary commands.
+    /// Pad edges, then `do=` one of the binary commands. Iterations or a
+    /// count out of range are limited, and then `dialogItemChanged` stops
+    /// before it reads `do=`.
     static let binaryOptions = CommandDefinition("Options...", menu: "Process>Binary") { context, options in
         let name = "Options..."
         var settings = context.settings
-        settings.binaryIterations = min(max(Int(options.number(forLabel: "Iterations (1-100):", default: Double(settings.binaryIterations))), 1), 100)
-        settings.binaryCount = min(max(Int(options.number(forLabel: "Count (1-8):", default: Double(settings.binaryCount))), 1), 8)
+        // (int)gd.getNextNumber()
+        let iterations = Int(JavaNumerics.int32(options.number(forLabel: "Iterations (1-100):", default: Double(settings.binaryIterations))))
+        let count = Int(JavaNumerics.int32(options.number(forLabel: "Count (1-8):", default: Double(settings.binaryCount))))
+        settings.binaryIterations = min(max(iterations, 1), 100)
+        settings.binaryCount = min(max(count, 1), 8)
         settings.blackBackground = options.flag(forLabel: "Black background")
         settings.padEdges = options.flag(forLabel: "Pad edges when eroding")
         context.settings = settings
+        guard (1...100).contains(iterations), (1...8).contains(count) else { return }
         let operations: [String: (String, BinaryOperation)] = [
             "Erode": ("Erode", .erode), "Dilate": ("Dilate", .dilate), "Open": ("Open", .open),
             "Close": ("Close-", .close), "Outline": ("Outline", .outline), "Fill Holes": ("Fill Holes", .fillHoles),

@@ -134,6 +134,8 @@ struct MeasurementParityTests {
             .measure("circularity slice display redirect=None decimal=3", on: .stack8),
             .measure("area display redirect=None decimal=3", on: .gray16, then: [.init(command: "Measure", options: "")]),
             .measure("area mean redirect=None decimal=3", on: .gray8, then: [.init(command: "Clear Results", options: "")]),
+            // Decimal places are cast to int as Java casts them, then limited to 0–9.
+            .measure("area mean redirect=None decimal=1e20", on: .gray8),
         ])
     }
 }
@@ -225,6 +227,10 @@ struct FilterParityTests {
                     ParityCase(
                         steps: [.init(command: "Options...", options: "iterations=1 count=1 black do=Skeletonize"), reset],
                         inputs: [.binary]),
+                    // Numbers are cast as Java casts them, then limited to 1–100.
+                    ParityCase(
+                        steps: [.init(command: "Options...", options: "iterations=1e20 count=1 black do=Erode"), reset],
+                        inputs: [.binary]),
                 ])
     }
 }
@@ -288,6 +294,8 @@ struct ProcessParityTests {
             ParityCase("Z Project...", "projection=[Max Intensity] all", on: .hyperstack),
             ParityCase("Z Project...", "projection=[Min Intensity]", on: .hyperstack),
             ParityCase("Z Project...", "projection=[Max Intensity] all", on: .fixtureHyperstack),
+            // A slice number beyond the stack is ignored (cast to int as Java casts).
+            ParityCase("Z Project...", "start=1e20 projection=[Max Intensity]", on: .stack8),
             ParityCase("Split Channels", on: .hyperstack),
             ParityCase("Split Channels", on: .rgb),
             ParityCase("Split Channels", on: .fixtureHyperstack),

@@ -289,9 +289,9 @@ enum BuiltInCommands {
         try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in
             var image = open.image
             let dims = image.dimensions
-            let c = max(Int(options.number(forLabel: "channels", default: Double(dims.channels))), 1)
-            let z = max(Int(options.number(forLabel: "slices", default: Double(dims.slices))), 1)
-            let t = max(Int(options.number(forLabel: "frames", default: Double(dims.frames))), 1)
+            let c = max(Int(JavaNumerics.int32(options.number(forLabel: "channels", default: Double(dims.channels)))), 1)
+            let z = max(Int(JavaNumerics.int32(options.number(forLabel: "slices", default: Double(dims.slices)))), 1)
+            let t = max(Int(JavaNumerics.int32(options.number(forLabel: "frames", default: Double(dims.frames)))), 1)
             if c * z * t == image.stack.count {
                 try? image.setDimensions(HyperstackDimensions(channels: c, slices: z, frames: t))
             } else {
@@ -391,7 +391,7 @@ enum BuiltInCommands {
         if let redirect = macro.value(forLabel: "Redirect to:"), redirect != "None" {
             throw CommandError.notNative(name)  // measuring another image's pixels: ImageJ can
         }
-        let precision = Int(macro.number(forLabel: "Decimal places (0-9):", default: Double(context.settings.decimalPlaces)))
+        let precision = Int(JavaNumerics.int32(macro.number(forLabel: "Decimal places (0-9):", default: Double(context.settings.decimalPlaces))))
         context.settings.decimalPlaces = min(max(precision, 0), 9)
         context.settings.measurements = measurements
         context.results.emptyCellsAreNaN = measurements.contains(.nanEmptyCells)
