@@ -76,6 +76,13 @@ final class AppBridge {
         return try await bridge.runMacro(code, images: image.map { [$0] } ?? [])
     }
 
+    /// Opens a file Mancora can't read in ImageJ (or Bio-Formats, if installed).
+    func open(_ path: String) async throws -> BridgeRunResult {
+        if !isReady { await start() }
+        guard let bridge else { throw BridgeError.helperExited(status: -1) }
+        return try await bridge.open(path)
+    }
+
     func stop() async {
         await bridge?.stop()
         bridge = nil

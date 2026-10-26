@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct MancoraApp: App {
     @State private var updater = AppUpdater()
     @State private var bridge = AppBridge()
+    @State private var updateSites = AppUpdateSites()
 
     init() {
         let args = CommandLine.arguments
@@ -52,6 +53,10 @@ struct MancoraApp: App {
             RecorderView(recorder: AppRecorder.shared)
         }
         .defaultSize(width: 520, height: 280)
+        Window("Update Sites", id: "update-sites") {
+            UpdateSitesView(model: updateSites, bridge: bridge)
+        }
+        .defaultSize(width: 720, height: 520)
         Settings {
             SettingsView(updater: updater)
         }
@@ -131,6 +136,7 @@ struct PluginCommands: Commands {
                 Button("Record…") { openWindow(id: "recorder") }
                 Button("Run…") { runMacroFile() }
             }
+            Button("Manage Update Sites…") { openWindow(id: "update-sites") }
             Divider()
             switch bridge.state {
             case .idle, .failed:
