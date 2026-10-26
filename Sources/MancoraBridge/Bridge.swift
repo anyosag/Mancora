@@ -209,8 +209,8 @@ public actor Bridge {
         do {
             return try await attempt(method, params, as: type)
         } catch BridgeError.helperExited where retry {
-            // The helper died (or was killed): start a new one and try once more.
-            connection = nil
+            // The helper died (or was killed): try once more on a new one, which
+            // another request that was waiting on it may have started already.
             return try await attempt(method, params, as: type)
         }
     }
@@ -226,7 +226,19 @@ public actor Bridge {
             connection.fail(id: id, with: BridgeError.timedOut(seconds: timeout))
         }
         defer { timer.cancel() }
-        let data = try await connection.send(id: id, line: line)
+        let data: Data
+        do {
+            data = try await connection.send(id: id, line: line)
+        } catch let error as BridgeError {
+            switch error {
+            case .helperExited:
+                connection.terminate()
+                // Forget this helper only, not one another request has started since.
+                if self.connection === connection { self.connection = nil }
+            default: break
+            }
+            throw error
+        }
         let header: ResponseHeader
         do {
             header = try JSONDecoder().decode(ResponseHeader.self, from: data)

@@ -193,6 +193,23 @@ struct BridgeIntegrationTests {
         await bridge.stop()
     }
 
+    /// Requests waiting on a helper that dies are all retried on one new helper.
+    @Test func concurrentRequestsRetryOnOneNewHelper() async throws {
+        let bridge = try BridgeFixtures.bridge()
+        try await bridge.start()
+        let pid = try #require(await bridge.helperProcessIdentifier)
+        async let a = bridge.runMacro("wait(2000); return \"a\";")
+        async let b = bridge.runMacro("wait(2000); return \"b\";")
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        #if !os(Windows)
+        kill(pid, SIGKILL)
+        #endif
+        let values = try await [a, b].map(\.value)
+        #expect(values == ["a", "b"])
+        #expect(await bridge.launchCount == 2)
+        await bridge.stop()
+    }
+
     /// Dialogs nobody can answer don't hang the helper: ImageJ's errors come
     /// back as errors, and "Process all slices?" is answered No.
     @Test(.enabled(if: hasDisplay)) func dialogsAreAnswered() async throws {
