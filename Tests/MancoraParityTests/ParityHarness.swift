@@ -113,6 +113,9 @@ enum Parity {
         if parityCase.comparesResults {
             differences += ImageComparison.differences(context.results, result.results, tolerance: parityCase.tolerance)
         }
+        if parityCase.comparesSelection {
+            differences += ImageComparison.selectionDifferences(native, imageJ)
+        }
         return differences
     }
 
@@ -138,16 +141,24 @@ struct ParityCase: Sendable, CustomStringConvertible {
     /// relative to the value (absolute below 1).
     var tolerance = 1e-5
     var comparesResults = false
+    /// Whether the selections (as the saved TIFFs carry them) must match too.
+    var comparesSelection = false
 
-    init(_ command: String, _ options: String = "", on inputs: ParityInput..., tolerance: Double = 1e-5, results: Bool = false) {
-        self.init(steps: [Step(command: command, options: options)], inputs: inputs, tolerance: tolerance, results: results)
+    init(
+        _ command: String, _ options: String = "", on inputs: ParityInput..., tolerance: Double = 1e-5,
+        results: Bool = false, selection: Bool = false
+    ) {
+        self.init(
+            steps: [Step(command: command, options: options)], inputs: inputs, tolerance: tolerance, results: results,
+            selection: selection)
     }
 
-    init(steps: [Step], inputs: [ParityInput], tolerance: Double = 1e-5, results: Bool = false) {
+    init(steps: [Step], inputs: [ParityInput], tolerance: Double = 1e-5, results: Bool = false, selection: Bool = false) {
         self.steps = steps
         self.inputs = inputs
         self.tolerance = tolerance
         self.comparesResults = results
+        self.comparesSelection = selection
     }
 
     /// `Set Measurements...` with `measurements`, then `Measure`.
@@ -192,6 +203,9 @@ enum ParityInput: String, Sendable {
     case column8, row16, row32, columnRGB, stackRGB
     case fixtureHyperstack = "ij-hyperstack-16bit.tif"
     case fixtureFire = "ij-8bit-fire.tif"
+    // Blobs-like images for background subtraction, maxima and EDMs (see BlobImages).
+    case blobs8, blobs16, blobs32, blobsRGB, blobsLight, blobsInverted, blobsStack8, blobsStack16, blobsStack32
+    case blobsROI, blobsOvalROI, blobsMask, blobsMaskInverted, blobsMaskStack
 
     func image() throws -> Hyperstack {
         let made: Hyperstack
@@ -239,6 +253,9 @@ enum ParityInput: String, Sendable {
             made = image
         case .fixtureHyperstack, .fixtureFire:
             return try TIFFImporter.read(path: Parity.url("Tests/Fixtures/tiff/" + rawValue).path)
+        case .blobs8, .blobs16, .blobs32, .blobsRGB, .blobsLight, .blobsInverted, .blobsStack8, .blobsStack16,
+            .blobsStack32, .blobsROI, .blobsOvalROI, .blobsMask, .blobsMaskInverted, .blobsMaskStack:
+            made = try BlobImages.image(for: self)
         default:
             made = try withSelection()
         }
