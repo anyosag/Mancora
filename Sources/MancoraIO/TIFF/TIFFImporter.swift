@@ -80,9 +80,18 @@ public enum TIFFImporter {
             }
         }
 
+        let metadata = first.imageJMetadata
+        var labels = [String?](repeating: nil, count: planes.count)
+        if let saved = metadata?.labels, !saved.isEmpty, saved.count <= planes.count {
+            labels.replaceSubrange(0..<saved.count, with: saved)
+        } else if pages.count == 1, first.planesPerPage > 1 {
+            // ImageJ's FileOpener names the samples of a 16-bit RGB(A) image.
+            labels = Array(["Red", "Green", "Blue", "Gray"].prefix(planes.count))
+        }
+
         let stack: ImageStack
         do {
-            stack = try ImageStack(width: first.width, height: first.height, planes: planes)
+            stack = try ImageStack(width: first.width, height: first.height, planes: planes, labels: labels)
         } catch {
             throw .model(error)
         }
@@ -109,7 +118,13 @@ public enum TIFFImporter {
         if dims.channels == 1, stack.pixelType.usesLUT {
             channels[0].lut = singleChannelLUT(first, name: LUTReader.baseName(of: title))
         }
-        if let range = description?.displayRange, stack.pixelType.usesLUT {
+        let savedRanges = metadata?.ranges ?? []
+        if dims.channels > 1, savedRanges.count == dims.channels * 2 {
+            // A composite's own ranges, as CompositeImage.setupLuts applies them.
+            for c in channels.indices where savedRanges[2 * c] <= savedRanges[2 * c + 1] {
+                channels[c].displayRange = savedRanges[2 * c]...savedRanges[2 * c + 1]
+            }
+        } else if let range = description?.displayRange, stack.pixelType.usesLUT {
             for c in channels.indices { channels[c].displayRange = range }
         } else if samplePlanes == 3, planes.count == 3, !first.isPlanar {
             // ImageJ shows a chunky 16-bit RGB image with one range spanning all three samples.
@@ -118,20 +133,30 @@ public enum TIFFImporter {
                 for c in channels.indices { channels[c].displayRange = low...high }
             }
         }
+        if dims.channels > 1, let luts = metadata?.luts {
+            for (c, bytes) in luts.prefix(dims.channels).enumerated() {
+                channels[c].lut = channelLUT(bytes, index: c)
+            }
+        }
 
         var properties: [String: String] = [:]
-        if let text = first.description { properties["ImageDescription"] = text }
+        let pairs = metadata?.properties ?? []
+        for i in stride(from: 0, to: pairs.count - 1, by: 2) { properties[pairs[i]] = pairs[i + 1] }
 
         do {
-            return try Hyperstack(
+            var image = try Hyperstack(
                 title: title,
                 stack: stack,
                 dimensions: dims,
                 calibration: calibration(first, description),
                 channels: channels,
                 compositeMode: description?.compositeMode ?? (samplePlanes > 1 ? .composite : .color),
+                info: metadata?.info ?? first.tiffInfo,
                 properties: properties
             )
+            image.encodedROI = metadata?.roi
+            image.encodedOverlay = metadata?.overlay ?? []
+            return image
         } catch {
             throw .model(error)
         }
@@ -187,8 +212,21 @@ public enum TIFFImporter {
 
     // MARK: Display and calibration
 
+    /// A saved channel LUT; ImageJ shows anything but 768 bytes as white.
+    private static func channelLUT(_ bytes: [UInt8], index: Int) -> LUT {
+        guard bytes.count == 768,
+            let lut = try? LUT(
+                name: "Channel \(index + 1)", reds: Array(bytes[0..<256]), greens: Array(bytes[256..<512]),
+                blues: Array(bytes[512..<768]))
+        else { return LUT.grays }
+        // Keep the familiar name when the colors are a built-in LUT's.
+        return LUT.builtIn.first { $0.hasSameColors(as: lut) } ?? lut
+    }
+
     private static func singleChannelLUT(_ page: TIFFPage, name: String) -> LUT {
-        if let map = page.colorMap {
+        // ImageJ ignores the ColorMap of unsigned 16-bit files it didn't write.
+        let trusted = !(page.bitsPerSample == 16 && page.sampleFormat == .unsigned && page.description == nil)
+        if let map = page.colorMap, trusted {
             // ImageJ keeps the high byte of each 16-bit entry and ignores an
             // all-zero map.
             let r = map[0..<256].map { UInt8($0 >> 8) }
@@ -203,27 +241,68 @@ public enum TIFFImporter {
         return page.photometric == 0 ? LUT.grays.inverted() : .grays
     }
 
+    /// Spatial calibration as ImageJ derives it: TiffDecoder reads the
+    /// resolution fields, FileOpener lets an ImageJ description's `unit`
+    /// replace the ResolutionUnit's, then converts tiny centimeter pixels to
+    /// microns (`Prefs.convertToMicrons`, on by default).
     private static func calibration(_ page: TIFFPage, _ description: ImageJDescription?) -> Calibration {
         var cal = Calibration()
-        if let xr = page.xResolution, xr > 0 {
-            let yr = page.yResolution.flatMap { $0 > 0 ? $0 : nil } ?? xr
-            var unit: String?
-            switch page.resolutionUnit {
-            case 3: unit = "cm"
-            case 2: unit = xr == 72 ? nil : "inch"  // 72 dpi is "no calibration"
-            default: unit = nil
+        var pixelWidth = 1.0, pixelHeight = 1.0, pixelDepth = 1.0
+        if let xr = page.xResolution, xr != 0 { pixelWidth = 1 / xr }
+        if let yr = page.yResolution, yr != 0 { pixelHeight = 1 / yr }
+        var unit: String?
+        switch page.resolutionUnit {
+        case 1: unit = " "
+        case 2:
+            // 72 dpi is a placeholder, not a calibration.
+            if pixelWidth == 1.0 / 72.0 {
+                pixelWidth = 1
+                pixelHeight = 1
+            } else {
+                unit = "inch"
             }
-            if let d = description, let u = d.unit, !u.trimmingWhitespace().isEmpty { unit = u }
-            if let unit {
-                cal.pixelWidth = 1 / xr
-                cal.pixelHeight = 1 / yr
-                cal.unit = unit
-            }
+        case 3: unit = "cm"
+        default: break  // no ResolutionUnit tag: uncalibrated, whatever TIFF's default
         }
         if let d = description {
-            if let spacing = d.spacing, spacing != 0 { cal.pixelDepth = spacing }
-            if let interval = d.frameInterval { cal.frameInterval = interval }
-            if let tunit = d.timeUnit { cal.timeUnit = tunit }
+            let saved = d.unit ?? ""
+            if unit == "cm", saved == "um" {
+                pixelWidth *= 10000
+                pixelHeight *= 10000
+            }
+            unit = saved
+            if let spacing = d.spacing { pixelDepth = abs(spacing) }
+        }
+        if pixelWidth > 0, var unit {
+            let threshold = description == nil ? 0.001 : 0.0001
+            if pixelWidth <= threshold, unit == "cm" {
+                pixelWidth *= 10000
+                pixelHeight *= 10000
+                if pixelDepth != 1 { pixelDepth *= 10000 }
+                unit = "um"
+            }
+            cal.pixelWidth = pixelWidth
+            cal.pixelHeight = pixelHeight
+            cal.pixelDepth = pixelDepth
+            cal.unit = sanitizedUnit(unit) ?? "pixel"
+        }
+        if let d = description {
+            cal.frameInterval = d.frameInterval ?? 0
+            if let tunit = d.timeUnit, !tunit.isEmpty { cal.timeUnit = tunit }
+            cal.yUnit = d.yUnit.flatMap(sanitizedUnit)
+            cal.zUnit = d.zUnit.flatMap(sanitizedUnit)
+            cal.fps = d.fps ?? 0
+            cal.loop = d.loop
+            // FileOpener: 32-bit images take only the unit; others a straight-line
+            // function (the one calibration Mancora models so far).
+            if let vunit = d.valueUnit {
+                if page.sampleFormat == .float || page.bitsPerSample == 32 {
+                    cal.valueUnit = vunit
+                } else if d.calibrationFunction == 0, d.coefficients.count >= 2 {
+                    cal.valueFunction = .straightLine(intercept: d.coefficients[0], slope: d.coefficients[1])
+                    cal.valueUnit = vunit
+                }
+            }
             cal.xOrigin = d.xOrigin ?? 0
             cal.yOrigin = d.yOrigin ?? 0
             cal.zOrigin = d.zOrigin ?? 0
@@ -233,5 +312,15 @@ public enum TIFFImporter {
             cal.valueFunction = .straightLine(intercept: -32768, slope: 1)
         }
         return cal
+    }
+
+    /// ImageJ's `Calibration.sanitizeUnit`; `nil` for an empty unit.
+    private static func sanitizedUnit(_ unit: String) -> String? {
+        switch unit {
+        case "": nil
+        case "um": "µm"
+        case "A": "Å"
+        default: unit
+        }
     }
 }

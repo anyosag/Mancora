@@ -1,18 +1,24 @@
 // `mancora`: headless command-line access to Mancora's core.
 //
-//   mancora info <image.tif>   describe an image
-//   mancora lut <file.lut>     describe a LUT file
-//   mancora luts               list the built-in LUTs
+//   mancora info <image.tif>               describe an image
+//   mancora convert <in.tif> <out.tif>     re-save a TIFF the way ImageJ writes them
+//   mancora lut <file.lut>                 describe a LUT file
+//   mancora luts                           list the built-in LUTs
+//   mancora update [--download <dir>]      check for a newer release
 //   mancora --version
 
 import Foundation
 import MancoraCore
 import MancoraIO
+import MancoraSupport
+import MancoraUpdate
 
 let usage = """
     usage: mancora info <image.tif>
+           mancora convert <in.tif> <out.tif> [--big-endian]
            mancora lut <file.lut>
            mancora luts
+           mancora update [--download <directory>]
            mancora --version
     """
 
@@ -59,6 +65,17 @@ case ("lut", 2):
     } catch {
         fail("mancora: \(error)")
     }
+case ("convert", 3), ("convert", 4):
+    guard args.count == 3 || args[3] == "--big-endian" else { fail(usage) }
+    do {
+        let image = try TIFFImporter.read(path: args[1])
+        try TIFFExporter.write(image, to: args[2], options: .init(bigEndian: args.count == 4))
+    } catch {
+        fail("mancora: \(error)")
+    }
+case ("update", 1), ("update", 3):
+    guard args.count == 1 || args[1] == "--download" else { fail(usage) }
+    await checkForUpdate(downloadTo: args.count == 3 ? args[2] : nil)
 case ("luts", 1):
     for lut in LUT.builtIn { print(lut.name) }
 case ("--version", 1), ("version", 1):
@@ -70,4 +87,29 @@ default:
 func hex(_ argb: UInt32) -> String {
     let digits = String(argb & 0xFF_FFFF, radix: 16, uppercase: true)
     return String(repeating: "0", count: 6 - digits.count) + digits
+}
+
+/// Reports whether a newer release has an installer for this platform and,
+/// with a directory, downloads it there (verified against SHA256SUMS.txt).
+func checkForUpdate(downloadTo directory: String?) async {
+    guard let current = SemanticVersion(MancoraVersion.number) else { fail("mancora: bad version \(MancoraVersion.number)") }
+    let checker = UpdateChecker(
+        currentVersion: current, client: URLSessionHTTPClient(userAgent: "mancora/\(MancoraVersion.number)"))
+    do {
+        guard let update = try await checker.availableUpdate() else {
+            print("Mancora \(current) is up to date.")
+            return
+        }
+        print("Mancora \(update.version) is available (you have \(current)): \(update.release.pageURL.absoluteString)")
+        guard let directory else {
+            print("Run `mancora update --download <directory>` to fetch \(update.installer.name).")
+            return
+        }
+        let data = try await checker.download(update)
+        let path = URL(fileURLWithPath: directory).appendingPathComponent(update.installer.name)
+        try data.write(to: path)
+        print("Downloaded and verified \(path.path) (SHA-256 \(hexString(SHA256.hash([UInt8](data))))).")
+    } catch {
+        fail("mancora: update check failed: \(error)")
+    }
 }

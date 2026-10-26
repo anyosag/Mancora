@@ -1,4 +1,4 @@
-/// TIFF tag numbers Mancora reads.
+/// TIFF tag numbers Mancora reads and writes.
 enum TIFFTag {
     static let newSubfileType: UInt16 = 254
     static let imageWidth: UInt16 = 256
@@ -22,6 +22,13 @@ enum TIFFTag {
     static let tileOffsets: UInt16 = 324
     static let tileByteCounts: UInt16 = 325
     static let sampleFormat: UInt16 = 339
+    static let software: UInt16 = 305
+    static let dateTime: UInt16 = 306
+    static let artist: UInt16 = 315
+    static let hostComputer: UInt16 = 316
+    /// ImageJ's private metadata: byte counts, then the records themselves.
+    static let imageJMetadataCounts: UInt16 = 50838
+    static let imageJMetadata: UInt16 = 50839
 }
 
 /// One IFD entry: where its values live and how they're encoded.

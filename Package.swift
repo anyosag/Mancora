@@ -28,7 +28,7 @@ let package = Package(
         .target(name: "MancoraUpdate", dependencies: ["MancoraSupport"], swiftSettings: strictness),
         .executableTarget(
             name: "MancoraCLI",
-            dependencies: ["MancoraCore", "MancoraIO", "MancoraUpdate"],
+            dependencies: ["MancoraCore", "MancoraIO", "MancoraSupport", "MancoraUpdate"],
             swiftSettings: strictness
         ),
         .testTarget(

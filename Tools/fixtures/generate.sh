@@ -28,3 +28,4 @@ fi
 
 java -Djava.awt.headless=true -cp "$ij_jar" "$root/Tools/fixtures/ImageJFixtures.java" "$root"
 "$cache/venv/bin/python" -I "$root/Tools/fixtures/make_tiffs.py" "$root"
+python3 -I "$root/Tools/fixtures/make_deflate.py" "$root"

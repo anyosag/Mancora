@@ -21,9 +21,16 @@ struct TIFFPage: Sendable {
     let chunkByteCounts: [Int]?
     let colorMap: [UInt16]?
     let description: String?
+    /// ImageJ's private metadata, when the file has it (first IFD only).
+    let imageJMetadata: ImageJMetadata?
+    /// What ImageJ shows as the Info of a file without its own: the
+    /// ImageDescription (unless ImageJ wrote it) and the Software, DateTime,
+    /// Artist and HostComputer tags, as `Name: value` lines.
+    let tiffInfo: String?
     let xResolution: Double?
     let yResolution: Double?
-    let resolutionUnit: Int
+    /// `nil` without a ResolutionUnit tag (which ImageJ treats as uncalibrated).
+    let resolutionUnit: Int?
 
     init(directory d: TIFFDirectory, reader r: ByteReader) throws(MancoraIOError) {
         guard let width = try d.integer(TIFFTag.imageWidth, r), let height = try d.integer(TIFFTag.imageLength, r),
@@ -71,19 +78,41 @@ struct TIFFPage: Sendable {
         let rps = try d.integer(TIFFTag.rowsPerStrip, r) ?? height
         rowsPerStrip = rps <= 0 ? height : min(rps, height)
 
-        if photometric == 3, bitsPerSample == 8, samplesPerPixel == 1,
+        // Like ImageJ, read a 768-entry ColorMap whatever the photometric
+        // interpretation; it's the LUT of single-sample images.
+        if samplesPerPixel == 1, [8, 16, 32].contains(bitsPerSample),
             let map = try d.integers(TIFFTag.colorMap, r), map.count == 768
         {
             colorMap = map.map { UInt16(truncatingIfNeeded: $0) }
         } else {
             colorMap = nil
         }
-        // ImageJ ignores descriptions of 3 characters or fewer.
-        let text = try d.string(TIFFTag.imageDescription, r)
-        description = (text?.count ?? 0) > 3 ? text : nil
+        // ImageJ ignores text tags of 3 characters or fewer.
+        func text(_ tag: UInt16) throws(MancoraIOError) -> String? {
+            let value = try d.string(tag, r)
+            return (value?.count ?? 0) > 3 ? value : nil
+        }
+        description = try text(TIFFTag.imageDescription)
+        var infoLines: [String] = []
+        if let description, !description.hasPrefix("ImageJ") { infoLines.append("ImageDescription: \(description)") }
+        for (tag, name) in [
+            (TIFFTag.software, "Software"), (TIFFTag.dateTime, "DateTime"), (TIFFTag.artist, "Artist"),
+            (TIFFTag.hostComputer, "HostComputer"),
+        ] {
+            if let value = try text(tag) { infoLines.append("\(name): \(value)") }
+        }
+        tiffInfo = infoLines.isEmpty ? nil : infoLines.map { $0 + "\n" }.joined()
+
+        if let counts = try d.integers(TIFFTag.imageJMetadataCounts, r), let entry = d.entries[TIFFTag.imageJMetadata],
+            let data = try? r.slice(at: entry.valueOffset, count: entry.count)
+        {
+            imageJMetadata = ImageJMetadata(counts: counts, data: data, bigEndian: r.bigEndian)
+        } else {
+            imageJMetadata = nil
+        }
         xResolution = try d.rational(TIFFTag.xResolution, r)
         yResolution = try d.rational(TIFFTag.yResolution, r)
-        resolutionUnit = try d.integer(TIFFTag.resolutionUnit, r) ?? 2
+        resolutionUnit = try d.integer(TIFFTag.resolutionUnit, r)
 
         try validate()
     }

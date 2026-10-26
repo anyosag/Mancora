@@ -36,8 +36,16 @@ public struct Hyperstack: Sendable, Equatable {
     /// One entry per channel.
     public private(set) var channels: [ChannelDisplay]
     public var compositeMode: CompositeMode
-    /// Free-form metadata, such as the TIFF ImageDescription.
+    /// ImageJ's "Info" property, shown by Image ▸ Show Info and saved in TIFFs.
+    public var info: String?
+    /// Image properties (ImageJ's `ImagePlus.setProp` keys and values),
+    /// saved in TIFFs.
     public var properties: [String: String]
+    /// The selection, as ImageJ `.roi` bytes (`RoiEncoder`), carried
+    /// through files until Mancora decodes ROIs itself.
+    public var encodedROI: [UInt8]?
+    /// The overlay, one ImageJ `.roi` record per element.
+    public var encodedOverlay: [[UInt8]] = []
 
     public init(
         title: String,
@@ -46,6 +54,7 @@ public struct Hyperstack: Sendable, Equatable {
         calibration: Calibration = Calibration(),
         channels: [ChannelDisplay]? = nil,
         compositeMode: CompositeMode = .color,
+        info: String? = nil,
         properties: [String: String] = [:]
     ) throws(ImageModelError) {
         let dims = dimensions ?? HyperstackDimensions(slices: stack.count)
@@ -62,6 +71,7 @@ public struct Hyperstack: Sendable, Equatable {
         self.calibration = calibration
         self.channels = displays
         self.compositeMode = compositeMode
+        self.info = info
         self.properties = properties
     }
 
