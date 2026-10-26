@@ -328,11 +328,15 @@ public actor Bridge {
         let compiled = folder.appendingPathComponent("MancoraBridgeHelper.class")
         if FileManager.default.fileExists(atPath: compiled.path) { return folder }
         guard let javac = config.java.compiler else { throw BridgeError.noCompiler }
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        // Compile into a folder of our own and move it into place, so a bridge
+        // starting at the same time never sees half the classes.
+        let staging = folder.deletingLastPathComponent().appendingPathComponent(".\(hash)-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: staging) }
         let process = Process()
         process.executableURL = javac
         process.arguments = [
-            "-encoding", "UTF-8", "-nowarn", "-cp", config.home.imageJJar.path, "-d", folder.path, config.helperSource.path,
+            "-encoding", "UTF-8", "-nowarn", "-cp", config.home.imageJJar.path, "-d", staging.path, config.helperSource.path,
         ]
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -341,9 +345,15 @@ public actor Bridge {
         try process.run()
         let output = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        guard process.terminationStatus == 0, FileManager.default.fileExists(atPath: compiled.path) else {
-            try? FileManager.default.removeItem(at: folder)
+        let staged = staging.appendingPathComponent("MancoraBridgeHelper.class")
+        guard process.terminationStatus == 0, FileManager.default.fileExists(atPath: staged.path) else {
             throw BridgeError.compileFailed(String(decoding: output, as: UTF8.self))
+        }
+        do {
+            try FileManager.default.moveItem(at: staging, to: folder)
+        } catch {
+            // Another bridge moved its copy into place first: use that one.
+            guard FileManager.default.fileExists(atPath: compiled.path) else { throw error }
         }
         return folder
     }
