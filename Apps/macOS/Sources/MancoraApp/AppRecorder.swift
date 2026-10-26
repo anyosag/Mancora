@@ -3,7 +3,6 @@ import MancoraCommands
 import MancoraCore
 import Observation
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// Plugins ▸ Macros ▸ Record…: while it records, every command, open and
 /// save becomes a line of ImageJ macro code, as in ImageJ's Recorder.
@@ -86,42 +85,100 @@ final class AppRecorder {
 /// The Recorder window: the macro so far, and what to do with it.
 struct RecorderView: View {
     @Bindable var recorder: AppRecorder
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Toggle("Record", isOn: $recorder.isRecording)
-                    .toggleStyle(.button)
-                Spacer()
-                Button("Clear") { recorder.clear() }
-                Button("Copy") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(recorder.macro, forType: .string)
+        RecorderText(text: recorder.macro)
+            .overlay {
+                if recorder.macro.isEmpty {
+                    ContentUnavailableView(
+                        "Nothing Recorded Yet", systemImage: "record.circle",
+                        description: Text("Commands you run appear here as macro code."))
                 }
-                Button("Create…") { save() }
             }
-            ScrollView {
-                Text(recorder.macro.isEmpty ? "Commands you run appear here as macro code." : recorder.macro)
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(recorder.macro.isEmpty ? .secondary : .primary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(6)
+            .frame(minWidth: 420, minHeight: 220)
+            .toolbar {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Toggle(isOn: $recorder.isRecording) {
+                        Label("Record", systemImage: recorder.isRecording ? "record.circle.fill" : "record.circle")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .toggleStyle(.button)
+                    .tint(.red)
+                    .help("Record the commands you run as macro code")
+                    Button("Clear", systemImage: "trash") { recorder.clear() }
+                        .help("Throw away what has been recorded")
+                        .disabled(recorder.macro.isEmpty)
+                    Button("Copy", systemImage: "doc.on.doc") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(recorder.macro, forType: .string)
+                    }
+                    .help("Copy the macro to the clipboard")
+                    .disabled(recorder.macro.isEmpty)
+                    Button("Create Macro", systemImage: "square.and.pencil") { createMacro() }
+                        .help("Open the recorded macro in an editor window, to run, change or save")
+                        .disabled(recorder.macro.isEmpty)
+                }
             }
-            .background(Color(nsColor: .textBackgroundColor))
-            .border(Color(nsColor: .separatorColor))
-        }
-        .padding(12)
-        .frame(minWidth: 420, minHeight: 220)
-        .onAppear { recorder.isRecording = true }
+            .onAppear { recorder.isRecording = true }
     }
 
-    /// Saves the macro as an `.ijm` file, which Plugins ▸ Macros ▸ Run… runs.
-    private func save() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "ijm") ?? .plainText]
-        panel.nameFieldStringValue = "Macro.ijm"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? recorder.macro.write(to: url, atomically: true, encoding: .utf8)
+    /// Create Macro: the recorded text in a new editor window (ImageJ's Recorder opens its Editor).
+    private func createMacro() {
+        openWindow(id: "macro-editor", value: EditorRequest(serial: UUID(), text: recorder.macro))
+    }
+}
+
+/// The recorded macro: monospaced text you can select, in the colors of the macro editor, that
+/// follows the newest line.
+struct RecorderText: NSViewRepresentable {
+    let text: String
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSTextView.scrollableTextView()
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .textBackgroundColor
+        if let textView = scrollView.documentView as? NSTextView {
+            textView.isEditable = false
+            textView.isSelectable = true
+            textView.textContainerInset = NSSize(width: 8, height: 8)
+        }
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard context.coordinator.shown != text, let textView = scrollView.documentView as? NSTextView else { return }
+        context.coordinator.shown = text
+        textView.textStorage?.setAttributedString(Self.attributed(text))
+        textView.scrollToEndOfDocument(nil)
+    }
+
+    final class Coordinator {
+        /// The text the view has, so it is replaced only when it changes.
+        var shown = ""
+    }
+
+    private static let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+
+    private static func attributed(_ text: String) -> NSAttributedString {
+        let result = NSMutableAttributedString(
+            string: text, attributes: [.font: font, .foregroundColor: NSColor.labelColor])
+        for span in MacroSyntax.spans(in: text, keywords: MacroTextView.keywords, functions: MacroTextView.functions) {
+            result.addAttribute(.foregroundColor, value: color(of: span.kind), range: span.range)
+        }
+        return result
+    }
+
+    private static func color(of kind: MacroSyntax.Kind) -> NSColor {
+        switch kind {
+        case .comment: .systemGreen
+        case .string: .systemRed
+        case .number: .systemBlue
+        case .keyword: .systemPurple
+        case .function: .systemTeal
+        }
     }
 }
