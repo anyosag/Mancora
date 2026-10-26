@@ -562,8 +562,9 @@ final class Functions {
         case "asin": return jAsin(arg)
         case "acos": return jAcos(arg)
         case "erf": return ijErf(arg)
-        case "toRadians": return arg / 180.0 * Double.pi
-        case "toDegrees": return arg * 180.0 / Double.pi
+        // Java 9+'s Math.toRadians and toDegrees: one multiplication by a constant.
+        case "toRadians": return arg * 0.017453292519943295
+        case "toDegrees": return arg * 57.29577951308232
         default:
             try interp.error("Unrecognized function name")
             return .nan

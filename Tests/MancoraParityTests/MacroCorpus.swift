@@ -295,6 +295,14 @@ enum MacroCorpus {
         .init("a replacement's missing named group", #"""
             print(replace("ab", "(?<n>a)b", "${m}"));
             """#),
+        .init("Math.toRadians and toDegrees", #"""
+            n = 0; m = 0;
+            for (i = 0; i < 1000; i++) {
+                if (Math.toRadians(i) == i / 180 * PI) n++;
+                if (Math.toDegrees(i) == i * 180 / PI) m++;
+            }
+            print(n, m);
+            """#),
         .init("deep recursion", #"""
             function depth(n) { if (n == 0) return 0; return 1 + depth(n - 1); }
             print(depth(600));
