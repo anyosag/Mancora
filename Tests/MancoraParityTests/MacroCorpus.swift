@@ -902,10 +902,14 @@ enum MacroCorpus {
             print(Table.size, Table.title, Table.headings);
             print(Table.get("A", 1), Table.getString("B", 0), Table.getString("A", 0), Table.get("Missing", 0));
             print(Table.columnExists("B"), Table.columnExists("C"), nResults);
+            // ImageJ brings a table window to the front asynchronously;
+            // selectWindow waits for it, so the title-less calls see it.
             Table.create("Mancora T2");
+            selectWindow("Mancora T2");
             Table.set("C", 0, 3);
             print(Table.title, Table.size, Table.size("Mancora T1"), Table.get("A", 0, "Mancora T1"));
             Table.reset("Mancora T1");
+            selectWindow("Mancora T1");
             print(Table.title, Table.size("Mancora T1"), Table.size("Mancora T2"));
             selectWindow("Mancora T2");
             print(Table.title);
