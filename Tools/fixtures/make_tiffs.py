@@ -101,6 +101,55 @@ def main(root):
     pages = np.stack([pattern("rgb", k) for k in range(2)])
     tf("tf-pages-rgb-be.tif", pages, "rgb", "rgb8", planes=2, byteorder=">", photometric="rgb")
 
+    # Deflate, with the horizontal (2) and floating-point (3) predictors.
+    for order, tag in (("<", "le"), (">", "be")):
+        tf(f"tf-gray16-zlib-pred-{tag}.tif", pattern("p16"), "p16", "gray16", byteorder=order,
+           compression="zlib", predictor=2)
+        tf(f"tf-float32-zlib-fpred-{tag}.tif", pattern("f32"), "f32", "gray32Float", byteorder=order,
+           compression="zlib", predictor=3)
+        tf(f"tf-float64-zlib-fpred-{tag}.tif", pattern("f32").astype(np.float64), "f32", "gray32Float",
+           byteorder=order, compression="zlib", predictor=3)
+        tf(f"tf-float16-zlib-fpred-{tag}.tif", pattern("f32").astype(np.float16), "f32", "gray32Float",
+           byteorder=order, compression="zlib", predictor=3)
+    tf("tf-gray8-zlib.tif", pattern("p8"), "p8", "gray8", compression="zlib", rowsperstrip=7)
+    tf("tf-gray8-tiles-zlib-be.tif", pattern("p8"), "p8", "gray8", byteorder=">", tile=(16, 16),
+       compression="zlib", compressionargs={"level": 9})
+    tf("tf-float32-tiles-zlib-fpred.tif", pattern("f32"), "f32", "gray32Float", tile=(16, 16),
+       compression="zlib", predictor=3)
+    tf("tf-float64-none-be.tif", pattern("f32").astype(np.float64), "f32", "gray32Float", byteorder=">")
+    tf("tf-float16-none.tif", pattern("f32").astype(np.float16), "f32", "gray32Float")
+    tf("tf-rgb-zlib-pred.tif", pattern("rgb"), "rgb", "rgb8", photometric="rgb", compression="zlib", predictor=2)
+    tf("tf-rgb-planar-zlib-be.tif", planar, "rgb", "rgb8", byteorder=">", photometric="rgb",
+       planarconfig="separate", compression="zlib")
+
+    # 16-bit RGB(A) opens as one channel per sample; sample c of page j holds p16 plane 3j + c.
+    def rgb16(samples, page=0):
+        return np.stack([pattern("p16", page * samples + c) for c in range(samples)], axis=-1)
+
+    tf("tf-rgb48-none.tif", rgb16(3), "p16", "gray16", planes=3, photometric="rgb",
+       expect={"channels": 3})
+    tf("tf-rgb48-lzw-pred-be.tif", rgb16(3), "p16", "gray16", planes=3, byteorder=">", photometric="rgb",
+       expect={"channels": 3}, **lzw_pred)
+    tf("tf-rgb48-planar-zlib.tif", np.moveaxis(rgb16(3), -1, 0), "p16", "gray16", planes=3, photometric="rgb",
+       planarconfig="separate", compression="zlib", expect={"channels": 3})
+    tf("tf-rgb48-tiles-zlib-pred.tif", rgb16(3), "p16", "gray16", planes=3, photometric="rgb", tile=(16, 16),
+       compression="zlib", predictor=2, expect={"channels": 3})
+    tf("tf-rgba64-none-be.tif", rgb16(4), "p16", "gray16", planes=4, byteorder=">", photometric="rgb",
+       extrasamples=["unassalpha"], expect={"channels": 4})
+    pages = np.stack([rgb16(3, j) for j in range(2)])
+    tf("tf-pages-rgb48-zlib.tif", pages, "p16", "gray16", planes=6, photometric="rgb", compression="zlib",
+       expect={"channels": 3})
+
+    # BigTIFF: 64-bit offsets, 20-byte IFD entries.
+    tf("tf-bigtiff-gray16-none.tif", pattern("p16"), "p16", "gray16", bigtiff=True, rowsperstrip=5)
+    tf("tf-bigtiff-float32-zlib-fpred-be.tif", pattern("f32"), "f32", "gray32Float", bigtiff=True,
+       byteorder=">", compression="zlib", predictor=3)
+    tf("tf-bigtiff-rgb-tiles-lzw.tif", pattern("rgb"), "rgb", "rgb8", bigtiff=True, photometric="rgb",
+       tile=(16, 16), compression="lzw")
+    pages = np.stack([pattern("p8", k) for k in range(3)])
+    tf("tf-bigtiff-pages-gray8-zlib-be.tif", pages, "p8", "gray8", planes=3, bigtiff=True, byteorder=">",
+       photometric="minisblack", compression="zlib")
+
     # --- ImageMagick (libtiff) ----------------------------------------------
     with tempfile.TemporaryDirectory() as tmp:
         tmp = pathlib.Path(tmp)
@@ -124,6 +173,11 @@ def main(root):
         im("im-gray16-lzw-pred-be.tif", p16, 16, "gray",
            ["-endian", "MSB", "-compress", "LZW", "-define", "tiff:predictor=2"], "p16", "gray16")
         im("im-rgb-lzw.tif", rgb, 8, "rgb", ["-compress", "LZW"], "rgb", "rgb8")
+        im("im-gray8-zip.tif", p8, 8, "gray", ["-compress", "Zip"], "p8", "gray8")
+        im("im-gray16-zip-pred-be.tif", p16, 16, "gray",
+           ["-endian", "MSB", "-compress", "Zip", "-define", "tiff:predictor=2"], "p16", "gray16")
+        im("im-rgb-zip-tiles.tif", rgb, 8, "rgb",
+           ["-compress", "Zip", "-define", "tiff:tile-geometry=16x16"], "rgb", "rgb8")
         bits = np.where(pattern("bits"), 255, 0).astype(np.uint8).tobytes()
         im("im-bilevel-minisblack.tif", bits, 8, "gray",
            ["-type", "bilevel", "-depth", "1", "-compress", "None", "-define", "tiff:photometric=min-is-black"],

@@ -56,6 +56,11 @@ public struct LUT: Sendable, Hashable {
     }
 
     /// The same colors in reverse order (ImageJ's "Invert LUT").
+    /// Whether both LUTs map every index to the same color, whatever their names.
+    public func hasSameColors(as other: LUT) -> Bool {
+        reds == other.reds && greens == other.greens && blues == other.blues
+    }
+
     public func inverted() -> LUT {
         // Lengths are already valid, so this cannot throw.
         try! LUT(name: name, reds: reds.reversed(), greens: greens.reversed(), blues: blues.reversed())

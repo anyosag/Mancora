@@ -1,6 +1,8 @@
 import MancoraCore
+import MancoraSupport
 
-/// Decodes one TIFF page (IFD) into a ``Plane``.
+/// Decodes one TIFF page (IFD) into planes: one, or one per sample for
+/// 16-bit RGB(A).
 enum TIFFPlaneDecoder {
     /// The most a scheme can expand its input. A chunk claiming to decode to
     /// more than this is corrupt, so it's rejected before anything is allocated.
@@ -8,11 +10,12 @@ enum TIFFPlaneDecoder {
         switch compression {
         case 1: 1
         case 32773: 64  // 2 bytes → 128 bytes
+        case 8, 32946: 1100  // DEFLATE tops out near 1032:1
         default: 4096  // LZW: one 9-bit code yields at most 4096 bytes
         }
     }
 
-    static func decode(_ page: TIFFPage, reader: ByteReader) throws(MancoraIOError) -> Plane {
+    static func decode(_ page: TIFFPage, reader: ByteReader) throws(MancoraIOError) -> [Plane] {
         let samplePlaneCount = page.isPlanar ? page.samplesPerPixel : 1
         let rowBytes = page.chunkRowBytes(page.width)
         let chunkRowBytes = page.chunkRowBytes(page.chunkWidth)
@@ -37,6 +40,15 @@ enum TIFFPlaneDecoder {
                             bitsPerSample: page.bitsPerSample,
                             bigEndian: reader.bigEndian
                         )
+                    } else if page.predictor == 3 {
+                        TIFFCodecs.undoFloatingPointPredictor(
+                            &chunk,
+                            rowBytes: chunkRowBytes,
+                            rows: rows,
+                            samplesPerPixel: page.samplesPerChunkPixel,
+                            bytesPerSample: page.bytesPerSample,
+                            bigEndian: reader.bigEndian
+                        )
                     }
                     let copyBytes = page.chunkRowBytes(min(page.chunkWidth, page.width - x0))
                     let dstX = page.chunkRowBytes(x0)
@@ -59,7 +71,7 @@ enum TIFFPlaneDecoder {
 
     /// Decodes uncompressed chunky pixel data that starts at `offset`, as in
     /// ImageJ stacks whose planes follow each other with no IFD of their own.
-    static func decodeContiguous(_ page: TIFFPage, at offset: Int, reader: ByteReader) throws(MancoraIOError) -> Plane {
+    static func decodeContiguous(_ page: TIFFPage, at offset: Int, reader: ByteReader) throws(MancoraIOError) -> [Plane] {
         let count = page.chunkRowBytes(page.width) * page.height
         return try convert(page, [Array(try reader.slice(at: offset, count: count))], bigEndian: reader.bigEndian)
     }
@@ -90,11 +102,37 @@ enum TIFFPlaneDecoder {
         switch page.compression {
         case 5: return try TIFFCodecs.lzwDecode(input, expectedCount: expected)
         case 32773: return TIFFCodecs.unpackBits(input, expectedCount: expected)
+        case 8, 32946:
+            do {
+                var out = try Inflate.zlib(input, stopAt: expected, limit: expected)
+                if out.count < expected { out.append(contentsOf: repeatElement(0, count: expected - out.count)) }
+                return out
+            } catch {
+                throw .invalidFormat("corrupt Deflate data in chunk \(index) (\(error))")
+            }
         default: throw .unsupported("compression scheme \(page.compression)")
         }
     }
 
-    private static func convert(_ page: TIFFPage, _ planes: [[UInt8]], bigEndian: Bool) throws(MancoraIOError) -> Plane {
+    private static func convert(_ page: TIFFPage, _ planes: [[UInt8]], bigEndian: Bool) throws(MancoraIOError) -> [Plane] {
+        if page.planesPerPage > 1 {
+            // 16-bit RGB(A): one 16-bit plane per sample, from planar or chunky data.
+            let n = page.width * page.height
+            return (0..<page.planesPerPage).map { c in
+                var out = [UInt16](repeating: 0, count: n)
+                if page.isPlanar {
+                    for i in 0..<n { out[i] = TIFFCodecs.load16(planes[c], i * 2, bigEndian) }
+                } else {
+                    let stride = page.samplesPerPixel * 2
+                    for i in 0..<n { out[i] = TIFFCodecs.load16(planes[0], i * stride + c * 2, bigEndian) }
+                }
+                return .gray16(out)
+            }
+        }
+        return [try convertSingle(page, planes, bigEndian: bigEndian)]
+    }
+
+    private static func convertSingle(_ page: TIFFPage, _ planes: [[UInt8]], bigEndian: Bool) throws(MancoraIOError) -> Plane {
         let n = page.width * page.height
         let data = planes[0]
         switch (page.bitsPerSample, page.samplesPerPixel) {
@@ -110,6 +148,21 @@ enum TIFFPlaneDecoder {
 
         case (8, 1):
             return .gray8(data)
+
+        case (16, 1) where page.sampleFormat == .float:
+            var out = [Float](repeating: 0, count: n)
+            for i in 0..<n { out[i] = TIFFCodecs.halfToFloat(TIFFCodecs.load16(data, i * 2, bigEndian)) }
+            return .gray32Float(out)
+
+        case (64, 1):
+            // Double-precision data is narrowed to float, like ImageJ's 32-bit type.
+            var out = [Float](repeating: 0, count: n)
+            for i in 0..<n {
+                let hi = UInt64(TIFFCodecs.load32(data, i * 8 + (bigEndian ? 0 : 4), bigEndian))
+                let lo = UInt64(TIFFCodecs.load32(data, i * 8 + (bigEndian ? 4 : 0), bigEndian))
+                out[i] = Float(Double(bitPattern: hi << 32 | lo))
+            }
+            return .gray32Float(out)
 
         case (16, 1):
             var out = [UInt16](repeating: 0, count: n)

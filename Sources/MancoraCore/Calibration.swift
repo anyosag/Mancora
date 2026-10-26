@@ -24,6 +24,13 @@ public struct Calibration: Sendable, Hashable {
     /// Seconds (or `timeUnit`) between frames; 0 when unknown.
     public var frameInterval: Double = 0
     public var timeUnit: String = "sec"
+    /// Vertical and depth units when they differ from `unit`; `nil` otherwise.
+    public var yUnit: String?
+    public var zUnit: String?
+    /// Animation speed in frames per second; 0 means ImageJ's default.
+    public var fps: Double = 0
+    /// Whether animation loops back and forth.
+    public var loop: Bool = false
     public var invertY: Bool = false
     public var valueFunction: ValueFunction?
     public var valueUnit: String = "Gray Value"

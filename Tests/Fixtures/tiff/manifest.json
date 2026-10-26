@@ -251,6 +251,212 @@
   "height": 23
  },
  {
+  "file": "tf-gray16-zlib-pred-le.tif",
+  "pattern": "p16",
+  "type": "gray16",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-float32-zlib-fpred-le.tif",
+  "pattern": "f32",
+  "type": "gray32Float",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-float64-zlib-fpred-le.tif",
+  "pattern": "f32",
+  "type": "gray32Float",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-float16-zlib-fpred-le.tif",
+  "pattern": "f32",
+  "type": "gray32Float",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-gray16-zlib-pred-be.tif",
+  "pattern": "p16",
+  "type": "gray16",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-float32-zlib-fpred-be.tif",
+  "pattern": "f32",
+  "type": "gray32Float",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-float64-zlib-fpred-be.tif",
+  "pattern": "f32",
+  "type": "gray32Float",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-float16-zlib-fpred-be.tif",
+  "pattern": "f32",
+  "type": "gray32Float",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-gray8-zlib.tif",
+  "pattern": "p8",
+  "type": "gray8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-gray8-tiles-zlib-be.tif",
+  "pattern": "p8",
+  "type": "gray8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-float32-tiles-zlib-fpred.tif",
+  "pattern": "f32",
+  "type": "gray32Float",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-float64-none-be.tif",
+  "pattern": "f32",
+  "type": "gray32Float",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-float16-none.tif",
+  "pattern": "f32",
+  "type": "gray32Float",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-rgb-zlib-pred.tif",
+  "pattern": "rgb",
+  "type": "rgb8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-rgb-planar-zlib-be.tif",
+  "pattern": "rgb",
+  "type": "rgb8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-rgb48-none.tif",
+  "pattern": "p16",
+  "type": "gray16",
+  "planes": 3,
+  "width": 37,
+  "height": 23,
+  "channels": 3
+ },
+ {
+  "file": "tf-rgb48-lzw-pred-be.tif",
+  "pattern": "p16",
+  "type": "gray16",
+  "planes": 3,
+  "width": 37,
+  "height": 23,
+  "channels": 3
+ },
+ {
+  "file": "tf-rgb48-planar-zlib.tif",
+  "pattern": "p16",
+  "type": "gray16",
+  "planes": 3,
+  "width": 37,
+  "height": 23,
+  "channels": 3
+ },
+ {
+  "file": "tf-rgb48-tiles-zlib-pred.tif",
+  "pattern": "p16",
+  "type": "gray16",
+  "planes": 3,
+  "width": 37,
+  "height": 23,
+  "channels": 3
+ },
+ {
+  "file": "tf-rgba64-none-be.tif",
+  "pattern": "p16",
+  "type": "gray16",
+  "planes": 4,
+  "width": 37,
+  "height": 23,
+  "channels": 4
+ },
+ {
+  "file": "tf-pages-rgb48-zlib.tif",
+  "pattern": "p16",
+  "type": "gray16",
+  "planes": 6,
+  "width": 37,
+  "height": 23,
+  "channels": 3
+ },
+ {
+  "file": "tf-bigtiff-gray16-none.tif",
+  "pattern": "p16",
+  "type": "gray16",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-bigtiff-float32-zlib-fpred-be.tif",
+  "pattern": "f32",
+  "type": "gray32Float",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-bigtiff-rgb-tiles-lzw.tif",
+  "pattern": "rgb",
+  "type": "rgb8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "tf-bigtiff-pages-gray8-zlib-be.tif",
+  "pattern": "p8",
+  "type": "gray8",
+  "planes": 3,
+  "width": 37,
+  "height": 23
+ },
+ {
   "file": "im-gray8-lzw-tiles.tif",
   "pattern": "p8",
   "type": "gray8",
@@ -276,6 +482,30 @@
  },
  {
   "file": "im-rgb-lzw.tif",
+  "pattern": "rgb",
+  "type": "rgb8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "im-gray8-zip.tif",
+  "pattern": "p8",
+  "type": "gray8",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "im-gray16-zip-pred-be.tif",
+  "pattern": "p16",
+  "type": "gray16",
+  "planes": 1,
+  "width": 37,
+  "height": 23
+ },
+ {
+  "file": "im-rgb-zip-tiles.tif",
   "pattern": "rgb",
   "type": "rgb8",
   "planes": 1,

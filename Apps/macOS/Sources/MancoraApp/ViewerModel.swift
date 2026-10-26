@@ -5,37 +5,117 @@ import MancoraIO
 import Observation
 import UniformTypeIdentifiers
 
-/// State for one viewer window: the open image, the position shown, and the
-/// rendered bitmap.
+/// What a viewer window should open: a file, read in full or as a virtual stack.
+struct OpenRequest: Codable, Hashable {
+    var url: URL
+    var virtual = false
+}
+
+/// State for one viewer window: the open image, the position shown, its
+/// display settings and the rendered bitmap.
 @Observable
 final class ViewerModel {
+    enum Zoom: Equatable {
+        case fit
+        case scale(Double)
+    }
+
     private(set) var image: Hyperstack?
     private(set) var rendered: CGImage?
+    private(set) var fileURL: URL?
+    private(set) var isBusy = false
     var errorMessage: String?
     var channel = 0
     var slice = 0
     var frame = 0
+    var zoom = Zoom.fit
+    /// The pixel under the pointer, as ImageJ's status bar shows it.
+    private(set) var pointerText: String?
 
-    func presentOpenPanel() {
+    @ObservationIgnored private var autoState = BrightnessContrast.AutoState()
+    @ObservationIgnored private var renderTask: Task<Void, Never>?
+
+    var hasImage: Bool { image != nil }
+
+    // MARK: Opening and saving
+
+    func presentOpenPanel(virtual: Bool = false) -> URL? {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.tiff]
         panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        open(url)
+        panel.title = virtual ? "Open as Virtual Stack" : "Open"
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        return url
     }
 
-    func open(_ url: URL) {
-        do {
-            image = try TIFFImporter.read(path: url.path)
-            channel = 0
-            slice = 0
-            frame = 0
-            errorMessage = nil
-            render()
-        } catch {
-            errorMessage = "\(error)"
+    func open(_ request: OpenRequest) {
+        isBusy = true
+        let path = request.url.path, virtual = request.virtual
+        Task {
+            // Large files take a while to decode; keep the window responsive.
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<Hyperstack, MancoraIOError> in
+                do throws(MancoraIOError) {
+                    return .success(try TIFFImporter.read(path: path, options: .init(virtual: virtual)))
+                } catch {
+                    return .failure(error)
+                }
+            }.value
+            isBusy = false
+            switch result {
+            case .success(let image):
+                show(image, from: request.url)
+            case .failure(let error):
+                errorMessage = error.description
+            }
         }
     }
+
+    func show(_ image: Hyperstack, from url: URL?) {
+        self.image = image
+        fileURL = url
+        channel = 0
+        slice = 0
+        frame = 0
+        zoom = .fit
+        autoState.reset()
+        render()
+    }
+
+    func presentSavePanel() {
+        guard let image else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.tiff]
+        let base = (image.title as NSString).deletingPathExtension
+        panel.nameFieldStringValue = (base.isEmpty ? "Untitled" : base) + ".tif"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        save(to: url)
+    }
+
+    /// Saves as an ImageJ-compatible TIFF that ImageJ and Fiji reopen as the same image.
+    func save(to url: URL) {
+        guard let image else { return }
+        isBusy = true
+        let path = url.path
+        Task {
+            let error = await Task.detached(priority: .userInitiated) { () -> MancoraIOError? in
+                do throws(MancoraIOError) {
+                    try TIFFExporter.write(image, to: path)
+                    return nil
+                } catch {
+                    return error
+                }
+            }.value
+            isBusy = false
+            if let error {
+                errorMessage = error.description
+            } else {
+                self.image?.title = url.lastPathComponent
+                fileURL = url
+            }
+        }
+    }
+
+    // MARK: LUTs
 
     func presentLUTPanel() {
         let panel = NSOpenPanel()
@@ -53,6 +133,15 @@ final class ViewerModel {
         }
     }
 
+    func apply(_ lut: LUT) {
+        guard var image, image.pixelType.usesLUT else { return }
+        var display = image.channels[channel]
+        display.lut = lut
+        image.setDisplay(display, forChannel: channel)
+        self.image = image
+        render()
+    }
+
     /// The LUTs shipped inside Mancora.app (`Contents/Resources/LUTs`);
     /// empty when running unbundled with `swift run`.
     static let bundledLUTDirectory = Bundle.main.url(forResource: "LUTs", withExtension: nil)
@@ -67,34 +156,136 @@ final class ViewerModel {
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }()
 
-    /// Decodes and renders an image without showing any UI.
-    static func smokeTest(path: String) -> Bool {
-        guard let image = try? TIFFImporter.read(path: path) else { return false }
-        let pixels = DisplayMapper.render(image)
-        return makeCGImage(pixels, width: image.width, height: image.height) != nil
+    // MARK: Brightness and contrast
+
+    /// The plane shown for the current channel, slice and frame.
+    var currentPlane: Plane? {
+        image?.plane(channel: channel, slice: slice, frame: frame)
     }
 
-    func apply(_ lut: LUT) {
+    var canAdjustContrast: Bool { image?.pixelType.usesLUT ?? false }
+
+    var displayRange: ClosedRange<Double> {
+        image.map { $0.channels[min(channel, $0.channels.count - 1)].displayRange } ?? 0...255
+    }
+
+    /// Slider limits: 0–255 for 8-bit data, otherwise the plane's values and
+    /// the current range, whichever is wider (like ImageJ's B&C dialog).
+    var sliderBounds: ClosedRange<Double> {
+        guard let image else { return 0...255 }
+        if image.pixelType == .gray8 { return 0...255 }
+        var low = displayRange.lowerBound, high = displayRange.upperBound
+        if let values = currentPlane?.valueRange() {
+            if values.lowerBound.isFinite { low = min(low, values.lowerBound) }
+            if values.upperBound.isFinite { high = max(high, values.upperBound) }
+        }
+        if !low.isFinite { low = 0 }
+        if !high.isFinite { high = low + 1 }
+        return low < high ? low...high : low...(low + 1)
+    }
+
+    func setDisplayRange(_ range: ClosedRange<Double>) {
         guard var image, image.pixelType.usesLUT else { return }
         var display = image.channels[channel]
-        display.lut = lut
+        display.displayRange = range
         image.setDisplay(display, forChannel: channel)
         self.image = image
         render()
     }
 
+    /// The B&C dialog's Auto button: each press saturates fewer pixels, as in ImageJ.
+    func autoContrast() {
+        guard let plane = currentPlane else { return }
+        do {
+            let result = try autoState.press(plane)
+            if let range = result.displayRange { setDisplayRange(range) }
+        } catch {
+            errorMessage = "Auto contrast isn't available for this image (\(error))."
+        }
+    }
+
+    func resetContrast() {
+        autoState.reset()
+        guard let plane = currentPlane, let range = BrightnessContrast.resetRange(for: plane) else { return }
+        setDisplayRange(range)
+    }
+
+    func setCompositeMode(_ mode: CompositeMode) {
+        image?.compositeMode = mode
+        render()
+    }
+
+    func setChannelVisible(_ visible: Bool, channel c: Int) {
+        guard var image else { return }
+        var display = image.channels[c]
+        display.isVisible = visible
+        image.setDisplay(display, forChannel: c)
+        self.image = image
+        render()
+    }
+
+    /// Called when the channel, slice or frame changes.
+    func positionChanged() {
+        autoState.reset()
+        render()
+    }
+
+    // MARK: Pointer readout
+
+    func pointerMoved(to point: CGPoint?, displaySize: CGSize) {
+        guard let image, let point, displaySize.width > 0, displaySize.height > 0 else {
+            pointerText = nil
+            return
+        }
+        let x = Int(point.x / displaySize.width * CGFloat(image.width))
+        let y = Int(point.y / displaySize.height * CGFloat(image.height))
+        guard (0..<image.width).contains(x), (0..<image.height).contains(y), let plane = currentPlane else {
+            pointerText = nil
+            return
+        }
+        let cal = image.calibration
+        var text = "x=\(x), y=\(y)"
+        if cal.isSpatiallyCalibrated {
+            let cx = (Double(x) - cal.xOrigin) * cal.pixelWidth, cy = (Double(y) - cal.yOrigin) * cal.pixelHeight
+            text = "x=\(Self.short(cx)) \(cal.unit), y=\(Self.short(cy)) \(cal.unit) (\(x), \(y))"
+        }
+        let index = y * image.width + x
+        if case .rgb8(let pixels) = plane {
+            let c = pixels[index]
+            text += ", value=\((c >> 16) & 0xFF),\((c >> 8) & 0xFF),\(c & 0xFF)"
+        } else {
+            let raw = plane.value(at: index)
+            let calibrated = cal.calibratedValue(raw)
+            text += ", value=\(Self.short(calibrated))" + (calibrated == raw ? "" : " (\(Self.short(raw)))")
+        }
+        pointerText = text
+    }
+
+    private static func short(_ v: Double) -> String {
+        v == v.rounded() && abs(v) < 1e9 ? String(Int(v)) : String(format: "%.4g", v)
+    }
+
+    // MARK: Rendering
+
     func render() {
+        renderTask?.cancel()
         guard let image else {
             rendered = nil
             return
         }
-        let pixels = DisplayMapper.render(image, channel: channel, slice: slice, frame: frame)
-        rendered = Self.makeCGImage(pixels, width: image.width, height: image.height)
+        let (c, z, t) = (channel, slice, frame)
+        renderTask = Task {
+            let pixels = await Task.detached(priority: .userInitiated) {
+                DisplayMapper.render(image, channel: c, slice: z, frame: t)
+            }.value
+            guard !Task.isCancelled else { return }
+            rendered = Self.makeCGImage(pixels, width: image.width, height: image.height)
+        }
     }
 
     /// Wraps DisplayMapper output (0xAARRGGBB words, BGRA in memory) without
     /// converting it.
-    static func makeCGImage(_ pixels: [UInt32], width: Int, height: Int) -> CGImage? {
+    nonisolated static func makeCGImage(_ pixels: [UInt32], width: Int, height: Int) -> CGImage? {
         let data = pixels.withUnsafeBytes { Data($0) }
         guard let provider = CGDataProvider(data: data as CFData),
             let space = CGColorSpace(name: CGColorSpace.sRGB)
@@ -115,5 +306,25 @@ final class ViewerModel {
             shouldInterpolate: false,
             intent: .defaultIntent
         )
+    }
+
+    // MARK: Smoke test
+
+    /// Checks what a packaged app needs without showing any UI: decoding and
+    /// rendering (in full and as a virtual stack), saving a TIFF, and
+    /// reading it back unchanged.
+    static func smokeTest(path: String) -> Bool {
+        guard let image = try? TIFFImporter.read(path: path),
+            let lazy = try? TIFFImporter.read(path: path, options: .init(virtual: true)),
+            lazy.stack.isVirtual, lazy.stack == image.stack,
+            makeCGImage(DisplayMapper.render(image), width: image.width, height: image.height) != nil
+        else { return false }
+        let copy = FileManager.default.temporaryDirectory.appendingPathComponent("mancora-smoke-\(UUID().uuidString).tif")
+        defer { try? FileManager.default.removeItem(at: copy) }
+        guard (try? TIFFExporter.write(image, to: copy.path)) != nil,
+            let reread = try? TIFFImporter.read(path: copy.path)
+        else { return false }
+        return reread.stack == image.stack && reread.dimensions == image.dimensions
+            && reread.channels.map(\.displayRange) == image.channels.map(\.displayRange)
     }
 }

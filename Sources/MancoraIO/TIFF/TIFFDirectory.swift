@@ -1,4 +1,4 @@
-/// TIFF tag numbers Mancora reads.
+/// TIFF tag numbers Mancora reads and writes.
 enum TIFFTag {
     static let newSubfileType: UInt16 = 254
     static let imageWidth: UInt16 = 256
@@ -22,6 +22,13 @@ enum TIFFTag {
     static let tileOffsets: UInt16 = 324
     static let tileByteCounts: UInt16 = 325
     static let sampleFormat: UInt16 = 339
+    static let software: UInt16 = 305
+    static let dateTime: UInt16 = 306
+    static let artist: UInt16 = 315
+    static let hostComputer: UInt16 = 316
+    /// ImageJ's private metadata: byte counts, then the records themselves.
+    static let imageJMetadataCounts: UInt16 = 50838
+    static let imageJMetadata: UInt16 = 50839
 }
 
 /// One IFD entry: where its values live and how they're encoded.
@@ -39,37 +46,59 @@ struct TIFFEntry: Sendable {
         case 3, 8: 2  // SHORT, SSHORT
         case 4, 9, 11, 13: 4  // LONG, SLONG, FLOAT, IFD
         case 5, 10, 12: 8  // RATIONAL, SRATIONAL, DOUBLE
+        case 16, 17, 18: 8  // BigTIFF LONG8, SLONG8, IFD8
         default: nil
         }
     }
 }
 
-/// A parsed image file directory (classic TIFF; BigTIFF arrives in Phase 1).
+/// A parsed image file directory, classic TIFF or BigTIFF.
+///
+/// Classic entries are 12 bytes with values of up to 4 bytes inline;
+/// BigTIFF entries are 20 bytes with 64-bit counts and offsets and values of
+/// up to 8 bytes inline.
 struct TIFFDirectory: Sendable {
     let entries: [UInt16: TIFFEntry]
     /// Offset of the next IFD, 0 at the end of the chain.
     let nextOffset: Int
 
-    init(reader: ByteReader, offset: Int) throws(MancoraIOError) {
-        let entryCount = Int(try reader.u16(at: offset))
-        try reader.check(offset + 2, entryCount * 12 + 4)
+    init(reader: ByteReader, offset: Int, bigTIFF: Bool = false) throws(MancoraIOError) {
+        let countBytes = bigTIFF ? 8 : 2
+        let entryBytes = bigTIFF ? 20 : 12
+        let inlineBytes = bigTIFF ? 8 : 4
+        let rawCount = bigTIFF ? try reader.u64(at: offset) : UInt64(try reader.u16(at: offset))
+        guard rawCount <= UInt64(reader.count / entryBytes) else {
+            throw .invalidFormat("IFD at \(offset) claims \(rawCount) entries")
+        }
+        let entryCount = Int(rawCount)
+        try reader.check(offset + countBytes, entryCount * entryBytes + inlineBytes)
         var entries: [UInt16: TIFFEntry] = [:]
         for i in 0..<entryCount {
-            let base = offset + 2 + i * 12
+            let base = offset + countBytes + i * entryBytes
             let tag = try reader.u16(at: base)
             let type = try reader.u16(at: base + 2)
-            let count = Int(try reader.u32(at: base + 4))
+            let count = try Self.offset(reader, at: base + 4, bigTIFF: bigTIFF)
             // Unknown field types can't be sized; skip them as libtiff does.
             guard let size = TIFFEntry.size(ofType: type) else { continue }
             let (total, overflow) = count.multipliedReportingOverflow(by: size)
             guard !overflow else { throw .invalidFormat("tag \(tag) has an impossible count \(count)") }
-            let valueOffset = total <= 4 ? base + 8 : Int(try reader.u32(at: base + 8))
+            let valueField = base + 4 + inlineBytes
+            let valueOffset = total <= inlineBytes ? valueField : try Self.offset(reader, at: valueField, bigTIFF: bigTIFF)
             if entries[tag] == nil {
                 entries[tag] = TIFFEntry(tag: tag, type: type, count: count, valueOffset: valueOffset)
             }
         }
         self.entries = entries
-        self.nextOffset = Int(try reader.u32(at: offset + 2 + entryCount * 12))
+        self.nextOffset = try Self.offset(reader, at: offset + countBytes + entryCount * entryBytes, bigTIFF: bigTIFF)
+    }
+
+    /// A 32-bit (classic) or 64-bit (BigTIFF) count or offset field.
+    static func offset(_ reader: ByteReader, at position: Int, bigTIFF: Bool) throws(MancoraIOError) -> Int {
+        guard bigTIFF else { return Int(try reader.u32(at: position)) }
+        let value = try reader.u64(at: position)
+        // Anything past Int.max can't be a position in an in-memory file.
+        guard value <= UInt64(Int.max) else { throw .invalidFormat("offset \(value) at \(position) is out of range") }
+        return Int(value)
     }
 
     func has(_ tag: UInt16) -> Bool { entries[tag] != nil }
@@ -90,6 +119,11 @@ struct TIFFDirectory: Sendable {
             case 8: values.append(Int(Int16(bitPattern: try reader.u16(at: at))))
             case 4, 13: values.append(Int(try reader.u32(at: at)))
             case 9: values.append(Int(Int32(bitPattern: try reader.u32(at: at))))
+            case 16, 18:
+                let v = try reader.u64(at: at)
+                guard v <= UInt64(Int.max) else { throw .invalidFormat("tag \(tag) value \(v) is out of range") }
+                values.append(Int(v))
+            case 17: values.append(Int(Int64(bitPattern: try reader.u64(at: at))))
             default: throw .invalidFormat("tag \(tag) has non-integer type \(e.type)")
             }
         }

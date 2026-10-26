@@ -61,6 +61,14 @@ for attempt in 1 2 3; do
     sleep 5
 done
 hdiutil verify "$dmg"
+
+echo "==> Update install test"
+# Install the DMG's app over a copy of this one, as Check for Updates does.
+mkdir "$work/installed"
+ditto "$app" "$work/installed/Mancora.app"
+"$app/Contents/MacOS/Mancora" --install-test "$dmg" "$work/installed/Mancora.app"
+codesign --verify --strict "$work/installed/Mancora.app"
+[[ "$(defaults read "$work/installed/Mancora.app/Contents/Info.plist" CFBundleShortVersionString)" == "$version" ]]
 [[ "$identity" != "-" ]] && codesign --sign "$identity" --timestamp "$dmg"
 
 echo "==> $dmg"

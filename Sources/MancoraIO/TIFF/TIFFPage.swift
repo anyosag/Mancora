@@ -21,9 +21,16 @@ struct TIFFPage: Sendable {
     let chunkByteCounts: [Int]?
     let colorMap: [UInt16]?
     let description: String?
+    /// ImageJ's private metadata, when the file has it (first IFD only).
+    let imageJMetadata: ImageJMetadata?
+    /// What ImageJ shows as the Info of a file without its own: the
+    /// ImageDescription (unless ImageJ wrote it) and the Software, DateTime,
+    /// Artist and HostComputer tags, as `Name: value` lines.
+    let tiffInfo: String?
     let xResolution: Double?
     let yResolution: Double?
-    let resolutionUnit: Int
+    /// `nil` without a ResolutionUnit tag (which ImageJ treats as uncalibrated).
+    let resolutionUnit: Int?
 
     init(directory d: TIFFDirectory, reader r: ByteReader) throws(MancoraIOError) {
         guard let width = try d.integer(TIFFTag.imageWidth, r), let height = try d.integer(TIFFTag.imageLength, r),
@@ -71,37 +78,64 @@ struct TIFFPage: Sendable {
         let rps = try d.integer(TIFFTag.rowsPerStrip, r) ?? height
         rowsPerStrip = rps <= 0 ? height : min(rps, height)
 
-        if photometric == 3, bitsPerSample == 8, samplesPerPixel == 1,
+        // Like ImageJ, read a 768-entry ColorMap whatever the photometric
+        // interpretation; it's the LUT of single-sample images.
+        if samplesPerPixel == 1, [8, 16, 32].contains(bitsPerSample),
             let map = try d.integers(TIFFTag.colorMap, r), map.count == 768
         {
             colorMap = map.map { UInt16(truncatingIfNeeded: $0) }
         } else {
             colorMap = nil
         }
-        // ImageJ ignores descriptions of 3 characters or fewer.
-        let text = try d.string(TIFFTag.imageDescription, r)
-        description = (text?.count ?? 0) > 3 ? text : nil
+        // ImageJ ignores text tags of 3 characters or fewer.
+        func text(_ tag: UInt16) throws(MancoraIOError) -> String? {
+            let value = try d.string(tag, r)
+            return (value?.count ?? 0) > 3 ? value : nil
+        }
+        description = try text(TIFFTag.imageDescription)
+        var infoLines: [String] = []
+        if let description, !description.hasPrefix("ImageJ") { infoLines.append("ImageDescription: \(description)") }
+        for (tag, name) in [
+            (TIFFTag.software, "Software"), (TIFFTag.dateTime, "DateTime"), (TIFFTag.artist, "Artist"),
+            (TIFFTag.hostComputer, "HostComputer"),
+        ] {
+            if let value = try text(tag) { infoLines.append("\(name): \(value)") }
+        }
+        tiffInfo = infoLines.isEmpty ? nil : infoLines.map { $0 + "\n" }.joined()
+
+        if let counts = try d.integers(TIFFTag.imageJMetadataCounts, r), let entry = d.entries[TIFFTag.imageJMetadata],
+            let data = try? r.slice(at: entry.valueOffset, count: entry.count)
+        {
+            imageJMetadata = ImageJMetadata(counts: counts, data: data, bigEndian: r.bigEndian)
+        } else {
+            imageJMetadata = nil
+        }
         xResolution = try d.rational(TIFFTag.xResolution, r)
         yResolution = try d.rational(TIFFTag.yResolution, r)
-        resolutionUnit = try d.integer(TIFFTag.resolutionUnit, r) ?? 2
+        resolutionUnit = try d.integer(TIFFTag.resolutionUnit, r)
 
         try validate()
     }
 
-    /// The Mancora pixel type these samples decode to.
+    /// The Mancora pixel type these samples decode to. 16-bit RGB becomes
+    /// three 16-bit planes (channels), as ImageJ opens it.
     var pixelType: PixelType {
-        if samplesPerPixel >= 3 { return .rgb8 }
+        if samplesPerPixel >= 3 { return bitsPerSample == 16 ? .gray16 : .rgb8 }
         switch bitsPerSample {
-        case 16: return .gray16
-        case 32: return .gray32Float
+        case 16: return sampleFormat == .float ? .gray32Float : .gray16
+        case 32, 64: return .gray32Float
         default: return .gray8
         }
     }
 
+    /// Planes one page decodes to: one per sample for 16-bit RGB(A), as
+    /// ImageJ opens them as a 3- or 4-channel composite; otherwise 1.
+    var planesPerPage: Int { samplesPerPixel >= 3 && bitsPerSample == 16 ? samplesPerPixel : 1 }
+
     var bytesPerSample: Int { max(bitsPerSample / 8, 1) }
 
-    /// Bytes of one decoded plane as stored in Mancora.
-    var decodedPlaneBytes: Int { width * height * pixelType.bytesPerPixel }
+    /// Bytes of one page's decoded planes as stored in Mancora.
+    var decodedPlaneBytes: Int { width * height * pixelType.bytesPerPixel * planesPerPage }
 
     /// Pages that can be stacked together must agree on these.
     var stackSignature: [Int] {
@@ -111,25 +145,24 @@ struct TIFFPage: Sendable {
     private func validate() throws(MancoraIOError) {
         switch (bitsPerSample, samplesPerPixel) {
         case (1, 1), (8, 1), (16, 1), (32, 1): break
-        case (8, 3), (8, 4): break
-        case (16, 3), (16, 4): throw .unsupported("48-bit RGB (arrives in Phase 1)")
+        case (64, 1) where sampleFormat == .float: break
+        case (8, 3), (8, 4), (16, 3), (16, 4): break
         default: throw .unsupported("\(bitsPerSample)-bit samples with \(samplesPerPixel) samples per pixel")
         }
-        if bitsPerSample == 16, sampleFormat == .float { throw .unsupported("16-bit float samples") }
-        if bitsPerSample == 1, tileSize != nil { throw .unsupported("tiled 1-bit images") }
-        if bitsPerSample == 1, compression != 1, compression != 32773 {
-            throw .unsupported("1-bit images with compression \(compression)")
+        if bitsPerSample == 16, sampleFormat == .float, samplesPerPixel > 1 {
+            throw .unsupported("16-bit float color images")
         }
+        if bitsPerSample == 1, tileSize != nil { throw .unsupported("tiled 1-bit images") }
         switch compression {
-        case 1, 5, 32773: break
-        case 8, 32946: throw .unsupported("Deflate compression (arrives in Phase 1)")
+        case 1, 5, 8, 32773, 32946: break
         case 7: throw .unsupported("JPEG compression")
         default: throw .unsupported("compression scheme \(compression)")
         }
         switch predictor {
         case 1: break
-        case 2 where bitsPerSample >= 8: break
-        default: throw .unsupported("predictor \(predictor)")
+        case 2 where bitsPerSample >= 8 && sampleFormat != .float: break
+        case 3 where sampleFormat == .float: break
+        default: throw .unsupported("predictor \(predictor) with \(bitsPerSample)-bit samples")
         }
         // Like ImageJ, read any 3- or 4-sample 8-bit image as RGB, except
         // CMYK and YCbCr, whose values would need converting.

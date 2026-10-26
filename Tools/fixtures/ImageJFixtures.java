@@ -6,7 +6,8 @@
 // Writes:
 //   Tests/Fixtures/luts-golden.json   every bundled LUT as ImageJ loads it,
 //                                     plus ImageJ's built-in LUTs
-//   Tests/Fixtures/tiff/ij-*.tif      TIFFs saved by ImageJ's TiffEncoder
+//   Tests/Fixtures/tiff/ij-*.tif      TIFFs saved by ImageJ's TiffEncoder,
+//                                     including every metadata record type
 //
 // Pixel patterns must match Tests/MancoraIOTests/Patterns.swift.
 
@@ -14,6 +15,8 @@ import ij.IJ;
 import ij.ImagePlus;
 import ij.ImageStack;
 import ij.CompositeImage;
+import ij.Prefs;
+import ij.gui.*;
 import ij.io.FileSaver;
 import ij.measure.Calibration;
 import ij.plugin.LutLoader;
@@ -37,6 +40,10 @@ public class ImageJFixtures {
         writeStack8(new File(tiffDir, "ij-stack-8bit.tif"));
         writeFloat(new File(tiffDir, "ij-32bit-float.tif"));
         writeRGB(new File(tiffDir, "ij-rgb.tif"));
+        writeMetadata(new File(tiffDir, "ij-metadata-be.tif"), false);
+        writeMetadata(new File(tiffDir, "ij-metadata-le.tif"), true);
+        writeLut16(new File(tiffDir, "ij-16bit-lut-inverted.tif"));
+        writeSigned16(new File(tiffDir, "ij-16bit-signed.tif"));
         System.out.println("ImageJ " + IJ.getVersion() + " fixtures written");
     }
 
@@ -151,5 +158,82 @@ public class ImageJFixtures {
             for (int x = 0; x < W; x++)
                 cp.set(x, y, ((x * 8) & 255) << 16 | ((y * 10) & 255) << 8 | ((x * 3 + y * 5) & 255));
         new FileSaver(new ImagePlus("rgb", cp)).saveAsTiff(out.getPath());
+    }
+
+    /**
+     * c=2, z=3 16-bit composite with every kind of ImageJ metadata: Info,
+     * slice labels, per-channel display ranges and LUTs, a selection, an
+     * overlay, image properties, and a value calibration. Pixels follow
+     * Patterns.hyperstack.
+     */
+    static void writeMetadata(File out, boolean intelByteOrder) {
+        int c = 2, z = 3;
+        ImagePlus imp = IJ.createHyperStack("metadata", W, H, c, z, 1, 16);
+        ImageStack stack = imp.getStack();
+        for (int k = 0; k < c * z; k++) {
+            short[] px = (short[]) stack.getPixels(k + 1);
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++)
+                    px[y * W + x] = (short) hyper(k, x, y);
+            stack.setSliceLabel(k == 4 ? null : "plane " + (k + 1) + (k == 1 ? " \u00b5m \u2713" : ""), k + 1);
+        }
+        imp.setProperty("Info", "Acquired by Mancora fixtures\nObjective: 63\u00d7 / 1.4\nGr\u00fc\u00dfe \u2192 \u03bcm");
+        imp.setProp("Experiment", "MC-42");
+        imp.setProp("Operator", "fixture \u00e9t\u00e9");
+        Calibration cal = imp.getCalibration();
+        cal.pixelWidth = 0.125;
+        cal.pixelHeight = 0.125;
+        cal.pixelDepth = 0.5;
+        cal.setUnit("\u00b5m");
+        cal.xOrigin = 4;
+        cal.yOrigin = 2.5;
+        cal.setFunction(Calibration.STRAIGHT_LINE, new double[] {-10.0, 0.5}, "nM");
+        CompositeImage ci = new CompositeImage(imp, IJ.COLOR);
+        ci.setChannelLut(LUT.createLutFromColor(java.awt.Color.magenta), 1);
+        ci.setChannelLut(new LUT(LutLoader.getLut("Fire"), 0, 0), 2);
+        ci.setPosition(1, 1, 1);
+        ci.setDisplayRange(5, 1500);
+        ci.setPosition(2, 1, 1);
+        ci.setDisplayRange(1000, 1200);
+        ci.setPosition(1, 1, 1);
+        ci.setRoi(new OvalRoi(3, 4, 10, 7));
+        Overlay overlay = new Overlay();
+        Roi box = new Roi(1, 2, 8, 5);
+        box.setName("box");
+        box.setStrokeColor(java.awt.Color.yellow);
+        overlay.add(box);
+        overlay.add(new Line(0, 0, 20, 15));
+        PolygonRoi polygon = new PolygonRoi(new int[] {2, 12, 9}, new int[] {3, 4, 15}, 3, Roi.POLYGON);
+        polygon.setPosition(2, 3, 1);
+        overlay.add(polygon);
+        ci.setOverlay(overlay);
+        boolean saved = Prefs.intelByteOrder;
+        Prefs.intelByteOrder = intelByteOrder;
+        new FileSaver(ci).saveAsTiff(out.getPath());
+        Prefs.intelByteOrder = saved;
+    }
+
+    /** A single-channel 16-bit image with an inverted Fire LUT (saved as a ColorMap). */
+    static void writeLut16(File out) {
+        ShortProcessor sp = new ShortProcessor(W, H);
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++)
+                sp.set(x, y, (x * 311 + y * 1009) & 0xffff);
+        LUT fire = new LUT(LutLoader.getLut("Fire"), 0, 0);
+        sp.setLut(fire.createInvertedLut());
+        sp.setMinAndMax(100, 30000);
+        new FileSaver(new ImagePlus("lut16", sp)).saveAsTiff(out.getPath());
+    }
+
+    /** Signed 16-bit data: ImageJ stores value + 32768 with a -32768 offset calibration. */
+    static void writeSigned16(File out) {
+        ShortProcessor sp = new ShortProcessor(W, H);
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++)
+                sp.set(x, y, 32768 + (x - 16) * 100 + y);
+        ImagePlus imp = new ImagePlus("signed", sp);
+        imp.getCalibration().setSigned16BitCalibration();
+        sp.resetMinAndMax();
+        new FileSaver(imp).saveAsTiff(out.getPath());
     }
 }

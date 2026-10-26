@@ -29,6 +29,19 @@ public struct ImageJDescription: Sendable, Equatable {
     public var zOrigin: Double? { double("zorigin") }
     public var invertY: Bool { properties["inverty"] == "true" }
     public var loop: Bool { properties["loop"] == "true" }
+    public var fps: Double? { double("fps") }
+    public var yUnit: String? { properties["yunit"] }
+    public var zUnit: String? { properties["zunit"] }
+    /// ImageJ's calibration function code (`cf`; 0 is a straight line).
+    public var calibrationFunction: Int? { int("cf") }
+    /// `c0`, `c1`, … up to the first missing one; ImageJ needs at least two.
+    public var coefficients: [Double] {
+        var values: [Double] = []
+        while values.count < 5, let c = double("c\(values.count)") { values.append(c) }
+        return values.count >= 2 ? values : []
+    }
+    /// The calibrated value unit (`vunit`).
+    public var valueUnit: String? { properties["vunit"] }
 
     /// The saved display range, unless both ends are 0 (ImageJ's "unset").
     public var displayRange: ClosedRange<Double>? {

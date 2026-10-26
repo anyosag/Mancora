@@ -13,6 +13,9 @@ var appIconResource: UnsafePointer<WCHAR>? { UnsafePointer(bitPattern: 1) }
 let messageBoxOK: UINT = 0x0000_0000
 let messageBoxIconError: UINT = 0x0000_0010
 let messageBoxIconInformation: UINT = 0x0000_0040
+let messageBoxYesNo: UINT = 0x0000_0004
+let dialogYes: Int32 = 6  // IDYES
+var waitCursor: UnsafePointer<WCHAR>? { UnsafePointer(bitPattern: 32514) }  // IDC_WAIT
 
 extension String {
     /// NUL-terminated UTF-16, for the Win32 "W" functions.

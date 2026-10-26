@@ -25,7 +25,7 @@ func firstMismatch(_ actual: Plane, _ expected: Plane, width: Int) -> String? {
 @Suite("TIFF fixtures from independent writers")
 struct TIFFFixtureTests {
     @Test func manifestPresent() {
-        #expect(Fixtures.tiffManifest.count >= 30)
+        #expect(Fixtures.tiffManifest.count >= 60)
     }
 
     @Test("Fixture decodes to its pattern", arguments: Fixtures.tiffManifest)
@@ -35,6 +35,8 @@ struct TIFFFixtureTests {
         #expect(image.height == entry.height)
         #expect(image.pixelType.rawValue == entry.type)
         try #require(image.stack.count == entry.planes)
+        #expect(image.dimensions.channels == entry.channels ?? 1)
+        if image.dimensions.channels > 1 { #expect(image.compositeMode == .composite) }
         for k in 0..<entry.planes {
             let expected = try #require(
                 Patterns.plane(entry.pattern, width: entry.width, height: entry.height, k: k,
@@ -137,12 +139,20 @@ struct TIFFRobustnessTests {
         #expect(throws: MancoraIOError.self) { try TIFFImporter.decode([0x49, 0x49], title: "x") }
     }
 
-    @Test func bigTIFFIsReportedAsUnsupported() {
+    @Test func malformedBigTIFFHeaders() {
+        // A classic layout with the BigTIFF magic: the offset size reads as 24.
         var b = TIFFBuilder.gray8(width: 4, height: 4)
         b.magic = 43
-        #expect(throws: MancoraIOError.unsupported("BigTIFF (arrives in Phase 1)")) {
+        #expect(throws: MancoraIOError.invalidFormat("BigTIFF header with an unsupported offset size")) {
             try TIFFImporter.decode(b.build(), title: "x")
         }
+        let header: [UInt8] = [0x49, 0x49, 43, 0, 8, 0, 0, 0]
+        // A first IFD that claims more entries than the file could hold.
+        let crowded = header + [16, 0, 0, 0, 0, 0, 0, 0] + [0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0] + [UInt8](repeating: 0, count: 40)
+        #expect(throws: MancoraIOError.self) { try TIFFImporter.decode(crowded, title: "x") }
+        // A first-IFD offset past Int.max.
+        let distant = header + [UInt8](repeating: 0xFF, count: 8)
+        #expect(throws: MancoraIOError.self) { try TIFFImporter.decode(distant, title: "x") }
     }
 
     @Test func minimalImageInBothByteOrders() throws {
@@ -195,6 +205,53 @@ struct TIFFRobustnessTests {
         var b = TIFFBuilder.gray8(width: 4, height: 4)
         b.set(259, 3, [7])
         #expect(throws: MancoraIOError.unsupported("JPEG compression")) { try TIFFImporter.decode(b.build(), title: "x") }
+    }
+
+    @Test func corruptDeflate() throws {
+        // A valid zlib header followed by a block of reserved type 3.
+        var b = TIFFBuilder.gray8(width: 4, height: 4, pixels: [0x78, 0x9C, 0x07, 0x00])
+        b.set(259, 3, [8])
+        b.set(279, 4, [4])
+        #expect(throws: MancoraIOError.self) { try TIFFImporter.decode(b.build(), title: "x") }
+        // A stream that inflates to far more than the strip holds stops at the strip size.
+        var bomb = TIFFBuilder.gray8(width: 4, height: 4)
+        bomb.pixels = Self.zeroBomb
+        bomb.set(259, 3, [8])
+        bomb.set(279, 4, [UInt32(Self.zeroBomb.count)])
+        #expect(try TIFFImporter.decode(bomb.build(), title: "x").stack[0] == .gray8([UInt8](repeating: 0, count: 16)))
+    }
+
+    /// A zlib stream of a million zeros in about 6 KB, built by hand as one
+    /// fixed-Huffman block: a literal 0, then length-258 distance-1 matches.
+    static let zeroBomb: [UInt8] = {
+        var bits = BitWriter()
+        bits.write(1, count: 1)  // BFINAL
+        bits.write(1, count: 2)  // fixed Huffman
+        bits.writeReversed(0b0011_0000, count: 8)  // literal 0
+        for _ in 0..<3876 {
+            bits.writeReversed(0b1100_0101, count: 8)  // length code 285 (258)
+            bits.writeReversed(0, count: 5)  // distance code 0 (1)
+        }
+        bits.writeReversed(0, count: 7)  // end of block (256)
+        return [0x78, 0xDA] + bits.bytes + [0, 0, 0, 0]  // checksum unchecked: decoding stops early
+    }()
+
+    struct BitWriter {
+        var bytes: [UInt8] = []
+        var used = 0
+        /// Writes `count` bits of `value`, least significant first (DEFLATE's header fields).
+        mutating func write(_ value: Int, count: Int) {
+            for i in 0..<count { push((value >> i) & 1) }
+        }
+        /// Writes `count` bits of a Huffman code, most significant first.
+        mutating func writeReversed(_ code: Int, count: Int) {
+            for i in stride(from: count - 1, through: 0, by: -1) { push((code >> i) & 1) }
+        }
+        private mutating func push(_ bit: Int) {
+            if used == 0 { bytes.append(0) }
+            bytes[bytes.count - 1] |= UInt8(bit) << UInt8(used)
+            used = (used + 1) % 8
+        }
     }
 
     @Test func corruptLZW() {

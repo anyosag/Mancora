@@ -117,16 +117,21 @@ struct ImageModelTests {
         let dims = HyperstackDimensions(channels: 2, slices: 3)
         let image = try Hyperstack(title: "t", stack: stack, dimensions: dims)
         #expect(image.channels.map(\.lut.name) == ["Red", "Green"])
-        // Display ranges come from each channel's first plane.
-        #expect(image.channels[0].displayRange == 0...5)
-        #expect(image.channels[1].displayRange == 1...15)
+        // Like ImageJ's CompositeImage.setupLuts, every channel shows the first plane's range.
+        #expect(image.channels.map(\.displayRange) == [0...5, 0...5])
+        // Channels past the eighth are gray.
+        let wide = try Hyperstack(title: "t", stack: stack, dimensions: HyperstackDimensions(channels: 6))
+        #expect(wide.channels.map(\.lut.name) == ["Red", "Green", "Blue", "Grays", "Cyan", "Magenta"])
+        #expect(Hyperstack.defaultChannelLUT(7).name == "Grays" && Hyperstack.defaultChannelLUT(20).name == "Grays")
         #expect(throws: ImageModelError.self) {
             try Hyperstack(title: "t", stack: stack, dimensions: HyperstackDimensions(channels: 4))
         }
     }
 
     @Test func planeRanges() {
-        #expect(Plane.gray32Float([.nan, -2, .infinity, 3]).valueRange() == -2...3)
+        // Like ImageJ's FloatProcessor.findMinAndMax: NaN is skipped, infinities count.
+        #expect(Plane.gray32Float([.nan, -2, .infinity, 3]).valueRange() == -2 ... .infinity)
+        #expect(Plane.gray32Float([.nan, -2, 3]).valueRange() == -2...3)
         #expect(Plane.gray32Float([.nan]).valueRange() == nil)
         #expect(Plane.gray8([]).valueRange() == nil)
         #expect(Plane.rgb8([0xFF10_2030]).value(at: 0) == Double(0x10 + 0x20 + 0x30) / 3)

@@ -1,36 +1,62 @@
 import MancoraCore
 import SwiftUI
 
+/// One viewer window. Each window has its own image, as in ImageJ.
+struct ViewerWindow: View {
+    @Binding var request: OpenRequest?
+    @State private var model = ViewerModel()
+    @State private var showsInspector = true
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        ViewerView(model: model, showsInspector: $showsInspector)
+            .frame(minWidth: 720, minHeight: 520)
+            .focusedSceneValue(\.viewer, model)
+            .task(id: request) {
+                if let request { model.open(request) }
+            }
+            .onOpenURL { url in
+                // Files opened from the Finder: fill this window if it's empty.
+                if model.hasImage {
+                    openWindow(id: "viewer", value: OpenRequest(url: url))
+                } else {
+                    model.open(OpenRequest(url: url))
+                }
+            }
+    }
+}
+
 struct ViewerView: View {
     @Bindable var model: ViewerModel
+    @Binding var showsInspector: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             if let image = model.image, let bitmap = model.rendered {
-                Image(decorative: bitmap, scale: 1)
-                    .interpolation(.none)
-                    .resizable()
-                    .scaledToFit()
-                    .padding()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ImageCanvas(model: model, bitmap: bitmap, imageSize: CGSize(width: image.width, height: image.height))
                 Divider()
-                PositionControls(model: model, dimensions: image.dimensions)
-                    .padding(12)
+                StatusBar(model: model, image: image)
+            } else if model.isBusy {
+                ProgressView("Opening…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView {
                     Label("No Image", systemImage: "photo")
                 } description: {
                     Text("Open a TIFF file to view it.")
                 } actions: {
-                    Button("Open…") { model.presentOpenPanel() }
+                    Button("Open…") {
+                        if let url = model.presentOpenPanel() { model.open(OpenRequest(url: url)) }
+                    }
                 }
             }
         }
         .navigationTitle(model.image?.title ?? "Mancora")
+        .inspector(isPresented: $showsInspector) {
+            DisplayInspector(model: model)
+                .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
+        }
         .toolbar {
-            ToolbarItem {
-                Button("Open…", systemImage: "folder") { model.presentOpenPanel() }
-            }
             ToolbarItem {
                 Menu("LUT", systemImage: "paintpalette") {
                     ForEach(LUT.builtIn, id: \.name) { lut in
@@ -45,11 +71,14 @@ struct ViewerView: View {
                     Divider()
                     Button("Open LUT File…") { model.presentLUTPanel() }
                 }
-                .disabled(!(model.image?.pixelType.usesLUT ?? false))
+                .disabled(!model.canAdjustContrast)
+            }
+            ToolbarItem {
+                Button("Inspector", systemImage: "sidebar.right") { showsInspector.toggle() }
             }
         }
         .alert(
-            "Can't Open File",
+            "Mancora",
             isPresented: Binding(
                 get: { model.errorMessage != nil },
                 set: { if !$0 { model.errorMessage = nil } }
@@ -62,26 +91,251 @@ struct ViewerView: View {
     }
 }
 
-/// Channel, slice and frame steppers, shown only for dimensions above 1.
-struct PositionControls: View {
+/// The image at the current zoom, with nearest-neighbour magnification and
+/// a pixel readout under the pointer.
+struct ImageCanvas: View {
     @Bindable var model: ViewerModel
-    let dimensions: HyperstackDimensions
+    let bitmap: CGImage
+    let imageSize: CGSize
 
     var body: some View {
-        HStack(spacing: 24) {
-            if dimensions.channels > 1 {
-                Stepper("Channel \(model.channel + 1)/\(dimensions.channels)", value: $model.channel, in: 0...(dimensions.channels - 1))
+        GeometryReader { geometry in
+            let scale = displayScale(in: geometry.size)
+            let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+            ScrollView([.horizontal, .vertical]) {
+                Image(decorative: bitmap, scale: 1)
+                    .interpolation(scale >= 1 ? .none : .medium)
+                    .resizable()
+                    .frame(width: size.width, height: size.height)
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active(let point): model.pointerMoved(to: point, displaySize: size)
+                        case .ended: model.pointerMoved(to: nil, displaySize: size)
+                        }
+                    }
+                    .frame(
+                        minWidth: geometry.size.width, minHeight: geometry.size.height
+                    )
             }
-            if dimensions.slices > 1 {
-                Stepper("Slice \(model.slice + 1)/\(dimensions.slices)", value: $model.slice, in: 0...(dimensions.slices - 1))
-            }
-            if dimensions.frames > 1 {
-                Stepper("Frame \(model.frame + 1)/\(dimensions.frames)", value: $model.frame, in: 0...(dimensions.frames - 1))
-            }
-            Spacer()
+            .background(Color(nsColor: .underPageBackgroundColor))
         }
-        .onChange(of: model.channel) { model.render() }
-        .onChange(of: model.slice) { model.render() }
-        .onChange(of: model.frame) { model.render() }
+    }
+
+    private func displayScale(in available: CGSize) -> CGFloat {
+        switch model.zoom {
+        case .scale(let s):
+            return s
+        case .fit:
+            let margin: CGFloat = 16
+            let fit = min(
+                (available.width - margin) / max(imageSize.width, 1),
+                (available.height - margin) / max(imageSize.height, 1))
+            return max(min(fit, 32), 1 / 64)
+        }
+    }
+}
+
+/// Channel, slice and frame sliders (for dimensions above 1) and the pointer readout.
+struct StatusBar: View {
+    @Bindable var model: ViewerModel
+    let image: Hyperstack
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            let dims = image.dimensions
+            if dims.channels > 1 {
+                PositionSlider(label: "c", value: $model.channel, count: dims.channels)
+            }
+            if dims.slices > 1 {
+                PositionSlider(label: "z", value: $model.slice, count: dims.slices)
+            }
+            if dims.frames > 1 {
+                PositionSlider(label: "t", value: $model.frame, count: dims.frames)
+            }
+            HStack {
+                Text(model.pointerText ?? summary)
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+                if model.isBusy { ProgressView().controlSize(.small) }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .onChange(of: model.channel) { model.positionChanged() }
+        .onChange(of: model.slice) { model.positionChanged() }
+        .onChange(of: model.frame) { model.positionChanged() }
+    }
+
+    private var summary: String {
+        var parts = ["\(image.width)×\(image.height)", "\(image.pixelType.bitDepth)-bit"]
+        if image.stack.count > 1 { parts.append("\(image.stack.count) planes") }
+        if image.stack.isVirtual { parts.append("virtual") }
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// An ImageJ-style position scrollbar with step buttons.
+struct PositionSlider: View {
+    let label: String
+    @Binding var value: Int
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("\(label) \(value + 1)/\(count)")
+                .font(.callout.monospacedDigit())
+                .frame(width: 92, alignment: .leading)
+            Button("Previous", systemImage: "chevron.left") { value = max(value - 1, 0) }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+            Slider(
+                value: Binding(get: { Double(value) }, set: { value = Int($0.rounded()) }),
+                in: 0...Double(count - 1),
+                step: 1
+            )
+            Button("Next", systemImage: "chevron.right") { value = min(value + 1, count - 1) }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+        }
+    }
+}
+
+/// Brightness & contrast, channels, and image information.
+struct DisplayInspector: View {
+    @Bindable var model: ViewerModel
+
+    var body: some View {
+        Form {
+            if let image = model.image {
+                if image.pixelType.usesLUT {
+                    contrastSection(image)
+                }
+                if image.dimensions.channels > 1 {
+                    channelsSection(image)
+                }
+                infoSection(image)
+            } else {
+                Text("No image").foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func contrastSection(_ image: Hyperstack) -> some View {
+        let bounds = model.sliderBounds
+        let range = model.displayRange
+        let step = image.pixelType == .gray32Float ? 0 : 1.0
+        return Section("Brightness & Contrast") {
+            RangeSlider(
+                title: "Minimum",
+                value: Binding(
+                    get: { range.lowerBound },
+                    set: { model.setDisplayRange(min($0, range.upperBound)...range.upperBound) }),
+                bounds: bounds, step: step)
+            RangeSlider(
+                title: "Maximum",
+                value: Binding(
+                    get: { range.upperBound },
+                    set: { model.setDisplayRange(range.lowerBound...max($0, range.lowerBound)) }),
+                bounds: bounds, step: step)
+            HStack {
+                Button("Auto") { model.autoContrast() }
+                Button("Reset") { model.resetContrast() }
+                Spacer()
+                Text(image.channels[model.channel].lut.name).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func channelsSection(_ image: Hyperstack) -> some View {
+        Section("Channels") {
+            Picker(
+                "Mode",
+                selection: Binding(get: { image.compositeMode }, set: { model.setCompositeMode($0) })
+            ) {
+                Text("Composite").tag(CompositeMode.composite)
+                Text("Color").tag(CompositeMode.color)
+                Text("Grayscale").tag(CompositeMode.grayscale)
+            }
+            ForEach(0..<image.dimensions.channels, id: \.self) { c in
+                Toggle(
+                    "\(c + 1): \(image.channels[c].lut.name)",
+                    isOn: Binding(get: { image.channels[c].isVisible }, set: { model.setChannelVisible($0, channel: c) })
+                )
+                .disabled(image.compositeMode != .composite)
+            }
+        }
+    }
+
+    private func infoSection(_ image: Hyperstack) -> some View {
+        let cal = image.calibration
+        return Section("Image") {
+            LabeledContent("Size", value: "\(image.width) × \(image.height)")
+            LabeledContent("Type", value: "\(image.pixelType.bitDepth)-bit")
+            LabeledContent(
+                "Dimensions",
+                value: "c=\(image.dimensions.channels) z=\(image.dimensions.slices) t=\(image.dimensions.frames)")
+            if cal.isSpatiallyCalibrated {
+                LabeledContent(
+                    "Pixel size", value: "\(Self.number(cal.pixelWidth)) × \(Self.number(cal.pixelHeight)) \(cal.unit)")
+                if image.dimensions.slices > 1 {
+                    LabeledContent("Voxel depth", value: "\(Self.number(cal.pixelDepth)) \(cal.unit)")
+                }
+            }
+            if cal.frameInterval > 0 {
+                LabeledContent("Frame interval", value: "\(Self.number(cal.frameInterval)) \(cal.timeUnit)")
+            }
+            if let label = image.stack.labels[image.dimensions.planeIndex(channel: model.channel, slice: model.slice, frame: model.frame)] {
+                LabeledContent("Label", value: label)
+            }
+            if image.stack.isVirtual { LabeledContent("Storage", value: "Virtual stack") }
+            if let info = image.info, !info.isEmpty {
+                DisclosureGroup("Info") {
+                    Text(info).font(.caption.monospaced()).textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    private static func number(_ v: Double) -> String { String(format: "%.4g", v) }
+}
+
+/// A labelled slider with its value, for the display range ends.
+struct RangeSlider: View {
+    let title: String
+    @Binding var value: Double
+    let bounds: ClosedRange<Double>
+    let step: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(String(format: step == 0 ? "%.4g" : "%.0f", value)).monospacedDigit().foregroundStyle(.secondary)
+            }
+            let clamped = Binding(
+                get: { min(max(value, bounds.lowerBound), bounds.upperBound) },
+                set: { value = $0 })
+            if step > 0 {
+                Slider(value: clamped, in: bounds, step: step)
+            } else {
+                Slider(value: clamped, in: bounds)
+            }
+        }
+    }
+}
+
+nonisolated struct ViewerFocusKey: FocusedValueKey {
+    typealias Value = ViewerModel
+}
+
+extension FocusedValues {
+    /// The viewer in the key window, for menu commands.
+    var viewer: ViewerModel? {
+        get { self[ViewerFocusKey.self] }
+        set { self[ViewerFocusKey.self] = newValue }
     }
 }

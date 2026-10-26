@@ -133,6 +133,51 @@ enum TIFFCodecs {
         }
     }
 
+    /// Undoes predictor 3 (TIFF Technical Note 3, floating point) on one
+    /// chunk, in place: byte-wise differencing across each row, whose bytes
+    /// are stored most significant byte plane first.
+    static func undoFloatingPointPredictor(
+        _ data: inout [UInt8],
+        rowBytes: Int,
+        rows: Int,
+        samplesPerPixel: Int,
+        bytesPerSample: Int,
+        bigEndian: Bool
+    ) {
+        let samples = rowBytes / bytesPerSample
+        var scratch = [UInt8](repeating: 0, count: rowBytes)
+        for row in 0..<rows {
+            let base = row * rowBytes
+            for i in samplesPerPixel..<rowBytes {
+                data[base + i] = data[base + i] &+ data[base + i - samplesPerPixel]
+            }
+            for i in 0..<rowBytes { scratch[i] = data[base + i] }
+            for s in 0..<samples {
+                for b in 0..<bytesPerSample {
+                    let byte = scratch[b * samples + s]  // plane 0 holds the most significant bytes
+                    data[base + s * bytesPerSample + (bigEndian ? b : bytesPerSample - 1 - b)] = byte
+                }
+            }
+        }
+    }
+
+    /// IEEE 754 half precision to single precision.
+    static func halfToFloat(_ h: UInt16) -> Float {
+        let sign = UInt32(h & 0x8000) << 16
+        let exponent = Int(h >> 10) & 0x1F
+        let mantissa = UInt32(h & 0x03FF)
+        switch exponent {
+        case 0:
+            // Zero or subnormal: mantissa × 2^-24.
+            let value = Float(mantissa) * Float(sign: .plus, exponent: -24, significand: 1)
+            return sign != 0 ? -value : value
+        case 31:
+            return Float(bitPattern: sign | 0x7F80_0000 | mantissa << 13)
+        default:
+            return Float(bitPattern: sign | UInt32(exponent + 112) << 23 | mantissa << 13)
+        }
+    }
+
     @inline(__always)
     static func load16(_ d: [UInt8], _ i: Int, _ be: Bool) -> UInt16 {
         be ? UInt16(d[i]) << 8 | UInt16(d[i + 1]) : UInt16(d[i + 1]) << 8 | UInt16(d[i])

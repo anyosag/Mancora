@@ -75,6 +75,10 @@ $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
 try {
     Invoke-Checked { & (Join-Path $stage 'mancora.exe') --version }
     Invoke-Checked { & (Join-Path $stage 'mancora.exe') info $fixture }
+    # The update check loads FoundationNetworking; GitHub's rate limit for
+    # shared runners can refuse the request itself, so only warn on failure.
+    & (Join-Path $stage 'mancora.exe') update
+    if ($LASTEXITCODE -ne 0) { Write-Warning "mancora update exited with code $LASTEXITCODE" }
     $viewer = Start-Process -FilePath (Join-Path $stage 'MancoraViewer.exe') `
         -ArgumentList '--smoke-test', "`"$fixture`"" -Wait -PassThru
     if ($viewer.ExitCode -ne 0) { throw "MancoraViewer smoke test failed (exit code $($viewer.ExitCode))" }
