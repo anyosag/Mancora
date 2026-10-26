@@ -101,7 +101,7 @@ struct ViewerView: View {
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
-                ToolPicker(session: AppSession.shared)
+                ToolPicker(session: AppSession.shared, isEnabled: model.hasImage)
             }
             ToolbarItem {
                 Menu("LUT", systemImage: "paintpalette") {
@@ -121,6 +121,7 @@ struct ViewerView: View {
             }
             ToolbarItem {
                 Button("Inspector", systemImage: "sidebar.right") { showsInspector.toggle() }
+                    .help("Show or hide the inspector")
             }
         }
         .alert(

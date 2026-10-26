@@ -2,6 +2,7 @@ import AppKit
 import MancoraCommands
 import MancoraCore
 import MancoraIO
+import Observation
 import SwiftUI
 
 /// ImageJ's toolbar tools: the selection tools, the wand and the
@@ -373,17 +374,141 @@ struct SelectionOverlay: View {
     }
 }
 
-/// The toolbar's tool picker.
+/// The toolbar's tools in groups, as Preview groups its markup tools: a group with variants is one
+/// item that shows the tool in use (or the one it last used) and opens a menu of the others.
+enum ToolGroup: CaseIterable, Identifiable {
+    case selection, lines, points, angle, wand, zoom
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .selection: "Selection"
+        case .lines: "Lines"
+        case .points: "Points"
+        case .angle: "Angle"
+        case .wand: "Wand"
+        case .zoom: "Zoom"
+        }
+    }
+
+    var tools: [CanvasTool] {
+        switch self {
+        case .selection: [.rectangle, .oval, .polygon, .freehand]
+        case .lines: [.line, .segmentedLine, .freehandLine]
+        case .points: [.point, .multiPoint]
+        case .angle: [.angle]
+        case .wand: [.wand]
+        case .zoom: [.zoom]
+        }
+    }
+}
+
+extension CanvasTool {
+    var group: ToolGroup {
+        switch self {
+        case .rectangle, .oval, .polygon, .freehand: .selection
+        case .line, .segmentedLine, .freehandLine: .lines
+        case .point, .multiPoint: .points
+        case .angle: .angle
+        case .wand: .wand
+        case .zoom: .zoom
+        }
+    }
+}
+
+/// The variant each group used last, which its toolbar item shows while another group's tool is
+/// in use. As the tool is, it's the same for every window.
+@Observable
+final class ToolMemory {
+    static let shared = ToolMemory()
+
+    private var variants: [ToolGroup: CanvasTool] = [:]
+
+    func variant(of group: ToolGroup) -> CanvasTool { variants[group] ?? group.tools[0] }
+
+    func remember(_ tool: CanvasTool) { variants[tool.group] = tool }
+}
+
+/// The toolbar's tools. They act on an image, so they're off in a window without one.
 struct ToolPicker: View {
-    @Bindable var session: AppSession
+    let session: AppSession
+    var isEnabled = true
 
     var body: some View {
-        Picker("Tool", selection: $session.tool) {
-            ForEach(CanvasTool.allCases) { tool in
-                Label(tool.title, systemImage: tool.systemImage).tag(tool).help(tool.title)
+        HStack(spacing: 2) {
+            ForEach(ToolGroup.allCases) { group in
+                ToolGroupItem(group: group, session: session)
             }
         }
-        .pickerStyle(.segmented)
-        .labelStyle(.iconOnly)
+        .disabled(!isEnabled)
+    }
+}
+
+/// One group on the toolbar: a button for a single tool, else a menu of the variants whose button
+/// part picks the one shown.
+private struct ToolGroupItem: View {
+    let group: ToolGroup
+    let session: AppSession
+    @State private var isHovering = false
+
+    private let memory = ToolMemory.shared
+
+    private var isActive: Bool { session.tool.group == group }
+
+    /// The tool in use, if it's in this group, else the one the group used last.
+    private var shown: CanvasTool { isActive ? session.tool : memory.variant(of: group) }
+
+    var body: some View {
+        Group {
+            if group.tools.count > 1 {
+                Menu {
+                    ForEach(group.tools) { tool in
+                        Toggle(
+                            isOn: Binding(get: { session.tool == tool }, set: { _ in choose(tool) })
+                        ) {
+                            Label(tool.title, systemImage: tool.systemImage)
+                        }
+                    }
+                } label: {
+                    glyph
+                } primaryAction: {
+                    choose(shown)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.visible)
+                .fixedSize()
+                .help("\(group.title): \(shown.title)")
+            } else {
+                Button {
+                    choose(shown)
+                } label: {
+                    glyph
+                }
+                .buttonStyle(.plain)
+                .help(shown.title)
+            }
+        }
+        .onHover { isHovering = $0 }
+    }
+
+    private var glyph: some View {
+        Label(shown.title, systemImage: shown.systemImage)
+            .labelStyle(.iconOnly)
+            .font(.system(size: 14))
+            .foregroundStyle(isActive ? Color.accentColor : Color.primary)
+            .frame(width: 28, height: 22)
+            .background(glyphFill, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .contentShape(Rectangle())
+    }
+
+    private var glyphFill: Color {
+        if isActive { return Color.accentColor.opacity(0.18) }
+        return isHovering ? Color.primary.opacity(0.08) : Color.clear
+    }
+
+    private func choose(_ tool: CanvasTool) {
+        session.tool = tool
+        memory.remember(tool)
     }
 }
