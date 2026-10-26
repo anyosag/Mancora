@@ -249,24 +249,22 @@ struct PlotView: View {
     @State private var errorText: String?
 
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                chart
-                if case .histogram(let data)? = model.content {
-                    HistogramStatsView(data: data)
-                }
-                if model.content != nil, let problem = model.problem {
-                    Text(problem).font(.caption).foregroundStyle(.secondary)
-                }
+        VStack(alignment: .leading, spacing: 12) {
+            chart
+            if case .histogram(let data)? = model.content {
+                HistogramStatsView(data: data)
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            Divider()
-            buttons
-                .padding(8)
+            if model.content != nil, let problem = model.problem {
+                Label(problem, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
-        .frame(minWidth: 420, minHeight: 320)
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(minWidth: 420, minHeight: 360)
         .navigationTitle(model.windowTitle)
+        .toolbar { toolbarItems }
         .sheet(isPresented: $showsList) {
             PlotValuesSheet(model: model)
         }
@@ -295,19 +293,35 @@ struct PlotView: View {
         }
     }
 
-    private var buttons: some View {
-        HStack {
-            Button("List") { showsList = true }
-            Button("Copy") { copy() }
+    /// ImageJ's List, Copy, Save… (profiles) or Log (histograms), and Live, as the window's toolbar.
+    @ToolbarContentBuilder
+    private var toolbarItems: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button("List", systemImage: "list.bullet.rectangle") { showsList = true }
+                .help("List the plot's values in a table")
+                .disabled(model.content == nil)
+            Button("Copy", systemImage: "doc.on.doc") { copy() }
+                .help("Copy the plot's values to the clipboard")
+                .disabled(model.content == nil)
             if model.kind == .profile {
-                Button("Save…") { save() }
+                Button("Save…", systemImage: "square.and.arrow.down") { save() }
+                    .help("Save the profile's values as a CSV file")
+                    .disabled(model.content == nil)
             } else {
-                Toggle("Log", isOn: $model.logScale).toggleStyle(.button)
+                Toggle(isOn: $model.logScale) {
+                    Label("Log", systemImage: "chart.line.uptrend.xyaxis").labelStyle(.titleAndIcon)
+                }
+                .toggleStyle(.button)
+                .help("Draw the log-scaled counts behind the histogram")
+                .disabled(model.content == nil)
             }
-            Toggle("Live", isOn: $model.isLive).toggleStyle(.button)
-            Spacer()
+            Toggle(isOn: $model.isLive) {
+                Label("Live", systemImage: "dot.radiowaves.left.and.right").labelStyle(.titleAndIcon)
+            }
+            .toggleStyle(.button)
+            .help("Keep the plot up to date with the image's selection, plane and pixels")
+            .disabled(model.content == nil)
         }
-        .disabled(model.content == nil)
     }
 
     /// Read while Live, so the window follows the image window's selection
@@ -402,7 +416,7 @@ struct PlotTableGrid: View {
                     .background(.bar)
                 }
             }
-            .font(.system(.body, design: .monospaced))
+            .monospacedDigit()
             .textSelection(.enabled)
         }
     }
@@ -422,13 +436,54 @@ struct ProfileChartView: View {
 
     var body: some View {
         let points = Self.points(data)
-        Chart(points) { point in
-            LineMark(x: .value("X", point.x), y: .value("Y", point.y))
+        let domain = Self.domain(of: points.map(\.y))
+        let xs = points.map(\.x)
+        let xLow = xs.min() ?? 0
+        let xHigh = max(xs.max() ?? 1, xLow + 1e-9)
+        HStack(spacing: 4) {
+            // The y label runs up the left axis.
+            Text(verbatim: data.yLabel)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
+                .rotationEffect(.degrees(-90))
+                .frame(width: 16)
+            Chart {
+                ForEach(points) { point in
+                    AreaMark(
+                        x: .value("Distance", point.x), yStart: .value("Base", domain.lowerBound),
+                        yEnd: .value("Value", point.y)
+                    )
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Color.accentColor.opacity(0.25), Color.accentColor.opacity(0.03)],
+                            startPoint: .top, endPoint: .bottom))
+                    LineMark(x: .value("Distance", point.x), y: .value("Value", point.y))
+                        .foregroundStyle(Color.accentColor)
+                        .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                }
+            }
+            .chartXAxisLabel(position: .bottom) {
+                Text(verbatim: Self.xTitle(data.xLabel))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .chartXScale(domain: xLow...xHigh)
+            .chartYAxis { AxisMarks(position: .leading) }
+            .chartYScale(domain: domain)
+            .frame(minHeight: 200)
         }
-        .chartXAxisLabel { Text(verbatim: data.xLabel) }
-        .chartYAxisLabel { Text(verbatim: data.yLabel) }
-        .chartYScale(domain: Self.domain(of: points.map(\.y)))
-        .frame(minHeight: 200)
+    }
+
+    /// The x axis' title. ImageJ writes the unit it has: for a TIFF whose
+    /// ResolutionUnit is "none" that's a blank, "Distance ( )", which the
+    /// window words as the pixels it is.
+    static func xTitle(_ label: String) -> String {
+        let prefix = "Distance ("
+        guard label.hasPrefix(prefix), label.hasSuffix(")") else { return label }
+        let unit = label.dropFirst(prefix.count).dropLast()
+        return unit.trimmingCharacters(in: .whitespaces).isEmpty ? "Distance (pixels)" : label
     }
 
     /// The samples to draw: those outside the image are NaN, which the line skips.
@@ -475,34 +530,64 @@ struct HistogramBar: Identifiable {
     }
 }
 
-/// Histogram's plot: a bar for each bin; with Log, the log-scaled counts in gray behind them.
+/// One corner of a histogram's outline: from `x` on, its bin's count holds
+/// until the next point.
+struct HistogramStep: Identifiable {
+    let id: Int
+    let x: Double
+    let bar: HistogramBar
+
+    /// A point at the start of each bin, and a last one at the end of the
+    /// final bin, so every bin spans its own width and the bins run on from
+    /// one to the next with no gap between them.
+    static func steps(_ bars: [HistogramBar]) -> [HistogramStep] {
+        var steps = bars.map { HistogramStep(id: $0.id, x: $0.start, bar: $0) }
+        if let last = bars.last { steps.append(HistogramStep(id: bars.count, x: last.end, bar: last)) }
+        return steps
+    }
+}
+
+/// Histogram's plot: the counts as one filled outline, each bin as wide as its
+/// values (a bar apiece would leave seams, which at 256 bins moiré into a
+/// comb); with Log, the log-scaled counts in gray behind them.
 struct HistogramChartView: View {
     let data: HistogramData
     let logScale: Bool
 
     var body: some View {
         let bars = HistogramBar.bars(data)
+        let steps = HistogramStep.steps(bars)
         let top = Double(max(data.counts.max() ?? 0, 1))
         let edges = bars.flatMap { [$0.start, $0.end] }
         Chart {
             if logScale {
-                ForEach(bars) { bar in
-                    RectangleMark(
-                        xStart: .value("Bin start", bar.start), xEnd: .value("Bin end", bar.end),
-                        yStart: .value("Zero", 0.0), yEnd: .value("Log count", bar.logCount(top: top))
+                ForEach(steps) { step in
+                    AreaMark(
+                        x: .value("Value", step.x), yStart: .value("Zero", 0.0),
+                        yEnd: .value("Log count", step.bar.logCount(top: top))
                     )
-                    .foregroundStyle(Color.gray.opacity(0.35))
+                    .interpolationMethod(.stepEnd)
+                    .foregroundStyle(by: .value("Layer", "Log"))
                 }
             }
-            ForEach(bars) { bar in
-                RectangleMark(
-                    xStart: .value("Bin start", bar.start), xEnd: .value("Bin end", bar.end),
-                    yStart: .value("Zero", 0.0), yEnd: .value("Count", bar.count)
+            ForEach(steps) { step in
+                AreaMark(
+                    x: .value("Value", step.x), yStart: .value("Zero", 0.0), yEnd: .value("Count", step.bar.count)
                 )
-                .foregroundStyle(Color.primary.opacity(0.7))
+                .interpolationMethod(.stepEnd)
+                .foregroundStyle(by: .value("Layer", "Counts"))
+                LineMark(
+                    x: .value("Value", step.x), y: .value("Count", step.bar.count), series: .value("Outline", "Counts")
+                )
+                .interpolationMethod(.stepEnd)
+                .foregroundStyle(Color.accentColor)
+                .lineStyle(StrokeStyle(lineWidth: 1))
             }
         }
+        .chartForegroundStyleScale(["Counts": Color.accentColor.opacity(0.3), "Log": Color.secondary.opacity(0.3)])
+        .chartLegend(.hidden)
         .chartXScale(domain: (edges.min() ?? 0)...(edges.max() ?? 1))
+        .chartYAxis { AxisMarks(position: .leading) }
         .chartYScale(domain: 0...top)
         .frame(minHeight: 200)
     }
@@ -514,27 +599,58 @@ struct HistogramChartView: View {
 struct HistogramStatsView: View {
     let data: HistogramData
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(Self.lines(data), id: \.self) { line in
-                Text(line)
-            }
-        }
-        .font(.system(.callout, design: .monospaced))
-        .textSelection(.enabled)
-        .frame(maxWidth: .infinity, alignment: .leading)
+    /// One statistic: its name and its value, written as ImageJ writes it.
+    struct Row: Identifiable {
+        let label: String
+        let value: String
+        var id: String { label }
     }
 
-    static func lines(_ data: HistogramData) -> [String] {
+    var body: some View {
+        let rows = Self.rows(data)
+        let half = (rows.count + 1) / 2
+        HStack(alignment: .top, spacing: 32) {
+            grid(Array(rows[..<half]))
+            grid(Array(rows[half...]))
+            Spacer(minLength: 0)
+        }
+        .font(.callout)
+        .textSelection(.enabled)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// Names in one column, values in the next, in digits of one width.
+    private func grid(_ rows: [Row]) -> some View {
+        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 3) {
+            ForEach(rows) { row in
+                GridRow {
+                    Text(row.label).foregroundStyle(.secondary)
+                    Text(row.value).monospacedDigit().gridColumnAlignment(.trailing)
+                }
+            }
+        }
+    }
+
+    static func rows(_ data: HistogramData) -> [Row] {
         let n = IJFormat.plotNumber
         var modeCount = " (\(data.modeCount))" + (data.isMultimodal ? "*" : "")
         if modeCount.count > 12 { modeCount = "" }
-        var lines = [
-            "N: \(data.count)  Mean: \(n(data.mean))  StdDev: \(n(data.stdDev))",
-            "Min: \(n(data.min))  Max: \(n(data.max))  Mode: \(n(data.mode))\(modeCount)",
+        var rows = [
+            Row(label: "N", value: "\(data.count)"),
+            Row(label: "Mean", value: n(data.mean)),
+            Row(label: "StdDev", value: n(data.stdDev)),
+            Row(label: "Min", value: n(data.min)),
+            Row(label: "Max", value: n(data.max)),
+            Row(label: "Mode", value: n(data.mode) + modeCount),
         ]
-        if data.showsBins { lines.append("Bins: \(n(Double(data.bins)))  Bin Width: \(n(abs(data.binWidth)))") }
-        return lines
+        if data.showsBins {
+            rows.append(Row(label: "Bins", value: n(Double(data.bins))))
+            rows.append(Row(label: "Bin Width", value: n(abs(data.binWidth))))
+        }
+        return rows
     }
 }
 

@@ -35,6 +35,8 @@ final class ViewerModel {
     var zoom = Zoom.fit
     /// The pixel under the pointer, as ImageJ's status bar shows it.
     private(set) var pointerText: String?
+    /// The same readout in parts, for the status bar's columns.
+    private(set) var pointerReadout: PointerReadout?
 
     /// Find Command (⌘L) is showing.
     var showsCommandFinder = false
@@ -53,7 +55,7 @@ final class ViewerModel {
     var selectionText: String?
     @ObservationIgnored var gesture: SelectionGesture?
     /// The scale the canvas shows the image at (for Zoom to Fit, the fitted one).
-    @ObservationIgnored var displayedScale = 1.0
+    var displayedScale = 1.0
 
     /// The image's threshold (raw values), shown in red; commands use it.
     var threshold: ThresholdLevels?
@@ -62,8 +64,11 @@ final class ViewerModel {
     var thresholdMethod = AutoThresholder.Method.default
     var thresholdDark = false
     var thresholdStack = false
-    /// The plane's 256-bin histogram over the display range, for the Threshold section.
+    /// The plane's 256-bin histogram over its range of values, for the Brightness & Contrast
+    /// and Threshold controls. Counted while the inspector shows.
     private(set) var histogram: [Int] = []
+    /// The values the histogram's bins span.
+    private(set) var histogramRange: ClosedRange<Double> = 0...255
 
     struct LastCommand: Equatable {
         let name: String
@@ -79,6 +84,16 @@ final class ViewerModel {
 
     @ObservationIgnored private var autoState = BrightnessContrast.AutoState()
     @ObservationIgnored private var renderTask: Task<Void, Never>?
+    /// Counts the images shown (`show`, `replace`), so a histogram is counted again only when pixels change.
+    @ObservationIgnored private var imageGeneration = 0
+    @ObservationIgnored private var histogramSource: HistogramSource?
+
+    private struct HistogramSource: Equatable {
+        var generation: Int
+        var channel: Int
+        var slice: Int
+        var frame: Int
+    }
 
     var hasImage: Bool { image != nil }
     /// Unsaved changes (ImageJ's `ImagePlus.changes`): set when a command
@@ -161,6 +176,7 @@ final class ViewerModel {
     func show(_ image: Hyperstack, from url: URL?) {
         AppSession.shared.register(self)
         self.image = image
+        imageGeneration += 1
         fileURL = url
         channel = 0
         slice = 0
@@ -527,6 +543,7 @@ final class ViewerModel {
             }
         }
         image = changed
+        imageGeneration += 1
         isChanged = true
         channel = min(channel, dims.channels - 1)
         slice = min(slice, dims.slices - 1)
@@ -664,6 +681,7 @@ final class ViewerModel {
     func pointerMoved(to point: CGPoint?, displaySize: CGSize) {
         guard let image, let point, displaySize.width > 0, displaySize.height > 0 else {
             pointerText = nil
+            pointerReadout = nil
             pointer = nil
             return
         }
@@ -674,24 +692,33 @@ final class ViewerModel {
         let y = Int(py)
         guard (0..<image.width).contains(x), (0..<image.height).contains(y), let plane = currentPlane else {
             pointerText = nil
+            pointerReadout = nil
             return
         }
         let cal = image.calibration
         var text = "x=\(x), y=\(y)"
+        var readout = PointerReadout(x: "\(x)", y: "\(y)", pixel: nil, value: "")
         if cal.isSpatiallyCalibrated {
             let cx = (Double(x) - cal.xOrigin) * cal.pixelWidth, cy = (Double(y) - cal.yOrigin) * cal.pixelHeight
             text = "x=\(Self.short(cx)) \(cal.unit), y=\(Self.short(cy)) \(cal.unit) (\(x), \(y))"
+            readout = PointerReadout(
+                x: "\(Self.short(cx)) \(cal.unit)", y: "\(Self.short(cy)) \(cal.unit)", pixel: "\(x), \(y)", value: "")
         }
         let index = y * image.width + x
         if case .rgb8(let pixels) = plane {
             let c = pixels[index]
-            text += ", value=\((c >> 16) & 0xFF),\((c >> 8) & 0xFF),\(c & 0xFF)"
+            let rgb = "\((c >> 16) & 0xFF),\((c >> 8) & 0xFF),\(c & 0xFF)"
+            text += ", value=\(rgb)"
+            readout.value = rgb
         } else {
             let raw = plane.value(at: index)
             let calibrated = cal.calibratedValue(raw)
-            text += ", value=\(Self.short(calibrated))" + (calibrated == raw ? "" : " (\(Self.short(raw)))")
+            let shown = Self.short(calibrated) + (calibrated == raw ? "" : " (\(Self.short(raw)))")
+            text += ", value=\(shown)"
+            readout.value = shown
         }
         pointerText = text
+        pointerReadout = readout
     }
 
     private static func short(_ v: Double) -> String {
@@ -707,20 +734,27 @@ final class ViewerModel {
             return
         }
         let (c, z, t, levels) = (channel, slice, frame, threshold)
-        let range = displayRange
-        let wantsHistogram = showsThreshold && image.pixelType != .rgb8
+        // The histogram is counted again only when the plane changes, not for each display range step.
+        let source = HistogramSource(generation: imageGeneration, channel: c, slice: z, frame: t)
+        let wantsHistogram = image.pixelType.usesLUT && (showsInspector || showsThreshold)
+        let needsHistogram = wantsHistogram && (source != histogramSource || histogram.isEmpty)
         renderTask = Task {
-            let (pixels, bins) = await Task.detached(priority: .userInitiated) { () -> ([UInt32], [Int]) in
+            let (pixels, counted) = await Task.detached(priority: .userInitiated) {
+                () -> ([UInt32], (bins: [Int], range: ClosedRange<Double>)?) in
                 var pixels = DisplayMapper.render(image, channel: c, slice: z, frame: t)
                 let plane = image.plane(channel: c, slice: z, frame: t)
                 if let levels, image.dimensions.channels == 1 || image.compositeMode != .composite {
                     Self.paintThreshold(&pixels, plane: plane, levels: levels)
                 }
-                return (pixels, wantsHistogram ? Self.histogram(plane, range: range) : [])
+                return (pixels, needsHistogram ? Self.histogram(of: plane) : nil)
             }.value
             guard !Task.isCancelled else { return }
             rendered = Self.makeCGImage(pixels, width: image.width, height: image.height)
-            histogram = bins
+            if let counted {
+                histogram = counted.bins
+                histogramRange = counted.range
+                histogramSource = source
+            }
         }
     }
 

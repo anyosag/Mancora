@@ -119,10 +119,6 @@ jobs:
         # while the mode is new.
         continue-on-error: true
         timeout-minutes: 10
-        env:
-          # While the mode is new, also save screencapture's picture of each window next
-          # to the in-process one, to compare them.
-          MANCORA_SCREENSHOTS_COMPARE: "1"
         run: |
           mkdir -p "$RUNNER_TEMP/screenshots"
           app="$(swift build --package-path Apps/macOS --show-bin-path)/MancoraApp"
