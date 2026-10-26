@@ -40,7 +40,38 @@ struct FilterTimings {
         ("16-bit smooth", { gray16.smoothed(width: size) }),
         ("float find edges", { float.findingEdges(width: size) }),
         ("16-bit convolve 5×5", { gray16.convolved(with: kernel5x5, width: size) }),
+        ("16-bit resize bilinear 0.6×", { geometry(gray16, .bilinear).resized(width: 1229, height: 1229).plane }),
+        ("16-bit resize bicubic averaged 0.37×", {
+            geometry(gray16, .bicubic).resized(width: 758, height: 758, averaging: true).plane
+        }),
+        ("float resize bicubic 1.5×", { geometry(float, .bicubic).resized(width: 3072, height: 3072).plane }),
+        ("float rotate bicubic 15°", {
+            var ip = geometry(float, .bicubic)
+            ip.rotate(degrees: 15)
+            return ip.plane
+        }),
+        ("RGB rotate bilinear 15°", {
+            var ip = geometry(rgb, .bilinear)
+            ip.rotate(degrees: 15)
+            return ip.plane
+        }),
+        ("16-bit scale bilinear 0.7×", {
+            var ip = geometry(gray16, .bilinear)
+            ip.scale(x: 0.7, y: 0.7)
+            return ip.plane
+        }),
+        ("16-bit translate bicubic", {
+            var ip = geometry(gray16, .bicubic)
+            ip.translate(x: 2.5, y: -1.25)
+            return ip.plane
+        }),
     ]
+
+    static func geometry(_ plane: Plane, _ method: InterpolationMethod) -> GeometryProcessor {
+        var ip = GeometryProcessor(plane, width: size)
+        ip.interpolation = method
+        return ip
+    }
 
     @Test(arguments: operations.indices)
     func timing(_ index: Int) {

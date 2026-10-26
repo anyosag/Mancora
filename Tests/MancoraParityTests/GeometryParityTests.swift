@@ -252,4 +252,87 @@ struct GeometryParityTests {
         ]
         try await Parity.check(cases)
     }
+
+    // MARK: Odd layouts and LUTs
+
+    @Test func timeSeriesLUTsAndNoOps() async throws {
+        let frames = ("Properties...", "channels=1 slices=1 frames=5")
+        try await Parity.check([
+            Self.steps([frames, ("Scale...", "x=0.5 y=0.5 interpolation=Bilinear average process create")], on: .stack8),
+            Self.steps([frames, ("Scale...", "x=0.5 y=0.5 z=2 interpolation=Bilinear process create")], on: .stack8),
+            Self.steps([frames, ("Size...", "width=30 height=23 depth=3 average interpolation=Bicubic")], on: .stack32),
+            Self.steps([frames, ("Bin...", "x=2 y=2 z=2 bin=Average")], on: .stack16),
+            Self.steps([frames, ("Rotate... ", "angle=15 grid=1 interpolation=Bilinear stack")], on: .stack16),
+            ParityCase("Rotate... ", "angle=-25 grid=1 interpolation=Bicubic enlarge", on: .fixtureFire),
+            ParityCase("Translate...", "x=4.5 y=-2 interpolation=Bilinear", on: .fixtureFire),
+            ParityCase("Bin...", "x=2 y=2 bin=Max", on: .fixtureFire),
+            ParityCase("Size...", "width=40 height=30 average interpolation=Bicubic", on: .fixtureFire),
+            ParityCase("Rotate... ", "angle=30 grid=1 interpolation=Bilinear", on: .fixtureHyperstack),
+            ParityCase("Bin...", "x=2 y=2 z=1 bin=Median", on: .fixtureHyperstack),
+            ParityCase("Size...", "width=20 height=15 average interpolation=Bilinear", on: .fixtureHyperstack),
+            ParityCase("Translate...", "x=3 y=4", on: .gray16),
+            ParityCase("Size...", "width=61 height=47 interpolation=None", on: .gray8),
+            ParityCase("Scale...", "x=1 y=1 interpolation=Bilinear create", on: .gray16),
+            ParityCase("Scale...", "x=1 y=1 interpolation=Bilinear", on: .gray8),
+            ParityCase("Scale...", "x=1 y=1 interpolation=Bicubic", on: .gray32, tolerance: Self.tolerance),
+        ])
+    }
+
+    // MARK: From macros
+
+    /// Selections on stacks, background colors and what macros read back
+    /// afterwards, which single commands on the test images can't show.
+    @Test func macros() async throws {
+        try await MacroParity.check([
+            MacroParityCase("scale a stack's selection", #"""
+                makeRectangle(10, 5, 30, 25);
+                run("Scale...", "x=0.5 y=0.5 interpolation=Bilinear average process create title=crop");
+                print(getTitle(), getWidth(), getHeight(), nSlices, nImages);
+                """#, on: .stack16),
+            MacroParityCase("rotate an oval on every slice", #"""
+                makeOval(10, 8, 30, 20);
+                run("Rotate... ", "angle=30 grid=1 interpolation=Bilinear stack");
+                """#, on: .stack8),
+            MacroParityCase("translate a rectangle on every slice", #"""
+                makeRectangle(5, 5, 20, 20);
+                run("Translate...", "x=3.5 y=2 interpolation=Bicubic stack");
+                """#, on: .stack32),
+            MacroParityCase("resize a stack's selection in depth", #"""
+                makeRectangle(12, 6, 33, 21);
+                run("Size...", "width=40 height=30 depth=7 average interpolation=Bilinear");
+                print(getTitle(), getWidth(), getHeight(), nSlices, nImages);
+                """#, on: .stack8),
+            MacroParityCase("interpolated pixels after rotating", #"""
+                run("Rotate... ", "angle=15 grid=1 interpolation=Bicubic");
+                print(getPixel(10, 10), getPixel(30.5, 20.25), getPixel(0.5, 0.5));
+                """#, on: .gray32),
+            MacroParityCase("bin and read the calibration", #"""
+                run("Bin...", "x=3 y=3 z=1 bin=Average");
+                getPixelSize(unit, pw, ph, pd);
+                print(getWidth(), getHeight(), nSlices, unit, pw, ph, pd);
+                """#, on: .calibrated),
+            MacroParityCase("fill rotation with a background color", #"""
+                setBackgroundColor(200, 100, 50);
+                run("Rotate... ", "angle=20 grid=1 interpolation=Bilinear fill enlarge");
+                print(getWidth(), getHeight());
+                """#, on: .rgb),
+            MacroParityCase("fill 8-bit scaling with a background color", #"""
+                setBackgroundColor(160, 160, 160);
+                run("Scale...", "x=0.6 y=0.6 interpolation=Bicubic fill");
+                """#, on: .gray8),
+            MacroParityCase("fill 16-bit rotation with a background color", #"""
+                setBackgroundColor(255, 255, 255);
+                run("Rotate... ", "angle=-30 grid=1 interpolation=None fill enlarge");
+                """#, on: .gray16),
+            MacroParityCase("scale in place on the third slice", #"""
+                setSlice(3);
+                run("Scale...", "x=0.7 y=0.5 interpolation=Bilinear");
+                """#, on: .stack16),
+            MacroParityCase("scale the current slice to a new window", #"""
+                setSlice(4);
+                run("Scale...", "x=1.5 y=1.5 interpolation=Bicubic create");
+                print(getTitle(), nSlices);
+                """#, on: .stack32),
+        ])
+    }
 }

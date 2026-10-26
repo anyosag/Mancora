@@ -233,16 +233,15 @@ extension GeometryProcessor {
         let channelCount = pixelType == .rgb8 ? 3 : 1
         var results: [GeometryProcessor] = []
         for c in 0..<channelCount {
-            var fp = GeometryProcessor(.gray32Float(floatValues(channel: c)), width: width)
-            fp.interpolation = interpolation
-            fp.setRoi(roi)
-            switch plane {
-            case .gray8, .gray16:
-                let (lo, hi) = currentMinMax
+            // toFloat: a float processor is its own; the others copy the
+            // ROI and their display range (0–255 for RGB channels).
+            var fp = self
+            if pixelType != .gray32Float {
+                fp = GeometryProcessor(.gray32Float(floatValues(channel: c)), width: width)
+                fp.interpolation = interpolation
+                fp.setRoi(roi)
+                let (lo, hi) = pixelType == .rgb8 ? (0, 255) : currentMinMax
                 fp.setMinAndMax(lo, hi)
-            case .gray32Float:
-                fp = self
-            case .rgb8: fp.setMinAndMax(0, 255)
             }
             results.append(fp.downsized(width: dstWidth, height: dstHeight))
         }
@@ -464,7 +463,7 @@ extension GeometryProcessor {
         case .rgb8(var p):
             plane = .gray8([])
             let copy = p
-            let bg = UInt32(bitPattern: Int32(truncatingIfNeeded: Int(source.background)))
+            let bg = UInt32(bitPattern: Int32(truncatingIfNeeded: Int(source.background))) | 0xFF00_0000
             sweep(
                 bicubic: { _, _, _ in },
                 other: { i, xs, ys, j, outside in
@@ -608,7 +607,7 @@ extension GeometryProcessor {
         case .rgb8(var p):
             plane = .gray8([])
             let copy = p
-            let bg = UInt32(bitPattern: Int32(truncatingIfNeeded: Int(background)))
+            let bg = UInt32(bitPattern: Int32(truncatingIfNeeded: Int(background))) | 0xFF00_0000
             sweep(
                 bicubic: { _, _, _ in },
                 other: { i, xs, ys, nearest in
@@ -651,7 +650,7 @@ extension GeometryProcessor {
     }
 
     /// `putPixel(x, y, value)`: clamped for 8- and 16-bit, float bits for
-    /// 32-bit, a packed color for RGB.
+    /// 32-bit, a packed color for RGB (made opaque, as Mancora keeps RGB).
     mutating func putPixel(_ x: Int, _ y: Int, _ value: Int) {
         guard x >= 0, x < width, y >= 0, y < height else { return }
         let i = y * width + x
@@ -670,7 +669,7 @@ extension GeometryProcessor {
             plane = .gray32Float(p)
         case .rgb8(var p):
             plane = .gray8([])
-            p[i] = UInt32(truncatingIfNeeded: value)
+            p[i] = UInt32(truncatingIfNeeded: value) | 0xFF00_0000  // Mancora keeps RGB opaque
             plane = .rgb8(p)
         }
     }
