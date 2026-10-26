@@ -13,8 +13,10 @@ The root `Package.swift` holds platform-neutral code only:
 | Module | Purpose | May import |
 | --- | --- | --- |
 | `MancoraCore` | Pixel model, stacks, hyperstacks, calibration, LUTs, `DisplayMapper`; later ROIs | Swift standard library, `FoundationEssentials` |
-| `MancoraIO` | `ByteReader`, LUT reader, TIFF reader; later OME-TIFF, OME-Zarr | Core, `FoundationEssentials` |
-| `MancoraProcessing` | Filters, conversions, measurements (Phase 2) | Core |
+| `MancoraIO` | `ByteReader`, LUT reader, TIFF reader and writer, virtual stacks; later OME-TIFF, OME-Zarr | Core, Support, `FoundationEssentials` |
+| `MancoraSupport` | Dependency-free building blocks: Inflate (zlib/gzip), SHA-256/SHA-1, SemVer | Swift standard library |
+| `MancoraUpdate` | Update checks against GitHub releases, verified downloads | Support, Foundation |
+| `MancoraProcess` | Filters, conversions, projections, pixel math; measurements (Phase 2) | Core |
 | `MancoraCommands` | ImageJ command table (`"Gaussian Blur..."` + option strings), which drives menus, macro `run()`, the recorder and the bridge (Phase 2) | Core, Processing |
 | `MancoraMacro` | ImageJ macro language interpreter (Phase 3) | Core, Commands |
 | `MancoraBridge` | Java plugin bridge client (Phase 4) | Core, IO |
@@ -25,8 +27,11 @@ The root `Package.swift` holds platform-neutral code only:
 The app shells are separate packages, so their dependencies never reach
 the core:
 
-- `Apps/macOS/`: SwiftUI and AppKit, Metal rendering, Sparkle updates. It
-  starts as a SwiftPM executable; Phase 1 adds an XcodeGen `project.yml`.
+- `Apps/macOS/`: SwiftUI and AppKit, a SwiftPM executable that
+  `Tools/package/macos/package.sh` wraps into `Mancora.app`. It renders
+  through the CPU `DisplayMapper` (exact ImageJ mapping) off the main
+  thread and lets Core Animation composite the result; a Metal path comes
+  when profiling asks for it. Updates come from `MancoraUpdate`.
 - `Apps/Windows/`: WinUI 3 via swift-winrt, with Direct3D 11 drawing into
   a SwapChainPanel. D3D11 is enough for showing images.
 
@@ -117,19 +122,25 @@ signing, follow in P7.
 
 ### P1: macOS viewer
 
-- Adds:
-  - Deflate, BigTIFF, and ImageJ's private metadata tags 50838/50839
-    (per-channel LUTs and ranges, ROIs, overlays)
-  - TIFF saving, and virtual and memory-mapped stacks
-  - the Metal renderer, C/Z/T sliders, and brightness/contrast with ImageJ's
-    Auto algorithm
-  - an XcodeGen app bundle with the Mancora icon, and nightly ad-hoc signed
-    builds
-- A time-boxed Windows test: show a core image in a WinUI SwapChainPanel
-  through swift-winrt.
+- The TIFF reader adds Deflate with both predictors, BigTIFF, float16 and
+  float64, 16-bit RGB(A), and ImageJ's private metadata tags 50838/50839
+  (Info, slice labels, per-channel LUTs and ranges, ROI, overlay,
+  properties), with ImageJ's calibration rules.
+- A TIFF writer that lays files out as ImageJ's `FileSaver` does.
+- Virtual stacks: memory-mapped files whose planes decode on demand.
+- ImageJ's Enhance Contrast (`saturated=0.35`) and the B&C dialog's Auto.
+- The macOS viewer gets C/Z/T sliders, zoom, a pixel readout, a
+  brightness/contrast inspector with Auto, composite modes, Save As TIFF
+  and Open as Virtual Stack.
+- Built-in updates: `mancora update`, Check for Updates in both viewers
+  (moved here from P7), installing a verified DMG or Setup.exe in place.
 
-**Exit:** Fiji reopens Mancora-saved hyperstacks identically, and a 2 GB
-16-bit 4D stack scrolls smoothly.
+**Exit:** ImageJ 1.54p reopens every TIFF Mancora saves identically (the
+`ImageJ reopens Mancora's TIFFs` CI job), and a 2 GB 16-bit stack opens
+virtually in milliseconds (`Tools/bench/virtual-stack.sh`).
+
+Deferred: the Metal renderer (the CPU path is exact and fast enough so
+far), and the WinUI swap-chain experiment, which moves to P5.
 
 ### P2: ImageJ1 essentials
 
@@ -151,11 +162,17 @@ bridge helper), exact for integer results and within tolerance for float.
 **Exit:** the bundled macros and a test corpus give the same results as
 ImageJ, and `mancora --headless -macro` works on Linux.
 
-### P4: Java bridge
+### P4: Java bridge and update sites
 
-- Bio-Formats and selected Fiji plugins appear in Mancora's menus.
+- A Java helper process runs Fiji plugins and Bio-Formats; they appear in
+  Mancora's menus.
+- Fiji update sites: read `db.xml.gz`, resolve dependencies, download and
+  verify files by SHA-1, and keep them under Mancora's plugins folder, as
+  Fiji's updater does.
 
 **Exit:** killing the helper loses no data, and it restarts automatically.
+
+**Release 0.2.0** ships P1–P4.
 
 ### P5: Windows shell
 
@@ -173,8 +190,8 @@ and channels that Bio-Formats reports.
 
 ### P7: Distribution
 
-- macOS: Developer ID signing, hardened runtime, notarization, DMG, and
-  Sparkle 2 updates.
+- macOS: Developer ID signing, hardened runtime and notarization, so the
+  built-in updater installs signed releases.
 - Windows: MSIX with Trusted Signing, and a WinGet manifest.
 - No Mac App Store, because the app is GPL.
 
