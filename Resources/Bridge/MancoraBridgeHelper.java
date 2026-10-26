@@ -426,7 +426,11 @@ public class MancoraBridgeHelper {
     static void ensureResultsPanel() {
         if (IJ.isResultsWindow() || java.awt.GraphicsEnvironment.isHeadless()) return;
         try {
-            IJ.setTextPanel(new ij.text.TextPanel("Results"));
+            // As IJ.showResults() makes the Results window: showing the system table, so
+            // saveAs("Results") saves the table (ResultsTable.saveAs), not the lines shown.
+            ij.text.TextPanel panel = new ij.text.TextPanel("Results");
+            panel.setResultsTable(ij.plugin.filter.Analyzer.getResultsTable());
+            IJ.setTextPanel(panel);
         } catch (Throwable t) {
             // no display after all
         }

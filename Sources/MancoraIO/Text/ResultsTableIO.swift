@@ -40,41 +40,56 @@ public enum ResultsTableIO {
     /// decimal places: one with a fraction in its first 25 rows (a value
     /// that `(int)` changes). Other columns show integers without decimals.
     public static func encode(_ rt: ResultsTable, csv: Bool, rowNumbers: Bool, format: (Double, Bool) -> String) -> String {
+        var out = ""
+        if !(rt.count == 0 && rt.columns.isEmpty) { out += headingLine(rt, csv: csv, rowNumbers: rowNumbers) + "\n" }
+        let fixed = fixedColumns(rt)
+        for row in 0..<rt.count {
+            out += rowLine(rt, row: row, csv: csv, rowNumbers: rowNumbers, fixed: fixed, format: format) + "\n"
+        }
+        return out
+    }
+
+    /// `ResultsTable.getColumnHeadings()`: " " for row numbers, "Label" when
+    /// a row has one, then the columns.
+    public static func headingLine(_ rt: ResultsTable, csv: Bool, rowNumbers: Bool) -> String {
         let delimiter = csv ? "," : "\t"
-        let hasLabels = rt.labels.contains { $0 != nil }
-        let columns = rt.columns
-        let fixed = Set(columns.filter { column in
+        var heading = rowNumbers ? " " + delimiter : ""
+        if rt.labels.contains(where: { $0 != nil }) { heading += "Label" + delimiter }
+        return heading + rt.columns.joined(separator: delimiter)
+    }
+
+    /// The columns ImageJ shows with a fixed number of decimal places: those
+    /// with a fraction in their first 25 rows.
+    public static func fixedColumns(_ rt: ResultsTable) -> Set<String> {
+        Set(rt.columns.filter { column in
             (0..<min(25, rt.count)).contains { row in
                 guard case .number(let v)? = rt.value(column, row: row) else { return false }
                 return !v.isNaN && !isJavaInt(v)
             }
         })
-        var out = ""
-        if !(rt.count == 0 && columns.isEmpty) {
-            var heading = rowNumbers ? " " + delimiter : ""
-            if hasLabels { heading += "Label" + delimiter }
-            heading += columns.joined(separator: delimiter)
-            out += heading + "\n"
+    }
+
+    /// `ResultsTable.getRowAsString(row)`, quoting for CSV as `saveAs` does.
+    public static func rowLine(
+        _ rt: ResultsTable, row: Int, csv: Bool, rowNumbers: Bool, fixed: Set<String>, format: (Double, Bool) -> String
+    ) -> String {
+        let delimiter = csv ? "," : "\t"
+        var line = rowNumbers ? String(row + 1) + delimiter : ""
+        if rt.labels.contains(where: { $0 != nil }) {
+            if let label = rt.labels[row] { line += csv ? label.replacing(",", with: ";") : label }
+            line += delimiter
         }
-        for row in 0..<rt.count {
-            var line = rowNumbers ? String(row + 1) + delimiter : ""
-            if hasLabels {
-                if let label = rt.labels[row] { line += csv ? label.replacing(",", with: ";") : label }
-                line += delimiter
+        line += rt.columns.map { column -> String in
+            var value: String
+            if case .text(let s)? = rt.value(column, row: row) {
+                value = s.replacing("\n", with: "\\n")
+            } else {
+                value = format(rt.number(column, row: row), fixed.contains(column))
             }
-            line += columns.map { column -> String in
-                var value: String
-                if case .text(let s)? = rt.value(column, row: row) {
-                    value = s.replacing("\n", with: "\\n")
-                } else {
-                    value = format(rt.number(column, row: row), fixed.contains(column))
-                }
-                if csv, value.contains(",") || value.isEmpty { value = "\"" + value + "\"" }
-                return value
-            }.joined(separator: delimiter)
-            out += line + "\n"
-        }
-        return out
+            if csv, value.contains(",") || value.isEmpty { value = "\"" + value + "\"" }
+            return value
+        }.joined(separator: delimiter)
+        return line
     }
 
     /// Saves the table as `ResultsTable.saveAs(path)` does, with commas for
