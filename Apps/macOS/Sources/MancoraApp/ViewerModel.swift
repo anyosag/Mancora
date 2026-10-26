@@ -426,7 +426,9 @@ final class ViewerModel {
         }
     }
 
-    func runMacro(_ code: String, bridge: AppBridge) async -> [URL] {
+    /// Runs macro code. `onError` hears of a failure, with the text of `errorMessage` and
+    /// the line it happened on if known (the macro editor shows both).
+    func runMacro(_ code: String, bridge: AppBridge, onError: ((String, Int?) -> Void)? = nil) async -> [URL] {
         isBusy = true
         defer { isBusy = false }
         if MacroSupport.unsupported(in: code, registry: .standard).isEmpty {
@@ -437,7 +439,7 @@ final class ViewerModel {
             // what the macro left (results, settings, log, the ROI Manager), its return
             // value and error, the input as the macro left it, and new images
             let outcome = await Task.detached(priority: .userInitiated) {
-                () -> (CommandContext, RoiManagerList, String?, String?, Hyperstack?, [Hyperstack]) in
+                () -> (CommandContext, RoiManagerList, String?, MacroError?, Hyperstack?, [Hyperstack]) in
                 let session = MacroSession()
                 session.batchMode = false
                 session.context.results = startResults
@@ -451,8 +453,8 @@ final class ViewerModel {
                     }
                 }
                 var value: String?
-                var failure: String?
-                do throws(MacroError) { value = try session.run(code) } catch { failure = error.description }
+                var failure: MacroError?
+                do throws(MacroError) { value = try session.run(code) } catch { failure = error }
                 var changed: Hyperstack?
                 var created: [Hyperstack] = []
                 for open in session.context.images {
@@ -471,13 +473,18 @@ final class ViewerModel {
             shared.absorb(left)
             shared.roiManager = manager
             if let value { report = "Returned: \(value)" }
-            if let failure { errorMessage = "Macro Error: " + failure }
+            if let failure {
+                let text = "Macro Error: " + failure.description
+                errorMessage = text
+                onError?(text, failure.lineNumber > 0 ? failure.lineNumber : nil)
+            }
             return saveForNewWindows(created)
         }
         do {
-            return handle(try await bridge.runMacro(code, on: image))
+            return handle(try await bridge.runMacro(code, on: image), onError: onError)
         } catch {
             errorMessage = "\(error)"
+            onError?("\(error)", nil)
             return []
         }
     }
@@ -485,7 +492,9 @@ final class ViewerModel {
     /// What ImageJ gave back: results and log lines go to the session, a
     /// changed current image (the last input) updates this window, new
     /// images open in their own.
-    private func handle(_ result: BridgeRunResult, inputCount: Int = 1, hasImage: Bool = true) -> [URL] {
+    private func handle(
+        _ result: BridgeRunResult, inputCount: Int = 1, hasImage: Bool = true, onError: ((String, Int?) -> Void)? = nil
+    ) -> [URL] {
         AppSession.shared.absorb(result)
         var created: [Hyperstack] = []
         for output in result.images {
@@ -496,7 +505,9 @@ final class ViewerModel {
             }
         }
         if let error = result.macroError {
-            errorMessage = "Macro Error: " + error + (result.macroErrorLine.map { " in line \($0)" } ?? "")
+            let text = "Macro Error: " + error + (result.macroErrorLine.map { " in line \($0)" } ?? "")
+            errorMessage = text
+            onError?(text, result.macroErrorLine)
         } else if let value = result.value {
             report = "Returned: \(value)"
         }

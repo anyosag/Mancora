@@ -103,6 +103,7 @@ enum ChangeQuestions {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        MainActor.assumeIsolated { ChangeQuestions.mayQuit() } ? .terminateNow : .terminateCancel
+        MainActor.assumeIsolated { ChangeQuestions.mayQuit() && MacroEditorModel.mayQuit() }
+            ? .terminateNow : .terminateCancel
     }
 }

@@ -12,6 +12,7 @@ import SwiftUI
 struct ImageJMenuCommands: Commands {
     let bridge: AppBridge
     @FocusedValue(\.viewer) private var viewer
+    @FocusedValue(\.macroEditor) private var editor
     @Environment(\.openWindow) private var openWindow
 
     static let menus: [ImageJMenu] = {
@@ -52,6 +53,8 @@ struct ImageJMenuCommands: Commands {
     }
 
     func perform(_ name: String) {
+        // With an editor in front, File ▸ Open, Save and Save As ▸ Text act on its text.
+        if let editor, editor.perform(name) { return }
         AppMenuActions.perform(name, viewer: viewer, bridge: bridge, openWindow: openWindow)
     }
 }
@@ -132,9 +135,9 @@ enum AppMenuActions {
     /// have no place next to Mancora's: these say so instead of opening one.
     static let javaWindows: Set<String> = [
         "Window/Level...", "Color Balance...", "Color Threshold...", "Channels Tool...",
-        "Color Picker...", "Line Width...", "Text Window", "Text Window...", "Control Panel...", "Monitor Memory...",
-        "Startup Macros...", "Edit...", "Macro", "Macro Tool", "JavaScript", "BeanShell", "Python", "Plugin", "Plugin Filter",
-        "Plugin Frame", "Plugin Tool", "Text File... ", "Table...", "Main Window [return]", "Put Behind [tab]",
+        "Color Picker...", "Line Width...", "Control Panel...", "Monitor Memory...",
+        "Startup Macros...", "Macro Tool", "JavaScript", "BeanShell", "Python", "Plugin", "Plugin Filter",
+        "Plugin Frame", "Plugin Tool", "Table...", "Main Window [return]", "Put Behind [tab]",
         "Synchronize Windows", "Orthogonal Views",
     ]
 
@@ -185,6 +188,16 @@ enum AppMenuActions {
             Task { open(await viewer.runRecorded(last.name, options: last.options, bridge: bridge)) }
         case "Record...":
             openWindow(id: "recorder")
+        // The editor: Plugins ▸ New ▸ Macro and File ▸ New ▸ Text Window are empty ones, and
+        // Plugins ▸ Macros ▸ Edit… and File ▸ Import ▸ Text File… ask for a file.
+        case "Macro":
+            openWindow(id: "macro-editor", value: EditorRequest(serial: UUID()))
+        case "Text Window", "Text Window...":
+            openWindow(id: "macro-editor", value: EditorRequest(isText: true, serial: UUID()))
+        case "Edit...", "Text File... ":
+            if let url = MacroEditorModel.chooseFile() {
+                openWindow(id: "macro-editor", value: EditorRequest(url: url))
+            }
         case "Find Commands...", "Commands...":
             viewer?.showsCommandFinder = true
         case "Brightness/Contrast...", "Show Info...":

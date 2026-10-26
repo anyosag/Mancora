@@ -43,6 +43,7 @@ struct MancoraApp: App {
         .commands {
             ImageJMenuCommands(bridge: bridge)
             PluginCommands(bridge: bridge)
+            MacroEditorCommands()
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") {
                     Task { await updater.check(userInitiated: true) }
@@ -70,6 +71,10 @@ struct MancoraApp: App {
             RoiManagerView(session: AppSession.shared)
         }
         .defaultSize(width: 340, height: 360)
+        WindowGroup("Macro Editor", id: "macro-editor", for: EditorRequest.self) { $request in
+            MacroEditorWindow(request: $request, bridge: bridge)
+        }
+        .defaultSize(width: 640, height: 480)
         Window("Update Sites", id: "update-sites") {
             UpdateSitesView(model: updateSites, bridge: bridge)
         }

@@ -37,11 +37,14 @@ enum ProcessCommands {
     static let typeCommands: [CommandDefinition] = [
         ("8-bit", PixelType.gray8), ("16-bit", .gray16), ("32-bit", .gray32Float), ("RGB Color", .rgb8),
     ].map { name, type in
-        CommandDefinition(name, menu: "Image>Type") { context, _ in
+        CommandDefinition(name, menu: "Image>Type") { context, options in
             guard let open = context.current else { throw CommandError.noImage(name) }
-            // A composite hyperstack to RGB asks which slices and frames to keep: ImageJ does that.
-            if type == .rgb8, open.image.channels.count > 1, open.image.stack.count > open.image.channels.count {
-                throw CommandError.notNative(name)
+            if type == .rgb8 {
+                try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in
+                    open.image.properties[BuiltInCommands.currentLUTKey] = nil
+                }
+                // Color-space stacks recombine; composites are drawn (RGBStackConverter).
+                if try HyperstackCommands.rgbColor(&context, options) { return }
             }
             // Converter.convert removes the threshold first, even when there's
             // nothing to convert; "RGB Color" also forgets the LUT's name.
@@ -289,6 +292,16 @@ enum ProcessCommands {
             throw CommandError.failed(command: name, detail: "\(error)")
         }
         context.add(result)
+        // SubHyperstackMaker copies each channel's display range by moving
+        // both composites to it: each ends at its last channel, first slice and frame.
+        if StackEditor.isComposite(open.image), let last = try? SubstackMaker.parseList(
+            options.value(forLabel: "channels") ?? "1-\(dims.channels)", count: dims.channels).last
+        {
+            try HyperstackCommands.showPlane(&context, name, result.dimensions.channels - 1)
+            try context.select(id: open.id)
+            try HyperstackCommands.showPlane(&context, name, last)
+            try context.select(id: context.images[context.images.count - 1].id)
+        }
     }
 
     /// `ij.plugin.HyperStackReducer`: `channels`, `slices`, `frames` keep a
