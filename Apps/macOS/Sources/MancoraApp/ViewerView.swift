@@ -144,12 +144,22 @@ struct ImageCanvas: View {
     @Bindable var model: ViewerModel
     let bitmap: CGImage
     let imageSize: CGSize
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// Room around the image, for its shadow and so that it doesn't touch the edge when scrolled.
+    private static let margin: CGFloat = 24
+
+    /// A calm neutral behind the image: light gray in light mode, near-black in dark mode.
+    private var backdrop: Color { Color(white: colorScheme == .dark ? 0.12 : 0.91) }
 
     var body: some View {
         GeometryReader { geometry in
             let scale = displayScale(in: geometry.size)
             let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
             let tool = AppSession.shared.tool
+            // A shadow only where it can show; a large view of an image that scrolls has none to draw.
+            let floats =
+                size.width + 2 * Self.margin <= geometry.size.width && size.height + 2 * Self.margin <= geometry.size.height
             ScrollView([.horizontal, .vertical]) {
                 Image(decorative: bitmap, scale: 1)
                     .interpolation(scale >= 1 ? .none : .medium)
@@ -180,11 +190,27 @@ struct ImageCanvas: View {
                         case .ended: model.pointerMoved(to: nil, displaySize: size)
                         }
                     }
+                    .background {
+                        if floats {
+                            Rectangle()
+                                .fill(Color.black)
+                                .shadow(color: .black.opacity(0.22), radius: 10, y: 3)
+                                .shadow(color: .black.opacity(0.3), radius: 1, y: 0.5)
+                        }
+                    }
+                    .overlay {
+                        // A hairline just outside the edge, so a dark image still has one on a dark backdrop.
+                        Rectangle()
+                            .stroke(Color.primary.opacity(0.18), lineWidth: 1)
+                            .padding(-0.5)
+                            .allowsHitTesting(false)
+                    }
+                    .padding(Self.margin)
                     .frame(
                         minWidth: geometry.size.width, minHeight: geometry.size.height
                     )
             }
-            .background(Color(nsColor: .underPageBackgroundColor))
+            .background(backdrop)
             .focusable()
             .focusEffectDisabled()
             .modifier(NavigationKeys(model: model))
@@ -219,7 +245,8 @@ struct ImageCanvas: View {
         case .scale(let s):
             return s
         case .fit:
-            let margin: CGFloat = 16
+            // The margin on both sides, and a little slack so that the fitted image never scrolls.
+            let margin = 2 * Self.margin + 8
             let fit = min(
                 (available.width - margin) / max(imageSize.width, 1),
                 (available.height - margin) / max(imageSize.height, 1))
