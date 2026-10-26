@@ -2,6 +2,7 @@ import Foundation
 import MancoraCore
 import MancoraFiji
 import MancoraPlugins
+import MancoraUpdate
 import Testing
 
 @testable import MancoraBridge
@@ -15,6 +16,13 @@ import Testing
 /// `MANCORA_TEST_FIJI_DOWNLOADS` may name a folder already holding the
 /// archive and its `.sha256` (as downloads.imagej.net/fiji/latest/ does),
 /// to install from it instead of downloading.
+///
+/// With `MANCORA_TEST_FIJI_FROM_SITES=1`, Fiji is put together from its own
+/// update site instead (Fiji-Latest, https://sites.imagej.net/Fiji/, the one
+/// site a downloaded Fiji's `db.xml.gz` enables), every file installed and
+/// checked by Mancora's updater as Fiji's updater would, and run on the JDK
+/// in `JAVA_HOME` (update sites carry no Java). CI does that: GitHub's
+/// runners can't download from downloads.imagej.net.
 @Suite(
     "Fiji over the network",
     .enabled(if: ProcessInfo.processInfo.environment["MANCORA_NETWORK_TESTS"] == "1" && Parity.hasDisplay),
@@ -27,13 +35,40 @@ struct FijiNetworkTests {
         return FijiDistribution()
     }()
 
+    static let fromSites = ProcessInfo.processInfo.environment["MANCORA_TEST_FIJI_FROM_SITES"] == "1"
+    /// The update site a downloaded Fiji's `db.xml.gz` enables, and the only one.
+    static let site = (name: "Fiji-Latest", url: "https://sites.imagej.net/Fiji/")
+
     static let parent = FileManager.default.temporaryDirectory.appendingPathComponent("mancora-fiji-network-\(UUID().uuidString)")
     static let manager = FijiManager(root: parent.appendingPathComponent("Fiji"), distribution: distribution)
 
-    /// Installs Fiji once for the suite (the first test to ask does it).
+    /// Installs Fiji once for the suite (the first test to ask does it):
+    /// from its download, or put together from its update site.
     static func installed() async throws -> FijiManager {
-        if !manager.isInstalled { try await manager.install() }
+        if !manager.isInstalled {
+            if fromSites { try await assembleFromUpdateSite() } else { try await manager.install() }
+        }
         return manager
+    }
+
+    /// Fiji as its update site holds it, installed as Fiji's updater installs
+    /// a site: every file the site lists for this platform, each download
+    /// checked against the site's checksum, in a folder renamed into place.
+    static func assembleFromUpdateSite() async throws {
+        let fm = FileManager.default
+        let staging = parent.appendingPathComponent("Fiji.assembling")
+        try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+        let updater = try PluginManager(root: staging)
+        try updater.addSite(name: site.name, url: site.url)
+        let client = URLSessionHTTPClient(userAgent: "mancora-tests")
+        try await updater.refresh(client: client)
+        try #require(updater.warnings.isEmpty, "\(updater.warnings)")
+        let (changes, conflicts) = updater.plan()
+        try #require(conflicts.filter { !$0.isWarning }.isEmpty, "\(conflicts)")
+        try #require(changes.count > 500, "the site offers only \(changes.count) files")
+        try await updater.apply(client: client)
+        try fm.moveItem(at: staging, to: manager.root)
+        await manager.refreshStatus()
     }
 
     static func bridge() async throws -> Bridge {
@@ -49,23 +84,33 @@ struct FijiNetworkTests {
 
     @Test func theLatestFijiInstalls() async throws {
         let log = ProgressLog()
-        if !Self.manager.isInstalled { try await Self.manager.install { log.add($0) } }
+        if !Self.manager.isInstalled {
+            if Self.fromSites { try await Self.assembleFromUpdateSite() } else { try await Self.manager.install { log.add($0) } }
+        }
         let fiji = Self.manager.installation
-        #expect(fiji.isComplete)
+        #expect(fiji.isComplete, "Java: \(fiji.javaHome?.path ?? "none (set JAVA_HOME to a JDK 11 or newer)")")
         let version = fiji.version
         #expect(version.fiji != nil && version.imageJ2 != nil && version.imageJ1 != nil && version.java != nil, "\(version)")
         #expect(await Self.manager.status == .installed(version))
-        #expect(await Self.manager.settings.installedFrom?.contains(Self.distribution.archiveName ?? "?") == true)
+        if Self.fromSites {
+            // The sites carry no Java: JAVA_HOME's runs it.
+            #expect(fiji.bundledJavaHome == nil && fiji.fallbackJavaHome != nil)
+        } else {
+            #expect(await Self.manager.settings.installedFrom?.contains(Self.distribution.archiveName ?? "?") == true)
+            #expect(fiji.bundledJavaHome != nil)
+        }
         if !log.all.isEmpty {
             #expect(log.all.contains { $0.phase == .downloading && ($0.totalBytes ?? 0) > 100_000_000 })
             #expect(log.all.contains { $0.phase == .unpacking })
         }
-        // Fiji's layout as relied on: its launcher, the bundled JDK, ImageJ2's legacy layer, TrackMate.
+        // Fiji's layout as relied on: ImageJ2's legacy layer, TrackMate, Labkit, the JDK, and the updater's database.
         let names = try FileManager.default.contentsOfDirectory(atPath: fiji.jars.path)
         #expect(names.contains { $0.hasPrefix("imagej-legacy-") })
         #expect(names.contains { $0.hasPrefix("TrackMate-") })
+        #expect(names.contains { $0.hasPrefix("labkit-ui-") })
         #expect(fiji.javaCompiler != nil)
-        #expect(FileManager.default.fileExists(atPath: fiji.root.appendingPathComponent("db.xml.gz").path))
+        let database = try PluginManager(root: fiji.root)
+        #expect(database.sites.contains { $0.name == Self.site.name && $0.url == Self.site.url && $0.isActive })
     }
 
     @Test func imageJAndSciJavaRunInFiji() async throws {

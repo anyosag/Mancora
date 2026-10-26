@@ -182,7 +182,10 @@ with code written alongside it:
   and the latest Fiji is downloaded, run behind the bridge (an ImageJ 1.x
   command, SciJava commands and scripts, Fiji's menus) and checked for
   updates (`FijiNetworkTests`; `MANCORA_TEST_FIJI_DOWNLOADS` can name a
-  folder already holding the archive and its `.sha256`).
+  folder already holding the archive and its `.sha256`). With
+  `MANCORA_TEST_FIJI_FROM_SITES=1`, as in CI (whose runners can't reach
+  downloads.imagej.net), Fiji is put together from its own update site
+  instead and runs on the JDK in `JAVA_HOME`.
 
 `Tools/fixtures/generate.sh` regenerates the fixtures.
 
