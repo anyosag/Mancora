@@ -229,11 +229,17 @@ struct DisplayInspector: View {
         let step = image.pixelType == .gray32Float ? 0 : 1.0
         return Section("Brightness & Contrast") {
             RangeSlider(
-                title: "Minimum", value: range.lowerBound, bounds: bounds, step: step
-            ) { model.setDisplayRange(min($0, range.upperBound)...range.upperBound) }
+                title: "Minimum",
+                value: Binding(
+                    get: { range.lowerBound },
+                    set: { model.setDisplayRange(min($0, range.upperBound)...range.upperBound) }),
+                bounds: bounds, step: step)
             RangeSlider(
-                title: "Maximum", value: range.upperBound, bounds: bounds, step: step
-            ) { model.setDisplayRange(range.lowerBound...max($0, range.lowerBound)) }
+                title: "Maximum",
+                value: Binding(
+                    get: { range.upperBound },
+                    set: { model.setDisplayRange(range.lowerBound...max($0, range.lowerBound)) }),
+                bounds: bounds, step: step)
             HStack {
                 Button("Auto") { model.autoContrast() }
                 Button("Reset") { model.resetContrast() }
@@ -299,10 +305,9 @@ struct DisplayInspector: View {
 /// A labelled slider with its value, for the display range ends.
 struct RangeSlider: View {
     let title: String
-    let value: Double
+    @Binding var value: Double
     let bounds: ClosedRange<Double>
     let step: Double
-    let onChange: @MainActor (Double) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -311,11 +316,13 @@ struct RangeSlider: View {
                 Spacer()
                 Text(String(format: step == 0 ? "%.4g" : "%.0f", value)).monospacedDigit().foregroundStyle(.secondary)
             }
-            let binding = Binding(get: { min(max(value, bounds.lowerBound), bounds.upperBound) }, set: onChange)
+            let clamped = Binding(
+                get: { min(max(value, bounds.lowerBound), bounds.upperBound) },
+                set: { value = $0 })
             if step > 0 {
-                Slider(value: binding, in: bounds, step: step)
+                Slider(value: clamped, in: bounds, step: step)
             } else {
-                Slider(value: binding, in: bounds)
+                Slider(value: clamped, in: bounds)
             }
         }
     }
