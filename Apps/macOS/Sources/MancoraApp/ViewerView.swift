@@ -106,22 +106,6 @@ struct ViewerView: View {
                 ToolPicker(session: AppSession.shared, isEnabled: model.hasImage)
             }
             ToolbarItem {
-                Menu("LUT", systemImage: "paintpalette") {
-                    ForEach(LUT.builtIn, id: \.name) { lut in
-                        Button(lut.name) { model.apply(lut) }
-                    }
-                    if !ViewerModel.bundledLUTs.isEmpty {
-                        Divider()
-                        ForEach(ViewerModel.bundledLUTs, id: \.url) { item in
-                            Button(item.name) { model.applyLUT(at: item.url) }
-                        }
-                    }
-                    Divider()
-                    Button("Open LUT File…") { model.presentLUTPanel() }
-                }
-                .disabled(!model.canAdjustContrast)
-            }
-            ToolbarItem {
                 Button("Inspector", systemImage: "sidebar.right") { showsInspector.toggle() }
                     .help("Show or hide the inspector")
             }
@@ -353,6 +337,7 @@ struct DisplayInspector: View {
 
     private func contrastSection(_ image: Hyperstack) -> some View {
         let isIntegral = image.pixelType != .gray32Float
+        let lut = image.channels[min(model.channel, image.channels.count - 1)].lut
         return Section("Brightness & Contrast") {
             VStack(spacing: 8) {
                 LevelsHistogram(
@@ -381,11 +366,13 @@ struct DisplayInspector: View {
                         isIntegral: isIntegral)
                 }
             }
+            LabeledContent("LUT") {
+                LUTPicker(model: model, current: lut)
+            }
             HStack(spacing: 8) {
                 Button("Auto") { model.autoContrast() }
                 Button("Reset") { model.resetContrast() }
                 Spacer()
-                Text(image.channels[min(model.channel, image.channels.count - 1)].lut.name).foregroundStyle(.secondary)
             }
             .buttonStyle(.bordered)
         }
@@ -403,9 +390,14 @@ struct DisplayInspector: View {
             }
             ForEach(0..<image.dimensions.channels, id: \.self) { c in
                 Toggle(
-                    "\(c + 1): \(image.channels[c].lut.name)",
                     isOn: Binding(get: { image.channels[c].isVisible }, set: { model.setChannelVisible($0, channel: c) })
-                )
+                ) {
+                    HStack(spacing: 8) {
+                        LUTSwatch(lut: image.channels[c].lut)
+                            .frame(width: 22, height: 10)
+                        Text("\(c + 1): \(image.channels[c].lut.name)")
+                    }
+                }
                 .disabled(image.compositeMode != .composite)
             }
         }
