@@ -44,6 +44,16 @@ extension Plane {
     public func findingEdges(width: Int, rect: RoiBounds? = nil) -> Plane {
         Filters3x3.apply(.findEdges, to: self, width: width, rect: rect)
     }
+
+    /// `ImageProcessor.convolve3x3(kernel)`: a 3×3 integer kernel (row by
+    /// row), divided by the sum of its values (1 if they sum to 0), as
+    /// Process ▸ Shadows uses it. Grayscale planes round, clip and use the
+    /// nearest edge pixel outside the image; RGB planes (per channel)
+    /// truncate and leave the edge pixels unchanged, as `sharpened` does.
+    public func convolved3x3(_ kernel: [Int], width: Int, rect: RoiBounds? = nil) -> Plane {
+        precondition(kernel.count == 9, "a 3×3 kernel has 9 values")
+        return Filters3x3.apply(.convolve(kernel), to: self, width: width, rect: rect)
+    }
 }
 
 extension ImageStack {
@@ -60,8 +70,18 @@ extension ImageStack {
 /// Ports of the 3×3 filters of ImageJ 1.54p's `ByteProcessor`,
 /// `ShortProcessor`, `FloatProcessor` and `ColorProcessor`.
 enum Filters3x3 {
-    enum Operation {
+    enum Operation: Equatable {
         case smooth, sharpen, findEdges
+        case convolve([Int])
+
+        /// The kernel `convolve3x3` uses (Sharpen's is fixed) and its scale.
+        var kernel: (values: [Int], scale: Int)? {
+            switch self {
+            case .sharpen: ([-1, -1, -1, -1, 12, -1, -1, -1, -1], 4)
+            case .convolve(let k): (k, k.reduce(0, +) == 0 ? 1 : k.reduce(0, +))
+            default: nil
+            }
+        }
     }
 
     /// The filter within `rect`: the whole plane's result where ImageJ
@@ -76,7 +96,7 @@ enum Filters3x3 {
         switch (plane.pixelType, op) {
         case (.gray8, .smooth), (.gray8, .findEdges), (.rgb8, .findEdges):
             return whole.merged(into: plane, width: width, where: area.contains)
-        case (.rgb8, .sharpen):
+        case (.rgb8, .sharpen), (.rgb8, .convolve):
             return whole.merged(into: plane, width: width, where: area.containsInner)
         default:
             return whole.merged(into: plane, width: width, within: rect)
@@ -91,7 +111,7 @@ enum Filters3x3 {
         case .gray16(let p): return .gray16(integer(op, p, width: width, height: height, maxValue: 65535))
         case .gray32Float(let p): return .gray32Float(float(op, p, width: width, height: height))
         case .rgb8(let p):
-            if op == .sharpen { return .rgb8(sharpenRGB(p, width: width, height: height)) }
+            if let (kernel, scale) = op.kernel { return .rgb8(convolveRGB(p, kernel, scale: scale, width: width, height: height)) }
             // BLUR_MORE on packed RGB and FIND_EDGES on three ByteProcessors
             // both work per channel exactly as the 8-bit filters do.
             let channels = [16, 8, 0].map { shift in
@@ -126,6 +146,7 @@ enum Filters3x3 {
     ) -> [T] {
         let src = padded(p, width: width, height: height)
         let pw = width + 2
+        let (k, scale) = op.kernel ?? ([], 1)
         return [T](unsafeUninitializedCapacity: p.count) { dst, initialized in
             src.withUnsafeBufferPointer { src in
                 for y in 0..<height {
@@ -138,9 +159,10 @@ enum Filters3x3 {
                         switch op {
                         case .smooth:
                             sum = (p1 + p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9 + 4) / 9
-                        case .sharpen:
-                            sum = 12 * p5 - p1 - p2 - p3 - p4 - p6 - p7 - p8 - p9
-                            sum = (sum + 2) / 4  // (sum + scale/2) / scale, truncating like Java
+                        case .sharpen, .convolve:
+                            sum = k[0] * p1 + k[1] * p2 + k[2] * p3 + k[3] * p4 + k[4] * p5 + k[5] * p6
+                                + k[6] * p7 + k[7] * p8 + k[8] * p9
+                            sum = (sum + scale / 2) / scale  // truncating like Java
                             sum = min(max(sum, 0), maxValue)
                         case .findEdges:
                             let sum1 = p1 + 2 * p2 + p3 - p7 - 2 * p8 - p9
@@ -160,8 +182,10 @@ enum Filters3x3 {
     static func float(_ op: Operation, _ p: [Float], width: Int, height: Int) -> [Float] {
         let src = padded(p, width: width, height: height)
         let pw = width + 2
-        // convolve3x3 with the sharpen kernel: the kernel as floats, scale 1/4.
-        let k: Float = -1, k5: Float = 12, scale: Float = 1 / Float(4)
+        // convolve3x3: the kernel as floats, and 1/scale.
+        let (kernel, scale0) = op.kernel ?? ([], 1)
+        let k = kernel.map { Float($0) }
+        let scale: Float = 1 / Float(scale0)
         return [Float](unsafeUninitializedCapacity: p.count) { dst, initialized in
             src.withUnsafeBufferPointer { src in
                 for y in 0..<height {
@@ -182,15 +206,15 @@ enum Filters3x3 {
                             sum += v8
                             sum += v9
                             result = sum * 0.11111111
-                        case .sharpen:
-                            var sum = k * v1 + k * v2
-                            sum += k * v3
-                            sum += k * v4
-                            sum += k5 * v5
-                            sum += k * v6
-                            sum += k * v7
-                            sum += k * v8
-                            sum += k * v9
+                        case .sharpen, .convolve:
+                            var sum = k[0] * v1 + k[1] * v2
+                            sum += k[2] * v3
+                            sum += k[3] * v4
+                            sum += k[4] * v5
+                            sum += k[5] * v6
+                            sum += k[6] * v7
+                            sum += k[7] * v8
+                            sum += k[8] * v9
                             result = sum * scale
                         case .findEdges:
                             var sum1 = v1 + 2 * v2
@@ -213,9 +237,9 @@ enum Filters3x3 {
         }
     }
 
-    /// `ColorProcessor.convolve3x3` with the sharpen kernel: inner pixels
-    /// only, each channel's sum divided by 4 with truncation.
-    static func sharpenRGB(_ p: [UInt32], width: Int, height: Int) -> [UInt32] {
+    /// `ColorProcessor.convolve3x3`: inner pixels only, each channel's sum
+    /// divided by the scale with truncation.
+    static func convolveRGB(_ p: [UInt32], _ k: [Int], scale: Int, width: Int, height: Int) -> [UInt32] {
         var out = p.map { $0 | 0xFF00_0000 }
         guard width > 2, height > 2 else { return out }
         for y in 1..<(height - 1) {
@@ -223,8 +247,9 @@ enum Filters3x3 {
                 var channels: UInt32 = 0xFF00_0000
                 for shift: UInt32 in [16, 8, 0] {
                     func c(_ dx: Int, _ dy: Int) -> Int { Int((p[(y + dy) * width + x + dx] >> shift) & 0xFF) }
-                    var sum = 12 * c(0, 0) - c(-1, -1) - c(0, -1) - c(1, -1) - c(-1, 0) - c(1, 0) - c(-1, 1) - c(0, 1) - c(1, 1)
-                    sum /= 4
+                    var sum = k[0] * c(-1, -1) + k[1] * c(0, -1) + k[2] * c(1, -1) + k[3] * c(-1, 0) + k[4] * c(0, 0)
+                        + k[5] * c(1, 0) + k[6] * c(-1, 1) + k[7] * c(0, 1) + k[8] * c(1, 1)
+                    sum /= scale
                     sum = min(max(sum, 0), 255)
                     channels |= UInt32(sum) << shift
                 }

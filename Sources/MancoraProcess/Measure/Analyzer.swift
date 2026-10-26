@@ -15,20 +15,29 @@ public enum Analyzer {
         let stats = MeasurementStatistics(
             plane: plane, width: image.width, region: region, options: options, calibration: image.calibration,
             threshold: threshold)
+        prepareForMeasure(&table)
         saveResults(stats, image: image, channel: channel, slice: slice, frame: frame, roi: roi, options: options, into: &table)
     }
 
-    /// `Analyzer.saveResults` for the whole image or an area selection.
+    /// `Analyzer.saveResults`: a row for the whole image or a selection. A
+    /// line adds its Length (and a straight line its Angle), an angle its
+    /// Angle, and a point its coordinates and position (`savePoints`).
+    /// `label` replaces the label made from the image and `roi`'s name.
     public static func saveResults(
         _ stats: MeasurementStatistics, image: Hyperstack, channel: Int, slice: Int, frame: Int, roi: Roi? = nil,
-        options: Measurements, into table: inout ResultsTable
+        options: Measurements, label explicitLabel: String? = nil, into table: inout ResultsTable
     ) {
         let dims = image.dimensions
         let stackIndex = dims.planeIndex(channel: channel, slice: slice, frame: frame)
         let pw = image.calibration.pixelWidth, ph = image.calibration.pixelHeight
+        if table.lastHeading == nil { reset(&table) }
+        clearSummary(&table)
         let row = table.addRow(
-            label: options.contains(.labels) ? label(image, stackIndex: stackIndex, roiName: roi?.name) : nil)
-        func add(_ column: String, _ value: Double) { table.set(column, row: row, value) }
+            label: options.contains(.labels)
+                ? explicitLabel ?? label(image, stackIndex: stackIndex, roiName: roi?.name) : nil)
+        // ImageJ adds most columns by their fixed index, and these few by name.
+        func add(_ column: String, _ value: Double) { table.setStandard(column, row: row, value) }
+        func addNamed(_ column: String, _ value: Double) { table.set(column, row: row, value) }
 
         if options.contains(.area) { add("Area", stats.area) }
         if options.contains(.mean) { add("Mean", stats.mean) }
@@ -63,10 +72,20 @@ public enum Analyzer {
             }
         }
         if options.contains(.boundingRectangle) {
-            add("BX", stats.roiX)
-            add("BY", stats.roiY)
-            add("Width", stats.roiWidth)
-            add("Height", stats.roiHeight)
+            if let roi, roi.isLine {
+                // A line's bounds, calibrated.
+                let b = roi.bounds
+                let cal = image.calibration
+                add("BX", cal.x(Double(b.x)))
+                add("BY", cal.y(Double(b.y), height: image.height, invertY: options.contains(.invertY)))
+                add("Width", Double(b.width) * pw)
+                add("Height", Double(b.height) * ph)
+            } else {
+                add("BX", stats.roiX)
+                add("BY", stats.roiY)
+                add("Width", stats.roiWidth)
+                add("Height", stats.roiHeight)
+            }
         }
         if options.contains(.ellipse) {
             add("Major", stats.major)
@@ -93,17 +112,99 @@ public enum Analyzer {
         if options.contains(.areaFraction) { add("%Area", stats.areaFraction) }
         if options.contains(.stackPosition) {
             if dims.channels > 1 || (dims.slices > 1 && dims.frames > 1) {
-                if dims.channels > 1 { add("Ch", Double(channel + 1)) }
-                if dims.slices > 1 { add("Slice", Double(slice + 1)) }
-                if dims.frames > 1 { add("Frame", Double(frame + 1)) }
+                if dims.channels > 1 { addNamed("Ch", Double(channel + 1)) }
+                if dims.slices > 1 { addNamed("Slice", Double(slice + 1)) }
+                if dims.frames > 1 { addNamed("Frame", Double(frame + 1)) }
             } else {
-                add("Slice", Double(stackIndex + 1))
+                addNamed("Slice", Double(stackIndex + 1))
+            }
+        }
+        if let roi {
+            switch roi.shape {
+            case .polygon(let polygon) where polygon.kind == .angle:
+                addNamed("Angle", roi.polylineAngle)
+            case .line(let line):
+                addNamed("Length", roi.length(pixelWidth: pw, pixelHeight: ph))
+                addNamed("Angle", floatAngle(line.x1, line.y1, line.x2, line.y2, pw, ph))
+            case .polygon(let polygon) where polygon.kind.isLine:
+                addNamed("Length", roi.length(pixelWidth: pw, pixelHeight: ph))
+            case .points(let points):
+                savePoints(points, roi: roi, image: image, channel: channel, slice: slice, frame: frame, options: options, row: row, into: &table)
+            default:
+                break
             }
         }
         if options.contains(.limitToThreshold), image.pixelType != .rgb8 {
             add("MinThr", stats.lowerThreshold)
             add("MaxThr", stats.upperThreshold)
         }
+    }
+
+    /// `Analyzer.savePoints` for one point: Area 0, its calibrated X and Y,
+    /// and its stack position (its own, or the current one).
+    static func savePoints(
+        _ points: Roi.Points, roi: Roi, image: Hyperstack, channel: Int, slice: Int, frame: Int, options: Measurements,
+        row: Int, into table: inout ResultsTable
+    ) {
+        func add(_ column: String, _ value: Double) { table.set(column, row: row, value) }
+        if options.contains(.area) { table.setStandard("Area", row: row, 0) }
+        let p = points.vertices.floatPoints.first ?? Roi.FloatPoint(x: 0, y: 0)
+        let cal = image.calibration
+        add("X", cal.x(Double(p.x)))
+        add("Y", cal.y(Double(p.y), height: image.height, invertY: options.contains(.invertY)))
+        let dims = image.dimensions
+        let position = Int(points.positions?.first ?? 0)
+        if dims.channels > 1 || (dims.slices > 1 && dims.frames > 1) {
+            var (c, z, t) = (channel + 1, slice + 1, frame + 1)
+            if position > 0 {
+                let at = dims.position(ofPlane: position - 1)
+                (c, z, t) = (at.channel + 1, at.slice + 1, at.frame + 1)
+            }
+            if dims.channels > 1 { add("Ch", Double(c)) }
+            if dims.slices > 1 { add("Slice", Double(z)) }
+            if dims.frames > 1 { add("Frame", Double(t)) }
+        } else if image.stack.count > 1 {
+            add("Slice", Double(position > 0 ? position : dims.planeIndex(channel: channel, slice: slice, frame: frame) + 1))
+        }
+        // On an "FFT of" image: the period (R) and direction the point stands for.
+        if image.frequencyDomain != nil {
+            let center = Double(image.width) / 2.0
+            let x = Double(p.x)
+            let y = Double(image.height) - Double(p.y) - 1
+            var r = ((x - center) * (x - center) + (y - center) * (y - center)).squareRoot()
+            if r < 1.0 { r = 1.0 }
+            var theta = atan2(y - center, x - center) * 180.0 / Double.pi
+            if theta < 0 { theta = 360.0 + theta }
+            add("R", (Double(image.width) / r) * cal.pixelWidth)
+            add("Theta", theta)
+        }
+    }
+
+    /// `Roi.getFloatAngle(x1, y1, x2, y2)`: degrees from the x axis, y up, calibrated.
+    static func floatAngle(_ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double, _ pw: Double, _ ph: Double) -> Double {
+        var dx = x2 - x1
+        var dy = y1 - y2
+        dx *= pw
+        dy *= ph
+        return (180.0 / Double.pi) * atan2(dy, dx)
+    }
+
+    /// `Analyzer.reset()`: a table with rows is cleared, and one without
+    /// the default headings gets them.
+    public static func reset(_ table: inout ResultsTable) {
+        if table.count > 0 { table.reset() }
+        if table.lastHeading == nil { table.setDefaultHeadings() }
+    }
+
+    /// The start of `Analyzer.measure()`: a table whose last standard slot
+    /// isn't headed as ImageJ's ("M…") is reset first.
+    public static func prepareForMeasure(_ table: inout ResultsTable) {
+        if table.lastHeading?.first != "M" { reset(&table) }
+    }
+
+    /// `clearSummary`: Summarize's Mean, SD, Min and Max rows go before a new row.
+    public static func clearSummary(_ table: inout ResultsTable) {
+        if table.count >= 4, table.labels[table.count - 1] == "Max" { table.removeLastRows(4) }
     }
 
     /// `Analyzer.getFileName`: the title, the selection's name (unless it

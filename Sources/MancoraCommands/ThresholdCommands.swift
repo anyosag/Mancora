@@ -16,9 +16,14 @@ enum ThresholdCommands {
 
     static func thresholder(_ name: String, _ context: inout CommandContext, _ options: MacroOptions) throws {
         guard let open = context.current else { throw CommandError.noImage(name) }
-        guard open.image.pixelType != .rgb8 else { throw CommandError.notNative(name) }  // color thresholds: ImageJ
+        if open.image.pixelType == .rgb8, open.image.stack.count > 1 { throw CommandError.notNative(name) }  // RGB stacks: ImageJ
         // Thresholder works on the whole image: it deletes the selection first.
         try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in open.roi = nil }
+        if open.image.pixelType == .rgb8 {
+            // convertToByte: an RGB image is thresholded as its 8-bit conversion.
+            let options = ConversionOptions(scale: true)
+            try ProcessCommands.replaceCurrent(name, &context) { open in try ImageConverter.convert(open.image, to: .gray8, options: options) }
+        }
         if open.image.stack.count == 1 {
             let black = context.settings.blackBackground
             try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in

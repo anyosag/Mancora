@@ -1560,8 +1560,11 @@ extension Functions {
             state = try image().image.dimensions.isHyperstack
         } else if arg.contains("batch") {
             state = session.batchMode
-        } else if arg.contains("applet") || arg.contains("caps") || arg.contains("animated") || arg.hasPrefix("fft") {
+        } else if arg.contains("applet") || arg.contains("caps") || arg.contains("animated") {
             state = false
+        } else if arg.hasPrefix("fft") {
+            // A frequency-domain image: one Process ▸ FFT made ("FHT" property).
+            state = try image().image.frequencyDomain != nil
         } else if arg.contains("virtual") {
             state = try image().image.stack.isVirtual
         } else if arg.contains("composite") {
