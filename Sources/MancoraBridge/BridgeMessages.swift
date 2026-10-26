@@ -122,6 +122,8 @@ struct RunResult: Decodable {
     let results: BridgeResults
     let log: String
     let value: String?
+    let macroError: String?
+    let macroErrorLine: Int?
 }
 
 /// Just the envelope; the result is decoded separately once the type is known.

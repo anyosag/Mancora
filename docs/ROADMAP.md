@@ -144,23 +144,41 @@ far), and the WinUI swap-chain experiment, which moves to P5.
 
 ### P2: ImageJ1 essentials
 
-- Adds:
-  - all ROI types, `.roi` and `RoiSet.zip` files, and the ROI Manager
-  - measurements, Analyze Particles and the results table
-  - type conversions, the core filters, the 16 threshold methods and
-    Z-project
-  - the command table and the macro recorder
+- All ROI types with ImageJ's exact masks, and `.roi` and `RoiSet.zip`
+  files in both directions.
+- Analyze ▸ Measure and Set Measurements (ImageJ's statistics, ellipse
+  fitting, Feret's values and perimeters), Analyze Particles and the
+  results table.
+- Type conversions, Process ▸ Math and Image Calculator, the core filters
+  (Gaussian, rank, 3×3, convolve, binary), ImageJ's 17 automatic
+  threshold methods, Convert to Mask and Z Project.
+- The command table with ImageJ's option strings, and the macro recorder.
+- The Java bridge (moved here from P4): ImageJ and its plugins in a
+  supervised helper process, which runs what Mancora doesn't have yet.
 
-**Exit:** automated comparison against Fiji running headless (through the
-bridge helper), exact for integer results and within tolerance for float.
+**Exit:** each native command runs in ImageJ 1.54p through the bridge and
+the results are compared (the `ImageJ parity · Java bridge` CI job):
+integer images match exactly, float images and results within 1e-9 unless
+a case states otherwise. The ROI Manager moved to P3, which drives it.
 
 ### P3: Macro language
 
-- Port ImageJ's public-domain Tokenizer and Interpreter, with batch mode
-  and the built-in functions.
+- A faithful port of ImageJ's public-domain Tokenizer and Interpreter
+  (with `java.io.StreamTokenizer`'s rules), so ImageJ's quirks carry over.
+- The language's built-ins (strings with Java's semantics, regular
+  expressions, `String.format`, arrays, `List`, `Math`, `IJ`, `File`, the
+  same random numbers for the same seed) and the image ones: opening and
+  saving, pixels, drawing, selections, thresholds, display ranges,
+  calibration, statistics, `getValue`, results, the ROI Manager, `Stack`,
+  batch mode, and `run()` through the command table.
+- `mancora [--headless] -macro`, `-batch` and `-eval`, as Fiji's; macros
+  that use what only ImageJ has run there, through the bridge, and so do
+  the macOS app's Plugins ▸ Macros ▸ Run.
 
-**Exit:** the bundled macros and a test corpus give the same results as
-ImageJ, and `mancora --headless -macro` works on Linux.
+**Exit:** a corpus of 43 macros and the File ▸ Open Samples macros that
+plain ImageJ can run (Spirals, Straight Lines, Striped Circles) give
+ImageJ 1.54p's log, errors, images and results exactly, and CI runs
+`mancora --headless -macro` on Linux.
 
 ### P4: Java bridge and update sites
 

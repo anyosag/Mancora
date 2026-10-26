@@ -64,7 +64,7 @@ public struct MeasurementRegion: Sendable, Hashable {
         self.mask = mask
     }
 
-    func contains(_ x: Int, _ y: Int) -> Bool {
+    public func contains(_ x: Int, _ y: Int) -> Bool {
         guard let mask else { return true }
         return mask[(y - self.y) * width + (x - self.x)]
     }

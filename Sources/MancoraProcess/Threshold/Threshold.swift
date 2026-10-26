@@ -285,21 +285,7 @@ struct Processor {
     /// `setThreshold(lower, upper, lutUpdate)` as each processor type stores
     /// it; `nil` for `NO_THRESHOLD`, which removes the threshold.
     func setThreshold(_ lower: Double, _ upper: Double) -> ThresholdLevels? {
-        if lower == Self.noThreshold { return nil }
-        var lo = lower, hi = upper
-        switch type {
-        case .gray8:  // ByteProcessor
-            if lo < 0 { lo = 0 }
-            if hi > 255 { hi = 255 }
-        case .gray16:  // ShortProcessor
-            if lo < 0 { lo = 0 }
-            if hi > 65535 { hi = 65535 }
-            lo = Double(JavaNumerics.round(lo))
-            hi = Double(JavaNumerics.round(hi))
-        case .gray32Float, .rgb8:  // FloatProcessor
-            break
-        }
-        return ThresholdLevels(lower: lo, upper: hi)
+        Threshold.manual(type, lower: lower, upper: upper)
     }
 
     /// `scaleAndSetThreshold(lower, upper, lutUpdate)`: 0–255 levels mapped
@@ -470,5 +456,29 @@ struct Processor {
             counts.removeLast(65536 - Swift.max(largest + 1, 256))
         }
         return counts
+    }
+}
+
+extension Threshold {
+    /// The levels `setThreshold(lower, upper)` stores on an image of
+    /// `pixelType`: 8-bit images clamp them to 0–255, 16-bit images clamp
+    /// them to 0–65535 and round them, 32-bit images keep them; `nil` for
+    /// ImageJ's `NO_THRESHOLD` (-808080), which removes the threshold.
+    public static func manual(_ pixelType: PixelType, lower: Double, upper: Double) -> ThresholdLevels? {
+        if lower == Processor.noThreshold { return nil }
+        var lo = lower, hi = upper
+        switch pixelType {
+        case .gray8:  // ByteProcessor
+            if lo < 0 { lo = 0 }
+            if hi > 255 { hi = 255 }
+        case .gray16:  // ShortProcessor
+            if lo < 0 { lo = 0 }
+            if hi > 65535 { hi = 65535 }
+            lo = Double(JavaNumerics.round(lo))
+            hi = Double(JavaNumerics.round(hi))
+        case .gray32Float, .rgb8:  // FloatProcessor
+            break
+        }
+        return ThresholdLevels(lower: lo, upper: hi)
     }
 }

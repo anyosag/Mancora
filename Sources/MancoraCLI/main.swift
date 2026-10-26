@@ -6,12 +6,16 @@
 //   mancora luts                           list the built-in LUTs
 //   mancora update [--download <dir>]      check for a newer release
 //   mancora bridge <setup|info|commands|run|macro> …   ImageJ and its plugins in a Java helper
+//   mancora [--headless] -macro <macro.ijm> [arg]   run a macro, as ImageJ's -macro and -batch do
+//   mancora [--headless] -eval "<code>"             run macro code and print what it returns
 //   mancora --version
 
 import Foundation
 import MancoraBridge
+import MancoraCommands
 import MancoraCore
 import MancoraIO
+import MancoraMacro
 import MancoraSupport
 import MancoraUpdate
 
@@ -25,6 +29,8 @@ let usage = """
            mancora bridge info | commands [--plugins]
            mancora bridge run "<command>" "<options>" <in.tif> [<out.tif>]
            mancora bridge macro <macro.ijm> [<in.tif> …]
+           mancora [--headless] -macro <macro.ijm> [<argument>]   (also -batch, or macro)
+           mancora [--headless] -eval "<macro code>"
            mancora --version
     """
 
@@ -56,8 +62,14 @@ func describe(_ image: Hyperstack) -> String {
     return lines.joined(separator: "\n")
 }
 
-let args = Array(CommandLine.arguments.dropFirst())
+var args = Array(CommandLine.arguments.dropFirst())
+// Fiji's --headless changes nothing here: Mancora's command line never shows windows.
+if args.first == "--headless" { args.removeFirst() }
 switch (args.first, args.count) {
+case ("-macro", 2...3), ("-batch", 2...3), ("macro", 2...3):
+    await runMacroFile(args[1], argument: args.count == 3 ? args[2] : nil)
+case ("-eval", 2):
+    await runMacro(args[1], argument: nil, path: nil, printReturn: true)
 case ("info", 2...4):
     let flags = Set(args.dropFirst().dropLast())
     guard flags.isSubset(of: ["--virtual", "--scan"]) else { fail(usage) }
@@ -231,4 +243,52 @@ func printBridgeResult(_ result: BridgeRunResult) {
         }
     }
     if let value = result.value { print("macro returned: \(value)") }
+}
+
+/// `-macro path [arg]`: the path as given, or in ImageJ's macros folder.
+func runMacroFile(_ name: String, argument: String?) async {
+    var path = name
+    if !FileManager.default.fileExists(atPath: path) {
+        let home = BridgeHome.standard().root.appendingPathComponent("macros").appendingPathComponent(name).path
+        if FileManager.default.fileExists(atPath: home) { path = home }
+    }
+    guard let data = FileManager.default.contents(atPath: path) else {
+        fail("mancora: macro or script not found: \(name)")
+    }
+    await runMacro(String(decoding: data, as: UTF8.self), argument: argument, path: path, printReturn: false)
+}
+
+/// Runs a macro natively, or in ImageJ through the Java bridge when it uses
+/// something only ImageJ has (and the bridge is set up).
+func runMacro(_ code: String, argument: String?, path: String?, printReturn: Bool) async {
+    let registry = CommandRegistry.standard
+    let needsImageJ = MacroSupport.unsupported(in: code, registry: registry)
+    if !needsImageJ.isEmpty, let resources = bridgeResources(),
+        let configuration = try? Bridge.Configuration.standard(resources: resources),
+        configuration.home.hasImageJ
+    {
+        let bridge = Bridge(configuration: configuration)
+        do {
+            let result = try await bridge.runMacro(code, argument: argument ?? "")
+            await bridge.stop()
+            if !result.log.isEmpty { print(result.log, terminator: "") }
+            if printReturn, let value = result.value { print(value, terminator: "") }
+            return
+        } catch {
+            await bridge.stop()
+            fail("mancora: \(error)")
+        }
+    }
+    let session = MacroSession(registry: registry)
+    session.onLog = { line in print(line) }
+    do {
+        let value = try session.run(code, argument: argument, path: path)
+        if printReturn, let value { print(value, terminator: "") }
+    } catch {
+        var message = "Macro Error: \(error)"
+        if !needsImageJ.isEmpty {
+            message += "\n(\(needsImageJ.joined(separator: ", ")) needs ImageJ: run `mancora bridge setup` to install it.)"
+        }
+        fail(message)
+    }
 }

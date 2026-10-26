@@ -43,6 +43,13 @@ public struct CommandSettings: Sendable, Hashable {
     public var decimalPlaces = 3
     /// Analyze ▸ Set Measurements: what Measure records.
     public var measurements = Measurements.defaults
+    /// The foreground and background colors (`0xRRGGBB`): ImageJ starts with white on black.
+    public var foreground: UInt32 = 0xFFFFFF
+    public var background: UInt32 = 0x000000
+    /// A macro's `setColor(value)` or `setColor(r, g, b)`, which Fill and the
+    /// macro drawing functions use instead of the foreground color.
+    public var fillValue: Double?
+    public var fillColor: UInt32?
 
     public init() {}
 }

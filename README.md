@@ -68,7 +68,13 @@ swift build
 swift test
 swift run mancora info path/to/image.tif
 swift run mancora lut Resources/LUTs/mpl-viridis.lut
+swift run mancora --headless -macro analyze.ijm "an argument"
+swift run mancora -eval 'print(getVersion());'
 ```
+
+ImageJ macros run natively. A macro that uses something only ImageJ has
+(plots, overlays, dialogs, Fiji plugins) runs in ImageJ instead, through
+the Java bridge, once `mancora bridge setup` has installed it.
 
 Run the viewer with:
 
@@ -94,6 +100,10 @@ with code written alongside it:
   predictor.
 - Malformed files (IFD loops, truncated data, huge dimensions, corrupt LZW,
   decompression bombs) must fail with an error and never crash.
+- Every native command and a corpus of macros also run in ImageJ 1.54p
+  through the Java bridge (`MancoraParityTests`, which needs a JDK and the
+  path of ImageJ's jar in `MANCORA_TEST_IJ_JAR`). Their images, logs,
+  errors and results must match.
 
 `Tools/fixtures/generate.sh` regenerates the fixtures.
 

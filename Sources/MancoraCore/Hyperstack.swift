@@ -92,6 +92,11 @@ public struct Hyperstack: Sendable, Equatable {
         try stack.setPlane(plane, at: index)
     }
 
+    /// Changes the plane at stack `index` in place (see ``ImageStack/modifyPlane(at:_:)``).
+    public mutating func modifyPlane<T>(at index: Int, _ body: (inout Plane) throws -> T) rethrows -> T {
+        try stack.modifyPlane(at: index, body)
+    }
+
     /// Reinterprets the planes as `dims` (ImageJ's `setDimensions`); the
     /// plane count must stay the same. Channels keep their display settings
     /// where they still exist; new ones get ImageJ's defaults.

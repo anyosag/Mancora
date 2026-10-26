@@ -36,6 +36,11 @@ jobs:
           swift run mancora luts
           swift run mancora info Tests/Fixtures/tiff/ij-hyperstack-16bit.tif
           swift run mancora lut Resources/LUTs/mpl-viridis.lut
+          mancora="$(swift build --show-bin-path)/mancora"
+          # Macros run natively, ImageJ's quirks included: numbers after a string add up.
+          test "$("$mancora" --headless -eval 'print("2 + 2 = " + 2 + 2); print(d2s(PI, 3));')" = "$(printf '2 + 2 = 4\n3.142')"
+          test "$("$mancora" -eval 'return getArgument() + getVersion();')" = "1.54p"
+          "$mancora" --headless -macro Resources/Scripts/File/Open_Samples/Straight_Lines.ijm
 
   imagej-parity:
     name: ImageJ parity · Java bridge
@@ -53,7 +58,7 @@ jobs:
         run: Tools/parity/tiff-reopen.sh "$(swift build --show-bin-path)/mancora"
       - name: Java bridge integration tests
         run: MANCORA_TEST_IJ_JAR="$GITHUB_WORKSPACE/Tools/fixtures/.cache/ij-1.54p.jar" swift test --skip-build --filter MancoraBridgeTests
-      - name: Native commands against ImageJ 1.54p
+      - name: Native commands and macros against ImageJ 1.54p
         run: MANCORA_TEST_IJ_JAR="$GITHUB_WORKSPACE/Tools/fixtures/.cache/ij-1.54p.jar" swift test --skip-build --filter MancoraParityTests
 
   windows:
