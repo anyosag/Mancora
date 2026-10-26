@@ -231,7 +231,9 @@ public actor Bridge {
             data = try await connection.send(id: id, line: line)
         } catch let error as BridgeError {
             switch error {
-            case .helperExited:
+            case .timedOut, .helperExited:
+                // A helper that timed out is still busy with the request, and
+                // answers in order: stop it, so the next request gets a new one.
                 connection.terminate()
                 // Forget this helper only, not one another request has started since.
                 if self.connection === connection { self.connection = nil }

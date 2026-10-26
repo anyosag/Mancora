@@ -193,6 +193,19 @@ struct BridgeIntegrationTests {
         await bridge.stop()
     }
 
+    /// A request that times out leaves its helper busy with it; the helper is
+    /// stopped, so the next request gets a new one instead of queueing behind it.
+    @Test func aTimedOutRequestDoesNotHoldUpTheNext() async throws {
+        var config = try await BridgeFixtures.bridge().configuration
+        config.timeoutSeconds = 5
+        let bridge = Bridge(configuration: config)
+        try await bridge.start()
+        await #expect(throws: BridgeError.timedOut(seconds: 5)) { try await bridge.runMacro("wait(15000);") }
+        #expect(try await !bridge.commands().isEmpty)
+        #expect(await bridge.launchCount == 2)
+        await bridge.stop()
+    }
+
     /// Requests waiting on a helper that dies are all retried on one new helper.
     @Test func concurrentRequestsRetryOnOneNewHelper() async throws {
         let bridge = try BridgeFixtures.bridge()
