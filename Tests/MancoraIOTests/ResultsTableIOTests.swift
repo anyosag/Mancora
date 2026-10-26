@@ -18,12 +18,12 @@ struct ResultsTableIOTests {
 
     @Test func csvHasCommasQuotesAndRowNumbers() {
         let text = ResultsTableIO.encode(Self.table(), csv: true, rowNumbers: true, format: ResultsTableIO.defaultFormat)
-        #expect(text == " ,Label,Area,Mean,Note\n1,cell; one,10,2.500,\"a,b\"\n2,,11,5,\"\"\n")
+        #expect(text == " ,Label,Area,Mean,Note\n1,cell; one,10,2.500,\"a,b\"\n2,,11,5.000,\"\"\n")
     }
 
     @Test func everythingElseHasTabsAndNoQuotes() {
         let text = ResultsTableIO.encode(Self.table(), csv: false, rowNumbers: false, format: ResultsTableIO.defaultFormat)
-        #expect(text == "Label\tArea\tMean\tNote\ncell, one\t10\t2.500\ta,b\n\t11\t5\t\n")
+        #expect(text == "Label\tArea\tMean\tNote\ncell, one\t10\t2.500\ta,b\n\t11\t5.000\t\n")
         #expect(ResultsTableIO.isCSV("x.csv") && ResultsTableIO.isCSV("x.CSV"))
         #expect(!ResultsTableIO.isCSV("x.xls") && !ResultsTableIO.isCSV("x.tsv") && !ResultsTableIO.isCSV("x.Csv"))
     }

@@ -303,7 +303,7 @@ extension Functions {
         return table
     }
 
-    private func setTable(_ title: String?, _ table: ResultsTable) {
+    func setTable(_ title: String?, _ table: ResultsTable) {
         if let title, title != "Results" { session.context.tables[title] = table } else { session.context.results = table }
     }
 
@@ -727,8 +727,42 @@ extension Functions {
             let title = try getStringArg()
             setTable(title, ResultsTable())
             return nil
-        case "update", "show", "showRowNumbers", "showRowIndexes", "setLocationAndSize", "applyMacro", "sort",
-            "deleteRows", "deleteColumn", "renameColumn", "save", "open", "rename", "setSelection", "getSelectionStart",
+        case "save":
+            // ResultsTable.saveAs: tabs unless the path ends in .csv.
+            let path = try getFirstString()
+            let title = try optionalTitle()
+            try interp.getRightParen()
+            let rt = try table(title)
+            try saveTable(rt, to: path, rowNumbers: rt.showsRowNumbers ?? ((title ?? "Results") == "Results"))
+            return nil
+        case "open":
+            let path = try getFirstString()
+            let title = try optionalTitle() ?? Self.javaFileName(path)
+            try interp.getRightParen()
+            do {
+                setTable(title, try ResultsTableIO.read(path: path, parse: { javaParseDouble($0) }))
+            } catch {
+                try interp.fail("\(error)")
+            }
+            return nil
+        case "showRowNumbers", "hideRowNumbers":
+            var show = false
+            var title: String?
+            if name == "showRowNumbers" {
+                show = jIntI(try getFirstArg()) != 0
+                title = try optionalTitle()
+                try interp.getRightParen()
+            } else if interp.nextToken() == ch("(") {
+                try interp.getLeftParen()
+                if interp.nextToken() != ch(")") { title = try getString() }
+                try interp.getRightParen()
+            }
+            var rt = try table(title)
+            rt.showsRowNumbers = show
+            setTable(title, rt)
+            return nil
+        case "update", "show", "showRowIndexes", "setLocationAndSize", "applyMacro", "sort",
+            "deleteRows", "deleteColumn", "renameColumn", "rename", "setSelection", "getSelectionStart",
             "getSelectionEnd", "list", "allHeadings":
             if name == "update" || name == "show" {
                 if interp.nextToken() == ch("(") { try interp.skipParens() }
@@ -1020,28 +1054,5 @@ enum ResultsFormatter {
         if value.isNaN { return "NaN" }
         if Double(jInt(value)) == value && abs(value) < 1e9 { return ImageJFormat.d2s(value, 0) }
         return ImageJFormat.resultsTableD2S(value, decimalPlaces)
-    }
-
-    /// `ResultsTable.saveAs(path.csv)`: a heading row (" " for the row
-    /// numbers, then Label and the columns) and one line per row.
-    static func csv(_ rt: ResultsTable, decimalPlaces: Int) -> String {
-        let hasLabels = rt.labels.contains { $0 != nil }
-        var lines: [String] = []
-        var heading = [" "]
-        if hasLabels { heading.append("Label") }
-        heading.append(contentsOf: rt.columns)
-        lines.append(heading.joined(separator: ","))
-        for row in 0..<rt.count {
-            var cells = [String(row + 1)]
-            if hasLabels { cells.append(rt.labels[row] ?? "") }
-            for column in rt.columns {
-                switch rt.value(column, row: row) {
-                case .text(let s)?: cells.append(s)
-                default: cells.append(cell(rt.number(column, row: row), decimalPlaces: decimalPlaces))
-                }
-            }
-            lines.append(cells.joined(separator: ","))
-        }
-        return lines.map { $0 + "\n" }.joined()
     }
 }

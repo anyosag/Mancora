@@ -33,11 +33,22 @@ public enum ResultsTableIO {
 
     /// The file `ResultsTable.saveAs` writes: a heading line (unless the
     /// table has no rows and no columns) and one line per row, each ending
-    /// in a newline. `format` gives a number's text as the table shows it.
-    public static func encode(_ rt: ResultsTable, csv: Bool, rowNumbers: Bool, format: (Double) -> String) -> String {
+    /// in a newline.
+    ///
+    /// `format(value, fixed)` gives a number's text as the table shows it.
+    /// `fixed` is true for a column ImageJ shows with its set number of
+    /// decimal places: one with a fraction in its first 25 rows (a value
+    /// that `(int)` changes). Other columns show integers without decimals.
+    public static func encode(_ rt: ResultsTable, csv: Bool, rowNumbers: Bool, format: (Double, Bool) -> String) -> String {
         let delimiter = csv ? "," : "\t"
         let hasLabels = rt.labels.contains { $0 != nil }
         let columns = rt.columns
+        let fixed = Set(columns.filter { column in
+            (0..<min(25, rt.count)).contains { row in
+                guard case .number(let v)? = rt.value(column, row: row) else { return false }
+                return !v.isNaN && !isJavaInt(v)
+            }
+        })
         var out = ""
         if !(rt.count == 0 && columns.isEmpty) {
             var heading = rowNumbers ? " " + delimiter : ""
@@ -56,7 +67,7 @@ public enum ResultsTableIO {
                 if case .text(let s)? = rt.value(column, row: row) {
                     value = s.replacing("\n", with: "\\n")
                 } else {
-                    value = format(rt.number(column, row: row))
+                    value = format(rt.number(column, row: row), fixed.contains(column))
                 }
                 if csv, value.contains(",") || value.isEmpty { value = "\"" + value + "\"" }
                 return value
@@ -68,7 +79,7 @@ public enum ResultsTableIO {
 
     /// Saves the table as `ResultsTable.saveAs(path)` does, with commas for
     /// `.csv` and tabs otherwise.
-    public static func save(_ rt: ResultsTable, to path: String, rowNumbers: Bool, format: (Double) -> String = defaultFormat)
+    public static func save(_ rt: ResultsTable, to path: String, rowNumbers: Bool, format: (Double, Bool) -> String = defaultFormat)
         throws(MancoraIOError)
     {
         let text = encode(rt, csv: isCSV(path), rowNumbers: rowNumbers, format: format)
@@ -79,12 +90,17 @@ public enum ResultsTableIO {
         }
     }
 
-    /// ImageJ's automatic format with its default 3 decimal places:
-    /// integers without decimals. (Macros pass ImageJ's exact formatter.)
-    public static let defaultFormat: @Sendable (Double) -> String = { value in
+    /// Whether Java's `(int)value == value`.
+    static func isJavaInt(_ v: Double) -> Bool {
+        v.isFinite && v >= -2_147_483_648 && v <= 2_147_483_647 && v == v.rounded(.towardZero)
+    }
+
+    /// ImageJ's formats with its default 3 decimal places: integers without
+    /// decimals unless the column is `fixed`. (Macros pass ImageJ's exact formatter.)
+    public static let defaultFormat: @Sendable (Double, Bool) -> String = { value, fixed in
         if value.isNaN { return "NaN" }
         if value.isInfinite { return value < 0 ? "-Infinity" : "Infinity" }
-        if value == value.rounded(), abs(value) < 2_147_483_648 { return String(Int(value)) }
+        if !fixed, isJavaInt(value) { return String(Int(value)) }
         let thousandths = (abs(value) * 1000).rounded()
         guard thousandths < 1e15 else { return "\(value)" }
         let n = Int64(thousandths)
