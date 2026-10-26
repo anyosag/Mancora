@@ -9,6 +9,7 @@ enum BuiltInCommands {
             + [setMeasurements, measure, clearResults, analyzeParticles] + FilterCommands.all + ProcessCommands.all + ThresholdCommands.all + EditCommands.all
             + CropCommands.all + TransformCommands.all
             + GeometryCommands.all
+            + SegmentationCommands.all
     }
 
     // MARK: Image ▸ Lookup Tables
