@@ -286,7 +286,7 @@ private struct RoiRow: View {
 }
 
 /// The ROI Manager: a list of the selections, with + and − and an actions menu under it,
-/// and Show All in the toolbar.
+/// and Show All in the bar.
 struct RoiManagerView: View {
     @Bindable var session: AppSession
     @State private var message: String?
@@ -302,15 +302,6 @@ struct RoiManagerView: View {
             bottomBar
         }
         .frame(minWidth: 300, minHeight: 260)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Toggle(isOn: $session.showsAllRois) {
-                    Label("Show All", systemImage: "eye").labelStyle(.titleAndIcon)
-                }
-                .toggleStyle(.button)
-                .help("Show All: draw every ROI in the list on the image")
-            }
-        }
         .onChange(of: session.showsAllRois) {
             AppRecorder.shared.recordLine("roiManager(\"Show \(session.showsAllRois ? "All" : "None")\");")
         }
@@ -403,6 +394,13 @@ struct RoiManagerView: View {
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
+            // In the bar rather than the toolbar: a window this narrow pushes
+            // toolbar items into the overflow menu.
+            Toggle("Show All", isOn: $session.showsAllRois)
+                .toggleStyle(.checkbox)
+                .controlSize(.small)
+                .padding(.leading, 8)
+                .help("Show All: draw every ROI in the list on the image")
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 8)

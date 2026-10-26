@@ -260,15 +260,18 @@ struct LevelField: View {
 
     var body: some View {
         HStack(spacing: 6) {
+            // The label keeps its width; in a narrow inspector the field gives way.
             Text(title)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
             TextField(title, value: $value, format: Self.format(isIntegral: isIntegral))
                 .labelsHidden()
                 .textFieldStyle(.roundedBorder)
                 .multilineTextAlignment(.trailing)
                 .font(.callout.monospacedDigit())
-                .frame(width: 68)
+                .frame(minWidth: 44, idealWidth: 68, maxWidth: 68)
         }
     }
 
