@@ -1,5 +1,6 @@
 import AppKit
 import MancoraBridge
+import MancoraFiji
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -39,6 +40,12 @@ struct MancoraApp: App {
         // Run from `swift run` there is no app bundle; make it a regular app
         // so it gets a Dock icon, a menu bar and keyboard focus.
         NSApplication.shared.setActivationPolicy(.regular)
+        // Fiji, once installed, keeps itself up to date while Mancora runs (unless that is turned off
+        // in Settings): it looks at launch, then every hour whether a day has passed since it last did.
+        FijiState.shared.begin()
+        if !Screenshots.isActive {
+            Task { await FijiManager.shared.startAutomaticUpdates() }
+        }
     }
 
     var body: some Scene {
@@ -104,8 +111,8 @@ struct MancoraApp: App {
 }
 
 /// The Plugins menu: ImageJ's (Macros, Shortcuts, Utilities, New, …),
-/// Fiji's update sites, the bridge's state, and the commands of installed
-/// plugin jars.
+/// Fiji's update sites, the bridge's state, and (without Fiji, whose own
+/// menus hold them) the commands of installed plugin jars.
 struct PluginCommands: Commands {
     let bridge: AppBridge
     @FocusedValue(\.viewer) private var viewer
@@ -118,13 +125,17 @@ struct PluginCommands: Commands {
             Button("Manage Update Sites…") { openWindow(id: "update-sites") }
             switch bridge.state {
             case .idle, .failed:
-                Button("Start ImageJ") { Task { await bridge.start() } }
+                Button("Start \(bridge.engineName)") { Task { await bridge.start() } }
             case .starting:
-                Text("Starting ImageJ…")
+                Text("Starting \(bridge.engineName)…")
             case .ready(let imagej, let java):
-                Text("ImageJ \(imagej) · Java \(java)")
+                if bridge.usesFiji {
+                    Text("\(FijiState.shared.version.map(FijiText.name) ?? "Fiji") · ImageJ \(imagej) · Java \(java)")
+                } else {
+                    Text("ImageJ \(imagej) · Java \(java)")
+                }
             }
-            if !bridge.pluginCommands.isEmpty {
+            if !bridge.usesFiji, !bridge.pluginCommands.isEmpty {
                 Divider()
                 ForEach(bridge.pluginCommands, id: \.name) { command in
                     Button(command.name) { perform(command.name) }

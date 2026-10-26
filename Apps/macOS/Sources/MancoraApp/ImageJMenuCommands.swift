@@ -15,12 +15,16 @@ struct ImageJMenuCommands: Commands {
     @FocusedValue(\.macroEditor) private var editor
     @Environment(\.openWindow) private var openWindow
 
-    static let menus: [ImageJMenu] = {
+    /// ImageJ's own menus, from the table the app ships.
+    static let baseMenus: [ImageJMenu] = {
         guard let folder = AppBridge.resources,
             let table = try? String(contentsOf: folder.appendingPathComponent("imagej-menus.tsv"), encoding: .utf8)
         else { return [] }
         return ImageJMenu.parse(table)
     }()
+
+    /// The menus the menu bar shows: ImageJ's, with Fiji's entries merged in once Fiji is installed.
+    static var menus: [ImageJMenu] { FijiMenus.shared.menus }
 
     static func menu(_ title: String) -> ImageJMenu {
         menus.first { $0.title == title } ?? ImageJMenu(title: title, path: title)

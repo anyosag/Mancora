@@ -169,7 +169,7 @@ final class ViewerModel {
             }
             show(first.image, from: nil)
         } catch {
-            errorMessage = "\(error)"
+            presentBridgeError(error)
         }
     }
 
@@ -279,6 +279,8 @@ final class ViewerModel {
     func perform(_ name: String, bridge: AppBridge) async -> [URL] {
         if Self.mayHaveDialog(name) {
             if !bridge.isReady { await bridge.start() }
+            // Fiji was asked for, for this command, and not wanted: the command does not run.
+            if bridge.wasDeclined { return [] }
             if bridge.isReady {
                 do {
                     let dialogs = try await bridge.describeDialog(name, images: dialogImages(for: name))
@@ -287,14 +289,14 @@ final class ViewerModel {
                         return []
                     }
                 } catch {
-                    errorMessage = "\(error)"
+                    presentBridgeError(error)
                     return []
                 }
             }
         }
         // Without a dialog these would wipe settings (distance 0 removes the scale).
         if Self.needsAnswers.contains(name) {
-            errorMessage = "\(name) needs ImageJ for its dialog: install Java 11 or later, then try again."
+            errorMessage = "\(name) needs \(bridge.engineName) for its dialog, and \(bridge.engineName) is not running."
             return []
         }
         return await runRecorded(name, options: "", bridge: bridge)
@@ -437,7 +439,7 @@ final class ViewerModel {
             AppRecorder.shared.record(name, options: options)
             return handle(result, inputCount: images.count, hasImage: image != nil)
         } catch {
-            errorMessage = "\(error)"
+            presentBridgeError(error)
             return []
         }
     }
@@ -499,6 +501,7 @@ final class ViewerModel {
         do {
             return handle(try await bridge.runMacro(code, on: image), onError: onError)
         } catch {
+            if error is AppBridge.Declined { return [] }
             errorMessage = "\(error)"
             onError?("\(error)", nil)
             return []
@@ -801,5 +804,15 @@ final class ViewerModel {
         else { return false }
         return reread.stack == image.stack && reread.dimensions == image.dimensions
             && reread.channels.map(\.displayRange) == image.channels.map(\.displayRange)
+    }
+}
+
+// MARK: Errors from the bridge
+
+extension ViewerModel {
+    /// A bridge failure for the person to read, unless it is their own "no" to downloading Fiji.
+    func presentBridgeError(_ error: any Error) {
+        if error is AppBridge.Declined { return }
+        errorMessage = "\(error)"
     }
 }

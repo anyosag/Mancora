@@ -23,6 +23,11 @@ enum CommandCatalog {
 
     private static var cached: [String: Place]?
 
+    /// The menus changed (Fiji's were merged in): build the catalog again when next asked.
+    static func invalidate() {
+        cached = nil
+    }
+
     private static func build() -> [String: Place] {
         var found: [String: Place] = [:]
         for menu in ImageJMenuCommands.menus { walk(menu, into: &found) }
@@ -168,7 +173,8 @@ struct CommandFinder: View {
             footer(canRun: selected != nil)
         }
         .frame(width: 540, height: 460)
-        .task { await bridge.start() }
+        // Starts the engine to list its plugins' commands, but does not ask for Fiji: that is for a command to do.
+        .task { await bridge.start(prompting: false) }
         .task {
             // A sheet takes a moment to become key; focus the field once it has.
             try? await Task.sleep(for: .milliseconds(120))
@@ -289,13 +295,16 @@ struct CommandFinder: View {
 
     @ViewBuilder private var bridgeStatus: some View {
         switch bridge.state {
+        case .idle where !bridge.engineIsInstalled:
+            Text("Fiji downloads when a command needs it").foregroundStyle(.secondary)
         case .idle, .starting:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text("Starting ImageJ…").foregroundStyle(.secondary)
+                Text("Starting \(bridge.engineName)…").foregroundStyle(.secondary)
             }
         case .ready(let imagej, _):
-            Text("ImageJ \(imagej)").foregroundStyle(.secondary)
+            Text(bridge.usesFiji ? (FijiState.shared.version.map(FijiText.name) ?? "Fiji") : "ImageJ \(imagej)")
+                .foregroundStyle(.secondary)
         case .failed(let message):
             Text(message).foregroundStyle(.red).lineLimit(2).help(message)
         }
