@@ -99,6 +99,18 @@ struct UpdateCheckerTests {
         #expect(sums == ["one.dmg": String(repeating: "a", count: 64), "two.exe": String(repeating: "b", count: 64)])
     }
 
+    /// RFC 7231 §7.1.1.1: recipients accept all three HTTP-date formats, as
+    /// Java's `URLConnection.getLastModified` does. (An update site's
+    /// unparsed Last-Modified becomes the epoch, so every file reads as new.)
+    @Test func lastModifiedInEveryHTTPDateFormat() {
+        let expected = Date(timeIntervalSince1970: 1_719_835_200)
+        for text in ["Mon, 01 Jul 2024 12:00:00 GMT", "Monday, 01-Jul-24 12:00:00 GMT", "Mon Jul  1 12:00:00 2024"] {
+            #expect(URLSessionHTTPClient.httpDate(text) == expected, "\(text)")
+        }
+        #expect(URLSessionHTTPClient.httpDate("Tue, 15 Nov 1994 08:12:31 GMT") == Date(timeIntervalSince1970: 784_887_151))
+        #expect(URLSessionHTTPClient.httpDate("yesterday") == nil)
+    }
+
     @Test func schedule() {
         let schedule = UpdateSchedule()
         let now = Date(timeIntervalSince1970: 1_000_000)
