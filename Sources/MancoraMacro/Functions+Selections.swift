@@ -307,6 +307,7 @@ extension Functions {
         if let title, title != "Results" { session.context.tables[title] = table } else { session.context.results = table }
     }
 
+    /// `getResult(column, row, title)`, which is also `Table.get`.
     func getResult() throws(MacroSignal) -> Double {
         try interp.getLeftParen()
         let column = try getString()
@@ -334,6 +335,7 @@ extension Functions {
         }
     }
 
+    /// `getResultString(column, row, title)`, which is also `Table.getString`.
     func getResultString() throws(MacroSignal) -> String {
         try interp.getLeftParen()
         let column = try getString()
@@ -660,30 +662,11 @@ extension Functions {
                 try interp.getRightParen()
             }
             return Variable(ResultsFormatter.headings(try table(title)))
-        case "get", "getString":
-            let column = try getFirstString()
-            try interp.getComma()
-            let row = jIntI(try interp.getExpression())
-            let title = try optionalTitle()
-            try interp.getRightParen()
-            let rt = try table(title)
-            if row < 0 || row >= rt.count { try interp.fail("Row (\(row)) out of range") }
-            if column == "Label", rt.labels[row] != nil || !rt.columns.contains("Label") {
-                return Variable(rt.labels[row] ?? "")
-            }
-            guard rt.columns.contains(column) else { try interp.fail("\"\(column)\" column not found") }
-            if name == "getString" {
-                switch rt.value(column, row: row) {
-                case .text(let s)?: return Variable(s)
-                default:
-                    return Variable(
-                        ResultsFormatter.cell(
-                            rt.number(column, row: row), column: column, of: rt,
-                            decimalPlaces: session.context.settings.decimalPlaces))
-                }
-            }
-            if case .text(let s)? = rt.value(column, row: row) { return Variable(toolsParseDouble(s)) }
-            return Variable(rt.number(column, row: row))
+        case "get":
+            // Java's Table.get and Table.getString are getResult and getResultString.
+            return Variable(try getResult())
+        case "getString":
+            return Variable(try getResultString())
         case "set":
             let column = try getFirstString()
             try interp.getComma()
@@ -716,9 +699,17 @@ extension Functions {
             let title = try optionalTitle()
             try interp.getRightParen()
             var rt = try table(title)
+            let initialSize = rt.count
             while rt.count < values.count { rt.addRow() }
             for (row, v) in values.elements.enumerated() {
                 if let s = v.getString() { rt.set(column, row: row, .text(s)) } else { rt.set(column, row: row, v.getValue()) }
+            }
+            // ResultsTable.setColumn empties the rest of a short column, and the new rows of the others.
+            for row in values.count..<max(values.count, rt.count) { rt.set(column, row: row, .text("")) }
+            if initialSize > 0 {
+                for other in rt.columns where other != column {
+                    for row in initialSize..<rt.count { rt.set(other, row: row, .text("")) }
+                }
             }
             setTable(title, rt)
             return nil

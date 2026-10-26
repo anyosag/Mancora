@@ -377,6 +377,16 @@ enum MacroCorpus {
         .init("String.format: a repeated flag", #"""
             print(String.format("%++.2f", 1));
             """#),
+        .init("Table.get, Table.getString and Table.setColumn", #"""
+            Table.setColumn("v", newArray(1, 2.5, 3));
+            Table.setColumn("w", newArray("a", "b"));
+            print(Table.size, Table.getString("w", 2) + "|", Table.get("w", 2), Table.get("v"), Table.getString("v"));
+            Table.setColumn("x", newArray(7, 8, 9, 10, 11));
+            print(Table.size, Table.getString("v", 4) + "|", Table.get("v", 4), Table.getString("w", 3) + "|", Table.getString("x", 4));
+            print(Table.get("missing", 0), Table.getString("missing", 0));
+            setResult("Label", 0, "lbl");
+            print(Table.getString("Label", 0), Table.get("Label", 0), Table.get("x", 1));
+            """#),
     ]
 
     /// Images: the current image, pixels, selections, statistics,
