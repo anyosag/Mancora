@@ -34,11 +34,13 @@ enum CommandCatalog {
         return found
     }()
 
-    /// The shortcut as the menu bar gives it (see `MenuCommandButton.keyEquivalent`).
+    /// The shortcut as the menu bar gives it: the same ones, by `MenuCommandButton.keyEquivalent`'s rules.
     static func shortcutText(name: String, shortcut: Character?) -> String? {
-        guard let equivalent = MenuCommandButton.keyEquivalent(name: name, shortcut: shortcut) else { return nil }
-        let key = String(equivalent.key.character).uppercased()
-        return (equivalent.modifiers.contains(.shift) ? "⇧⌘" : "⌘") + key
+        guard MenuCommandButton.keyEquivalent(name: name, shortcut: shortcut) != nil else { return nil }
+        if name.hasSuffix("[+]") { return "⌘+" }
+        if name.hasSuffix("[-]") { return "⌘-" }
+        guard let shortcut else { return nil }
+        return (shortcut.isUppercase ? "⇧⌘" : "⌘") + String(shortcut).uppercased()
     }
 
     /// A command's name as a heading: "Gaussian Blur..." as "Gaussian Blur".
