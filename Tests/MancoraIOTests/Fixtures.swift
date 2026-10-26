@@ -51,6 +51,8 @@ enum Fixtures {
         let pattern: String
         let type: String
         let planes: Int
+        /// Channels the planes form (16-bit RGB opens as one per sample).
+        let channels: Int?
         let width: Int
         let height: Int
         let signed: Bool?

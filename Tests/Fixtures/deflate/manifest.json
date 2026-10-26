@@ -1,0 +1,158 @@
+[
+ {
+  "file": "text-l0.zlib",
+  "format": "zlib",
+  "length": 20000,
+  "sha256": "859f14cbc534369bb4c0e1401ee9a1d4de3f07213058eaecf8b128d4005e133e"
+ },
+ {
+  "file": "text-l1.zlib",
+  "format": "zlib",
+  "length": 20000,
+  "sha256": "859f14cbc534369bb4c0e1401ee9a1d4de3f07213058eaecf8b128d4005e133e"
+ },
+ {
+  "file": "text-l9.zlib",
+  "format": "zlib",
+  "length": 20000,
+  "sha256": "859f14cbc534369bb4c0e1401ee9a1d4de3f07213058eaecf8b128d4005e133e"
+ },
+ {
+  "file": "text.deflate",
+  "format": "raw",
+  "length": 20000,
+  "sha256": "859f14cbc534369bb4c0e1401ee9a1d4de3f07213058eaecf8b128d4005e133e"
+ },
+ {
+  "file": "text.gz",
+  "format": "gzip",
+  "length": 20000,
+  "sha256": "859f14cbc534369bb4c0e1401ee9a1d4de3f07213058eaecf8b128d4005e133e"
+ },
+ {
+  "file": "random-l0.zlib",
+  "format": "zlib",
+  "length": 4096,
+  "sha256": "c33417cdc29da3cc0cfb3efffebfa148bc571cedcfc99071417bcd9a5145b251"
+ },
+ {
+  "file": "random-l1.zlib",
+  "format": "zlib",
+  "length": 4096,
+  "sha256": "c33417cdc29da3cc0cfb3efffebfa148bc571cedcfc99071417bcd9a5145b251"
+ },
+ {
+  "file": "random-l9.zlib",
+  "format": "zlib",
+  "length": 4096,
+  "sha256": "c33417cdc29da3cc0cfb3efffebfa148bc571cedcfc99071417bcd9a5145b251"
+ },
+ {
+  "file": "random.deflate",
+  "format": "raw",
+  "length": 4096,
+  "sha256": "c33417cdc29da3cc0cfb3efffebfa148bc571cedcfc99071417bcd9a5145b251"
+ },
+ {
+  "file": "random.gz",
+  "format": "gzip",
+  "length": 4096,
+  "sha256": "c33417cdc29da3cc0cfb3efffebfa148bc571cedcfc99071417bcd9a5145b251"
+ },
+ {
+  "file": "runs-l0.zlib",
+  "format": "zlib",
+  "length": 21540,
+  "sha256": "e5cef019f2ed6f6c752a4250536711cf6f2e4ac66f3f0e4b08a84186bef3ceed"
+ },
+ {
+  "file": "runs-l1.zlib",
+  "format": "zlib",
+  "length": 21540,
+  "sha256": "e5cef019f2ed6f6c752a4250536711cf6f2e4ac66f3f0e4b08a84186bef3ceed"
+ },
+ {
+  "file": "runs-l9.zlib",
+  "format": "zlib",
+  "length": 21540,
+  "sha256": "e5cef019f2ed6f6c752a4250536711cf6f2e4ac66f3f0e4b08a84186bef3ceed"
+ },
+ {
+  "file": "runs.deflate",
+  "format": "raw",
+  "length": 21540,
+  "sha256": "e5cef019f2ed6f6c752a4250536711cf6f2e4ac66f3f0e4b08a84186bef3ceed"
+ },
+ {
+  "file": "runs.gz",
+  "format": "gzip",
+  "length": 21540,
+  "sha256": "e5cef019f2ed6f6c752a4250536711cf6f2e4ac66f3f0e4b08a84186bef3ceed"
+ },
+ {
+  "file": "empty-l0.zlib",
+  "format": "zlib",
+  "length": 0,
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+ },
+ {
+  "file": "empty-l1.zlib",
+  "format": "zlib",
+  "length": 0,
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+ },
+ {
+  "file": "empty-l9.zlib",
+  "format": "zlib",
+  "length": 0,
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+ },
+ {
+  "file": "empty.deflate",
+  "format": "raw",
+  "length": 0,
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+ },
+ {
+  "file": "empty.gz",
+  "format": "gzip",
+  "length": 0,
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+ },
+ {
+  "file": "byte-l0.zlib",
+  "format": "zlib",
+  "length": 1,
+  "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+ },
+ {
+  "file": "byte-l1.zlib",
+  "format": "zlib",
+  "length": 1,
+  "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+ },
+ {
+  "file": "byte-l9.zlib",
+  "format": "zlib",
+  "length": 1,
+  "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+ },
+ {
+  "file": "byte.deflate",
+  "format": "raw",
+  "length": 1,
+  "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+ },
+ {
+  "file": "byte.gz",
+  "format": "gzip",
+  "length": 1,
+  "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+ },
+ {
+  "file": "text-two-members.gz",
+  "format": "gzip",
+  "length": 20000,
+  "sha256": "859f14cbc534369bb4c0e1401ee9a1d4de3f07213058eaecf8b128d4005e133e"
+ }
+]

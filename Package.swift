@@ -17,14 +17,18 @@ let package = Package(
     products: [
         .library(name: "MancoraCore", targets: ["MancoraCore"]),
         .library(name: "MancoraIO", targets: ["MancoraIO"]),
+        .library(name: "MancoraSupport", targets: ["MancoraSupport"]),
+        .library(name: "MancoraUpdate", targets: ["MancoraUpdate"]),
         .executable(name: "mancora", targets: ["MancoraCLI"]),
     ],
     targets: [
         .target(name: "MancoraCore", swiftSettings: strictness),
-        .target(name: "MancoraIO", dependencies: ["MancoraCore"], swiftSettings: strictness),
+        .target(name: "MancoraIO", dependencies: ["MancoraCore", "MancoraSupport"], swiftSettings: strictness),
+        .target(name: "MancoraSupport", swiftSettings: strictness),
+        .target(name: "MancoraUpdate", dependencies: ["MancoraSupport"], swiftSettings: strictness),
         .executableTarget(
             name: "MancoraCLI",
-            dependencies: ["MancoraCore", "MancoraIO"],
+            dependencies: ["MancoraCore", "MancoraIO", "MancoraUpdate"],
             swiftSettings: strictness
         ),
         .testTarget(
@@ -35,6 +39,16 @@ let package = Package(
         .testTarget(
             name: "MancoraIOTests",
             dependencies: ["MancoraCore", "MancoraIO"],
+            swiftSettings: strictness
+        ),
+        .testTarget(
+            name: "MancoraSupportTests",
+            dependencies: ["MancoraSupport"],
+            swiftSettings: strictness
+        ),
+        .testTarget(
+            name: "MancoraUpdateTests",
+            dependencies: ["MancoraSupport", "MancoraUpdate"],
             swiftSettings: strictness
         ),
     ],

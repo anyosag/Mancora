@@ -3,12 +3,15 @@ public import MancoraCore
 /// Opens TIFF files as ``Hyperstack``s, following ImageJ's conventions for
 /// stacks, hyperstacks, calibration and display settings.
 ///
-/// Supported in Phase 0:
-/// - big- and little-endian classic TIFF
-/// - 1, 8, 16 and 32-bit grayscale (unsigned, signed or float) and 8-bit
-///   RGB/RGBA (alpha is dropped), chunky or planar
+/// Supported:
+/// - big- and little-endian classic TIFF and BigTIFF
+/// - 1, 8, 16 and 32-bit grayscale (unsigned, signed or float), 16-bit
+///   (half) and 64-bit float grayscale (read as 32-bit float), 8-bit
+///   RGB/RGBA (alpha is dropped), and 16-bit RGB(A) (one channel per
+///   sample, as ImageJ does), chunky or planar
 /// - palette (ColorMap) and WhiteIsZero images, read as a LUT
-/// - no compression, PackBits, and LZW (with or without horizontal predictor)
+/// - no compression, PackBits, LZW and Deflate, with the horizontal or
+///   floating-point predictor
 /// - strips and tiles
 /// - multi-page files, and ImageJ stacks whose planes follow the first IFD
 public enum TIFFImporter {
@@ -38,13 +41,24 @@ public enum TIFFImporter {
         case (0x4D, 0x4D): reader.bigEndian = true
         default: throw .invalidFormat("not a TIFF file")
         }
+        let bigTIFF: Bool
+        let firstOffset: Int
         switch try reader.u16(at: 2) {
-        case 42: break
-        case 43: throw .unsupported("BigTIFF (arrives in Phase 1)")
-        default: throw .invalidFormat("not a TIFF file")
+        case 42:
+            bigTIFF = false
+            firstOffset = Int(try reader.u32(at: 4))
+        case 43:
+            // BigTIFF: offset size 8, a reserved zero, then a 64-bit first IFD offset.
+            guard bytes.count >= 16, try reader.u16(at: 4) == 8, try reader.u16(at: 6) == 0 else {
+                throw .invalidFormat("BigTIFF header with an unsupported offset size")
+            }
+            bigTIFF = true
+            firstOffset = try TIFFDirectory.offset(reader, at: 8, bigTIFF: true)
+        default:
+            throw .invalidFormat("not a TIFF file")
         }
 
-        let pages = try readPages(reader: reader)
+        let pages = try readPages(reader: reader, firstOffset: firstOffset, bigTIFF: bigTIFF)
         guard let first = pages.first else { throw .invalidFormat("no images in file") }
         let description = first.description.flatMap(ImageJDescription.init)
 
@@ -56,13 +70,13 @@ public enum TIFFImporter {
             let planeBytes = first.chunkRowBytes(first.width) * first.height
             try checkBudget(planes: n, page: first, options: options)
             for k in 0..<n {
-                planes.append(try TIFFPlaneDecoder.decodeContiguous(first, at: start + k * planeBytes, reader: reader))
+                planes += try TIFFPlaneDecoder.decodeContiguous(first, at: start + k * planeBytes, reader: reader)
             }
         } else {
             let stackable = pages.filter { !$0.isReducedResolution && $0.stackSignature == first.stackSignature }
             try checkBudget(planes: stackable.count, page: first, options: options)
             for page in stackable {
-                planes.append(try TIFFPlaneDecoder.decode(page, reader: reader))
+                planes += try TIFFPlaneDecoder.decode(page, reader: reader)
             }
         }
 
@@ -73,7 +87,11 @@ public enum TIFFImporter {
             throw .model(error)
         }
 
-        var dims = HyperstackDimensions(slices: planes.count)
+        let samplePlanes = first.planesPerPage
+        var dims =
+            samplePlanes > 1
+            ? HyperstackDimensions(channels: samplePlanes, slices: planes.count / samplePlanes)
+            : HyperstackDimensions(slices: planes.count)
         if let d = description {
             let candidate = HyperstackDimensions(
                 channels: max(d.channels ?? 1, 1),
@@ -93,6 +111,12 @@ public enum TIFFImporter {
         }
         if let range = description?.displayRange, stack.pixelType.usesLUT {
             for c in channels.indices { channels[c].displayRange = range }
+        } else if samplePlanes == 3, planes.count == 3, !first.isPlanar {
+            // ImageJ shows a chunky 16-bit RGB image with one range spanning all three samples.
+            let ranges = planes.compactMap { $0.valueRange() }
+            if let low = ranges.map(\.lowerBound).min(), let high = ranges.map(\.upperBound).max() {
+                for c in channels.indices { channels[c].displayRange = low...high }
+            }
         }
 
         var properties: [String: String] = [:]
@@ -105,7 +129,7 @@ public enum TIFFImporter {
                 dimensions: dims,
                 calibration: calibration(first, description),
                 channels: channels,
-                compositeMode: description?.compositeMode ?? .color,
+                compositeMode: description?.compositeMode ?? (samplePlanes > 1 ? .composite : .color),
                 properties: properties
             )
         } catch {
@@ -115,15 +139,15 @@ public enum TIFFImporter {
 
     // MARK: Pages
 
-    private static func readPages(reader: ByteReader) throws(MancoraIOError) -> [TIFFPage] {
+    private static func readPages(reader: ByteReader, firstOffset: Int, bigTIFF: Bool) throws(MancoraIOError) -> [TIFFPage] {
         var pages: [TIFFPage] = []
         var visited = Set<Int>()
-        var offset = Int(try reader.u32(at: 4))
+        var offset = firstOffset
         while offset != 0 {
             // A loop in the IFD chain would otherwise never end.
             guard visited.insert(offset).inserted else { break }
             do {
-                let directory = try TIFFDirectory(reader: reader, offset: offset)
+                let directory = try TIFFDirectory(reader: reader, offset: offset, bigTIFF: bigTIFF)
                 let page = try TIFFPage(directory: directory, reader: reader)
                 pages.append(page)
                 // ImageJ stacks list every plane after the first IFD; stop here.

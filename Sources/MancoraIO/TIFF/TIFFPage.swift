@@ -88,20 +88,25 @@ struct TIFFPage: Sendable {
         try validate()
     }
 
-    /// The Mancora pixel type these samples decode to.
+    /// The Mancora pixel type these samples decode to. 16-bit RGB becomes
+    /// three 16-bit planes (channels), as ImageJ opens it.
     var pixelType: PixelType {
-        if samplesPerPixel >= 3 { return .rgb8 }
+        if samplesPerPixel >= 3 { return bitsPerSample == 16 ? .gray16 : .rgb8 }
         switch bitsPerSample {
-        case 16: return .gray16
-        case 32: return .gray32Float
+        case 16: return sampleFormat == .float ? .gray32Float : .gray16
+        case 32, 64: return .gray32Float
         default: return .gray8
         }
     }
 
+    /// Planes one page decodes to: one per sample for 16-bit RGB(A), as
+    /// ImageJ opens them as a 3- or 4-channel composite; otherwise 1.
+    var planesPerPage: Int { samplesPerPixel >= 3 && bitsPerSample == 16 ? samplesPerPixel : 1 }
+
     var bytesPerSample: Int { max(bitsPerSample / 8, 1) }
 
-    /// Bytes of one decoded plane as stored in Mancora.
-    var decodedPlaneBytes: Int { width * height * pixelType.bytesPerPixel }
+    /// Bytes of one page's decoded planes as stored in Mancora.
+    var decodedPlaneBytes: Int { width * height * pixelType.bytesPerPixel * planesPerPage }
 
     /// Pages that can be stacked together must agree on these.
     var stackSignature: [Int] {
@@ -111,25 +116,24 @@ struct TIFFPage: Sendable {
     private func validate() throws(MancoraIOError) {
         switch (bitsPerSample, samplesPerPixel) {
         case (1, 1), (8, 1), (16, 1), (32, 1): break
-        case (8, 3), (8, 4): break
-        case (16, 3), (16, 4): throw .unsupported("48-bit RGB (arrives in Phase 1)")
+        case (64, 1) where sampleFormat == .float: break
+        case (8, 3), (8, 4), (16, 3), (16, 4): break
         default: throw .unsupported("\(bitsPerSample)-bit samples with \(samplesPerPixel) samples per pixel")
         }
-        if bitsPerSample == 16, sampleFormat == .float { throw .unsupported("16-bit float samples") }
-        if bitsPerSample == 1, tileSize != nil { throw .unsupported("tiled 1-bit images") }
-        if bitsPerSample == 1, compression != 1, compression != 32773 {
-            throw .unsupported("1-bit images with compression \(compression)")
+        if bitsPerSample == 16, sampleFormat == .float, samplesPerPixel > 1 {
+            throw .unsupported("16-bit float color images")
         }
+        if bitsPerSample == 1, tileSize != nil { throw .unsupported("tiled 1-bit images") }
         switch compression {
-        case 1, 5, 32773: break
-        case 8, 32946: throw .unsupported("Deflate compression (arrives in Phase 1)")
+        case 1, 5, 8, 32773, 32946: break
         case 7: throw .unsupported("JPEG compression")
         default: throw .unsupported("compression scheme \(compression)")
         }
         switch predictor {
         case 1: break
-        case 2 where bitsPerSample >= 8: break
-        default: throw .unsupported("predictor \(predictor)")
+        case 2 where bitsPerSample >= 8 && sampleFormat != .float: break
+        case 3 where sampleFormat == .float: break
+        default: throw .unsupported("predictor \(predictor) with \(bitsPerSample)-bit samples")
         }
         // Like ImageJ, read any 3- or 4-sample 8-bit image as RGB, except
         // CMYK and YCbCr, whose values would need converting.
