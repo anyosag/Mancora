@@ -169,7 +169,7 @@ final class ViewerModel {
             }
             show(first.image, from: nil)
         } catch {
-            errorMessage = "\(error)"
+            presentBridgeError(error)
         }
     }
 
@@ -279,6 +279,8 @@ final class ViewerModel {
     func perform(_ name: String, bridge: AppBridge) async -> [URL] {
         if Self.mayHaveDialog(name) {
             if !bridge.isReady { await bridge.start() }
+            // Fiji was asked for, for this command, and not wanted: the command does not run.
+            if bridge.wasDeclined { return [] }
             if bridge.isReady {
                 do {
                     let dialogs = try await bridge.describeDialog(name, images: dialogImages(for: name))
@@ -287,14 +289,14 @@ final class ViewerModel {
                         return []
                     }
                 } catch {
-                    errorMessage = "\(error)"
+                    presentBridgeError(error)
                     return []
                 }
             }
         }
         // Without a dialog these would wipe settings (distance 0 removes the scale).
         if Self.needsAnswers.contains(name) {
-            errorMessage = "\(name) needs ImageJ for its dialog: install Java 11 or later, then try again."
+            errorMessage = "\(name) needs \(bridge.engineName) for its dialog, and \(bridge.engineName) is not running."
             return []
         }
         return await runRecorded(name, options: "", bridge: bridge)
@@ -437,7 +439,7 @@ final class ViewerModel {
             AppRecorder.shared.record(name, options: options)
             return handle(result, inputCount: images.count, hasImage: image != nil)
         } catch {
-            errorMessage = "\(error)"
+            presentBridgeError(error)
             return []
         }
     }
@@ -499,6 +501,7 @@ final class ViewerModel {
         do {
             return handle(try await bridge.runMacro(code, on: image), onError: onError)
         } catch {
+            if error is AppBridge.Declined { return [] }
             errorMessage = "\(error)"
             onError?("\(error)", nil)
             return []
@@ -524,6 +527,8 @@ final class ViewerModel {
             let text = "Macro Error: " + error + (result.macroErrorLine.map { " in line \($0)" } ?? "")
             errorMessage = text
             onError?(text, result.macroErrorLine)
+        } else if let error = result.scriptError {
+            errorMessage = "Script Error: " + error
         } else if let value = result.value {
             report = "Returned: \(value)"
         }
@@ -801,5 +806,54 @@ final class ViewerModel {
         else { return false }
         return reread.stack == image.stack && reread.dimensions == image.dimensions
             && reread.channels.map(\.displayRange) == image.channels.map(\.displayRange)
+    }
+}
+
+// MARK: Fiji's own menu entries
+
+extension ViewerModel {
+    /// A bridge failure for the person to read, unless it is their own "no" to downloading Fiji.
+    func presentBridgeError(_ error: any Error) {
+        if error is AppBridge.Declined { return }
+        errorMessage = "\(error)"
+    }
+
+    /// Runs an entry of Fiji's menus that ImageJ 1.x lacks (a SciJava command, a script) in Fiji, which
+    /// shows its dialog or window for someone to use. Every open image is there for it to choose from,
+    /// this one last (and so active). What it made or changed comes back as `runCommand` does,
+    /// and so do images a plugin's window made after the command returned.
+    func runFiji(_ item: FijiMenuItem, bridge: AppBridge) async -> [URL] {
+        isBusy = true
+        defer { isBusy = false }
+        let session = AppSession.shared
+        session.register(self)
+        let others = session.imageViewers.filter { $0 !== self }.compactMap(\.image)
+        let images = others + (image.map { [$0] } ?? [])
+        do {
+            let result: BridgeRunResult
+            if item.entry.kind == .script, let script = FijiScript(item.entry) {
+                result = try await bridge.runFijiScript(script.code, language: script.language, images: images)
+            } else {
+                result = try await bridge.runFijiCommand(item.entry.identifier ?? item.key, images: images)
+            }
+            var created = handle(result, inputCount: images.count, hasImage: image != nil)
+            created += await fijiImagesToShow(bridge: bridge, known: images + result.images.map(\.image))
+            return created
+        } catch {
+            presentBridgeError(error)
+            return []
+        }
+    }
+
+    /// Files for the images in Fiji's windows that Mancora doesn't show yet: not those it has open
+    /// or in `known` (what was sent to Fiji, and what the command returned), as they are. A plugin
+    /// that changed an image or made one leaves it there.
+    func fijiImagesToShow(bridge: AppBridge, known: [Hyperstack]) async -> [URL] {
+        guard bridge.hasFijiWindows, let result = try? await bridge.fijiImages() else { return [] }
+        let shown = AppSession.shared.imageViewers.compactMap(\.image) + known
+        let fresh = result.images.filter { candidate in
+            !shown.contains { $0.title == candidate.image.title && $0 == candidate.image }
+        }
+        return saveForNewWindows(fresh.map(\.image))
     }
 }

@@ -1,6 +1,7 @@
 import AppKit
 import MancoraBridge
 import MancoraCore
+import MancoraFiji
 import Observation
 import SwiftUI
 
@@ -102,24 +103,49 @@ struct EngineStatus {
     let text: String
     let level: Level
     var detail: String?
+    /// How far a download has come, 0...1, when there is one to show.
+    var fraction: Double?
 }
 
 extension AppBridge {
-    /// The engine's status for the welcome window's footer: ImageJ, through the bridge, today.
-    /// A Fiji integration replaces this one property.
+    /// The engine's status for the welcome window's footer: Fiji, which Mancora downloads on first
+    /// use and keeps up to date; an ImageJ from before Fiji until Fiji is there.
     var engineStatus: EngineStatus {
+        switch FijiState.shared.status {
+        case .installing(let progress):
+            return EngineStatus(
+                text: FijiText.progress(progress), level: .working, fraction: progress.phase == .downloading ? progress.fractionCompleted : nil)
+        case .updating:
+            return EngineStatus(text: "Updating Fiji…", level: .working)
+        case .installed(let version):
+            switch state {
+            case .starting:
+                return EngineStatus(text: "Starting Fiji…", level: .working)
+            case .failed(let message):
+                return EngineStatus(text: "Fiji unavailable", level: .failed, detail: message)
+            case .idle, .ready:
+                return EngineStatus(text: FijiText.name(version) + " ready", level: .ready)
+            }
+        case .notInstalled:
+            return imageJStatus
+        }
+    }
+
+    /// Without Fiji: an ImageJ that an earlier Mancora installed keeps working, and Fiji is offered.
+    private var imageJStatus: EngineStatus {
+        let hasImageJ = BridgeHome.standard().hasImageJ
         switch state {
         case .ready(let imagej, _):
-            return EngineStatus(text: "ImageJ \(imagej) ready", level: .ready)
+            return EngineStatus(text: "ImageJ \(imagej) ready", level: .ready, detail: "Fiji not installed")
         case .starting:
             return EngineStatus(text: "Starting ImageJ…", level: .working)
         case .failed(let message):
             return EngineStatus(text: "ImageJ unavailable", level: .failed, detail: message)
         case .idle:
-            if BridgeHome.standard().hasImageJ {
-                return EngineStatus(text: "ImageJ installed", level: .inactive, detail: "Starts when a command needs it")
+            if hasImageJ {
+                return EngineStatus(text: "ImageJ installed", level: .inactive, detail: "Fiji not installed")
             }
-            return EngineStatus(text: "ImageJ not installed", level: .inactive, detail: "Downloads when a command needs it")
+            return EngineStatus(text: "Fiji not installed", level: .inactive, detail: "Downloads on first use")
         }
     }
 }
@@ -130,6 +156,7 @@ struct WelcomeView: View {
     let bridge: AppBridge
     @Environment(\.openWindow) private var openWindow
     @State private var isDropTargeted = false
+    @State private var showsSamples = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -177,20 +204,38 @@ struct WelcomeView: View {
             VStack(spacing: 2) {
                 Button(action: openPanel) {
                     ActionRow(
-                        symbol: "folder", title: "Open…", detail: "Open an image or stack from disk",
+                        symbol: "folder", title: "Open…", detail: "An image or stack from disk",
                         shortcut: CommandCatalog.places["Open..."]?.shortcut)
                 }
                 .buttonStyle(.plain)
-                Menu {
-                    ForEach(Self.sampleNames, id: \.self) { name in
-                        Button(MenuCommandButton.title(name)) { openSample(name) }
-                    }
-                } label: {
-                    ActionRow(symbol: "photo.on.rectangle", title: "Open Sample", detail: "Try one of ImageJ's sample images")
+                // A row like the others that opens a list: macOS draws a Menu's
+                // custom label flattened, which lost the row's layout.
+                Button { showsSamples = true } label: {
+                    ActionRow(symbol: "photo.on.rectangle", title: "Open Sample", detail: "Try one of ImageJ's samples")
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
+                .buttonStyle(.plain)
                 .disabled(Self.sampleNames.isEmpty)
+                .popover(isPresented: $showsSamples, arrowEdge: .trailing) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Self.sampleNames, id: \.self) { name in
+                                Button {
+                                    showsSamples = false
+                                    openSample(name)
+                                } label: {
+                                    Text(MenuCommandButton.title(name))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 5)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.vertical, 6)
+                    }
+                    .frame(width: 240, height: 360)
+                }
                 Button(action: newImage) {
                     ActionRow(
                         symbol: "plus.square", title: "New Image…", detail: "Create a blank image",
@@ -250,6 +295,10 @@ struct WelcomeView: View {
                 .frame(width: 8, height: 8)
             Text(status.text)
                 .font(.callout)
+            if let fraction = status.fraction {
+                ProgressView(value: fraction)
+                    .frame(width: 110)
+            }
             if let detail = status.detail {
                 Text("·")
                     .foregroundStyle(.tertiary)
@@ -259,6 +308,12 @@ struct WelcomeView: View {
                     .lineLimit(1)
             }
             Spacer()
+            if !FijiState.shared.isInstalled, status.level != .working {
+                Button("Download Fiji…") { Task { await bridge.downloadFiji() } }
+                    .buttonStyle(.plain)
+                    .font(.callout)
+                    .foregroundStyle(Color.accentColor)
+            }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 9)
@@ -398,7 +453,7 @@ struct WelcomeView: View {
                             .font(.caption)
                             .foregroundStyle(Color.secondary)
                             .lineLimit(1)
-                            .truncationMode(.head)
+                            .truncationMode(.middle)
                     }
                     Spacer(minLength: 0)
                 }

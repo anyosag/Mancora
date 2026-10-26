@@ -3,6 +3,7 @@ import CoreGraphics
 import Foundation
 import MancoraBridge
 import MancoraCore
+import MancoraFiji
 import MancoraIO
 import MancoraMacro
 import SwiftUI
@@ -10,7 +11,7 @@ import SwiftUI
 // `Mancora --screenshots <folder>`: opens real windows, puts the app in each
 // state a design review wants to see (the welcome window, no image, the inspector, a threshold,
 // selections, a hyperstack, the ROI Manager, Results, plots, the macro editor, the recorder,
-// command dialogs, Find Command, Update Sites, the Image menu), saves a PNG
+// command dialogs, Find Command, Update Sites, Settings ▸ Fiji, the first-use Fiji sheet, the Image menu), saves a PNG
 // of the window in light and in dark mode, writes `index.md`, and exits.
 //
 // How windows are opened: the first window's (the welcome window's) SwiftUI scene hands its
@@ -48,10 +49,10 @@ enum Screenshots {
     }
 
     /// Starts the run (once) from the first window.
-    static func startOnce(bridge: AppBridge, openWindow: OpenWindowAction) {
+    static func startOnce(bridge: AppBridge, openWindow: OpenWindowAction, openSettings: OpenSettingsAction) {
         guard let directory = outputDirectory, !hasStarted else { return }
         hasStarted = true
-        let run = ScreenshotRun(directory: directory, bridge: bridge, openWindow: openWindow)
+        let run = ScreenshotRun(directory: directory, bridge: bridge, openWindow: openWindow, openSettings: openSettings)
         // Not tied to the window's task: closing that window must not stop the run.
         Task {
             let status = await run.execute()
@@ -89,9 +90,10 @@ extension View {
 struct ScreenshotDriver: ViewModifier {
     let bridge: AppBridge
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
 
     func body(content: Content) -> some View {
-        content.task { Screenshots.startOnce(bridge: bridge, openWindow: openWindow) }
+        content.task { Screenshots.startOnce(bridge: bridge, openWindow: openWindow, openSettings: openSettings) }
     }
 }
 
@@ -139,6 +141,7 @@ final class ScreenshotRun {
     private let directory: URL
     private let bridge: AppBridge
     private let openWindow: OpenWindowAction
+    private let openSettings: OpenSettingsAction
     private let startedAt = Date()
     private var fixtures: URL?
     private var samples: SampleFiles?
@@ -148,10 +151,11 @@ final class ScreenshotRun {
     private var gray: Opened?
     private var screencaptureFailures = 0
 
-    init(directory: URL, bridge: AppBridge, openWindow: OpenWindowAction) {
+    init(directory: URL, bridge: AppBridge, openWindow: OpenWindowAction, openSettings: OpenSettingsAction) {
         self.directory = directory
         self.bridge = bridge
         self.openWindow = openWindow
+        self.openSettings = openSettings
     }
 
     /// Runs every state; the exit status is 1 only when nothing was captured.
@@ -389,9 +393,96 @@ final class ScreenshotRun {
             await shoot("12", "update-sites", "The Update Sites window", window)
         }
 
+        // Update Sites as it reads with Fiji: its sites, with their descriptions and URLs. The list is
+        // made from the well-known sites (a real Fiji's is read from its db.xml.gz), so nothing is read.
+        await state("12b", "update-sites-fiji") {
+            AppUpdateSites.shared.showPreview()
+            defer { AppUpdateSites.shared.endPreview() }
+            let window = try await openTool("update-sites", title: "Update Sites")
+            await settle(1.5)
+            await shoot("12b", "update-sites-fiji", "The Update Sites window with Fiji's update sites (a made-up list)", window)
+        }
+
+        // Settings ▸ Fiji, with a made-up Fiji so the pictures do not depend on the computer.
+        await state("14", "settings-fiji") {
+            try await shootFijiSettings(
+                "14", "settings-fiji", installed: true, staged: false,
+                detail: "Settings ▸ Fiji with Fiji installed and up to date (made-up state)")
+        }
+
+        await state("14b", "settings-fiji-not-installed") {
+            try await shootFijiSettings(
+                "14b", "settings-fiji-not-installed", installed: false, staged: false,
+                detail: "Settings ▸ Fiji before Fiji is downloaded (made-up state)")
+        }
+
+        await state("14c", "settings-fiji-staged") {
+            try await shootFijiSettings(
+                "14c", "settings-fiji-staged", installed: true, staged: true,
+                detail: "Settings ▸ Fiji with an update waiting for the next start and the last automatic update's error (made-up state)")
+        }
+
+        // The sheet a command that needs Fiji shows when Fiji is not installed: the offer, then a
+        // download that is 42% done. Nothing is downloaded.
+        await state("15", "fiji-first-use") {
+            try await shootFijiSheet(
+                "15", "fiji-first-use", progress: nil,
+                detail: "The first-use sheet that offers to download Fiji")
+        }
+
+        await state("15b", "fiji-first-use-progress") {
+            let progress = FijiProgress(phase: .downloading, completedBytes: 296_000_000, totalBytes: 703_000_000)
+            try await shootFijiSheet(
+                "15b", "fiji-first-use-progress", progress: progress,
+                detail: "The first-use sheet while Fiji downloads (a made-up progress: nothing is downloaded)")
+        }
+
         await state("13", "image-menu") {
             try await shootImageMenu()
         }
+    }
+
+    /// Settings ▸ Fiji in front, for a made-up Fiji (installed or not), and its picture.
+    private func shootFijiSettings(_ code: String, _ name: String, installed: Bool, staged: Bool, detail: String) async throws {
+        let location = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/Mancora/Fiji")
+        var settings = FijiSettings()
+        if installed {
+            settings.lastCheck = Date().addingTimeInterval(-2 * 3600)
+            settings.lastUpdate = Date().addingTimeInterval(-3 * 86400)
+            if staged { settings.lastError = "Fiji’s update sites couldn’t all be read: the network connection was lost." }
+        }
+        let version = FijiVersion(fiji: "2.18.0", imageJ2: "2.16.0", imageJ1: "1.54p", java: "21.0.7")
+        FijiState.shared.showPreview(
+            status: installed ? .installed(version) : .notInstalled, settings: settings,
+            staged: staged ? ["update jars/trackmate-7.14.0.jar (Fiji)", "update jars/labkit-ui-0.3.11.jar (Fiji)"] : [], location: location)
+        SettingsSelection.shared.tab = .fiji
+        do {
+            openSettings()
+            guard let window = await poll(timeout: 30, { Self.settingsWindow() }) else { throw Failure("the Settings window never appeared") }
+            await settle(1.2)
+            await shoot(code, name, detail, window)
+            window.close()
+        } catch {
+            SettingsSelection.shared.tab = .general
+            await FijiState.shared.endPreview()
+            throw error
+        }
+        SettingsSelection.shared.tab = .general
+        await FijiState.shared.endPreview()
+    }
+
+    /// The first-use sheet on the grayscale image's window, with a made-up progress, and its picture.
+    private func shootFijiSheet(_ code: String, _ name: String, progress: FijiProgress?, detail: String) async throws {
+        let g = try grayscale()
+        FijiSetup.shared.showPreview(reason: "This command needs Fiji.", progress: progress, on: g.window)
+        guard await waitUntil(10, { g.window.attachedSheet != nil }) else {
+            FijiSetup.shared.endPreview()
+            throw Failure("the Fiji sheet never appeared")
+        }
+        await settle(1.0)
+        await shoot(code, name, detail, g.window)
+        FijiSetup.shared.endPreview()
+        await waitUntil(5, { g.window.attachedSheet == nil })
     }
 
     /// Runs one state; a state that can't be set up is a problem in the index, and the run goes on.
@@ -506,7 +597,9 @@ final class ScreenshotRun {
     private var bridgeHasSettled: Bool {
         switch bridge.state {
         case .ready, .failed: true
-        case .idle, .starting: false
+        // With no engine installed Find Command does not start one (it only lists what one has).
+        case .idle: !bridge.engineIsInstalled
+        case .starting: false
         }
     }
 
@@ -698,6 +791,15 @@ final class ScreenshotRun {
 
     private static func window(titled title: String) -> NSWindow? {
         contentWindows().first { $0.title == title }
+    }
+
+    /// The Settings window: SwiftUI names it after its pane.
+    private static func settingsWindow() -> NSWindow? {
+        NSApplication.shared.windows.first { window in
+            window.isVisible && window.sheetParent == nil
+                && (window.identifier?.rawValue.localizedCaseInsensitiveContains("settings") == true
+                    || ["Settings", "General", "Fiji"].contains(window.title))
+        }
     }
 
     private func setAppearance(dark: Bool) {
@@ -1046,6 +1148,8 @@ final class ScreenshotRun {
             "- State 09 is the macro editor (Plugins ▸ New ▸ Macro) with text put straight into its text view; 09b is the Recorder window.",
             "- State 13 is the Image menu as a pop-up (a rebuilt copy of the menu bar's menu), not hanging from the menu bar.",
             "- States 10 and 10b use hand-made descriptions of Gaussian Blur…'s and Set Scale…'s dialogs, so they need no Java. State 11 shows recent commands from a made-up list, 11b a search for “blur”.",
+            "- State 12 is the Update Sites window as this computer has it; 12b shows Fiji's update sites from a made-up list (the well-known sites), so nothing is read.",
+            "- States 14, 14b and 14c are Settings ▸ Fiji (installed, not installed, and with an update waiting for the next start plus the last automatic update's error) for a made-up Fiji, so they do not depend on what is installed here. States 15 and 15b are the sheet a command shows when it needs Fiji, on the first image window: the offer, and a download made up to be 42% done. Nothing is downloaded.",
             "- The images are made in memory (`SampleImages`) and saved as TIFFs in a temporary folder, because windows open files: `nuclei-DAPI.tif`, a 512×512 8-bit fluorescence-like image of soft blobs on a dark, noisy background, and `composite-3ch.tif`, a 256×256 16-bit composite of 3 channels (red, green, blue) and 5 slices. The small test fixtures in `Tests/Fixtures/tiff` are only the fallback.",
         ]
         let text = lines.joined(separator: "\n") + "\n"

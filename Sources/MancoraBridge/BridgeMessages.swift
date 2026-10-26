@@ -46,10 +46,138 @@ public struct BridgeCommand: Sendable, Hashable, Decodable {
 
 /// The helper's own description of itself.
 public struct BridgeHello: Sendable, Hashable, Decodable {
+    /// ImageJ's version: `1.54p`, or in Fiji ImageJ2's and ImageJ 1.x's, `2.18.0/1.54p`.
     public let imagej: String
     public let java: String
     public let pluginsDir: String?
     public let pid: Int
+    /// In Fiji: the versions of its parts by name (`Fiji`, `ImageJ2`, `ImageJ1`, `SciJava`, …).
+    public let fiji: [String: String]?
+    /// In Fiji: what starting ImageJ2 printed, such as plugins it couldn't load.
+    public let startupLog: String?
+
+    /// Whether the helper runs in Fiji (ImageJ2 with the legacy layer), not plain ImageJ.
+    public var isFiji: Bool { fiji != nil }
+}
+
+/// A value a SciJava module or script takes or gives: text, a number, a
+/// truth value, a list, or nothing.
+public enum BridgeValue: Sendable, Hashable, Codable, CustomStringConvertible, ExpressibleByStringLiteral,
+    ExpressibleByFloatLiteral, ExpressibleByIntegerLiteral, ExpressibleByBooleanLiteral
+{
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case list([BridgeValue])
+    case null
+
+    public init(stringLiteral value: String) { self = .string(value) }
+    public init(floatLiteral value: Double) { self = .number(value) }
+    public init(integerLiteral value: Int) { self = .number(Double(value)) }
+    public init(booleanLiteral value: Bool) { self = .bool(value) }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let bool = try? container.decode(Bool.self) {
+            self = .bool(bool)
+        } else if let number = try? container.decode(Double.self) {
+            self = .number(number)
+        } else if let text = try? container.decode(String.self) {
+            self = .string(text)
+        } else {
+            self = .list(try container.decode([BridgeValue].self))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let text): try container.encode(text)
+        case .number(let number): try container.encode(number)
+        case .bool(let bool): try container.encode(bool)
+        case .list(let list): try container.encode(list)
+        case .null: try container.encodeNil()
+        }
+    }
+
+    /// As ImageJ would print it: numbers without a needless `.0`.
+    public var description: String {
+        switch self {
+        case .string(let text): text
+        case .number(let number): number == number.rounded() && abs(number) < 1e15 ? String(Int64(number)) : String(number)
+        case .bool(let bool): String(bool)
+        case .list(let list): "[" + list.map(\.description).joined(separator: ", ") + "]"
+        case .null: "null"
+        }
+    }
+
+    public var number: Double? {
+        if case .number(let number) = self { return number }
+        return nil
+    }
+
+    public var string: String? {
+        if case .string(let text) = self { return text }
+        return nil
+    }
+}
+
+/// An entry in ImageJ's menus, in menu order: in Fiji the whole of Fiji's
+/// menu bar, where ImageJ2's legacy layer has added SciJava's commands and
+/// scripts to ImageJ 1.x's. Entries the menu bar doesn't hold (SciJava
+/// modules it couldn't place, and commands in no menu) follow.
+public struct BridgeMenuItem: Sendable, Hashable, Decodable {
+    public enum Kind: String, Sendable, Hashable, Decodable {
+        /// An ImageJ 1.x command or plugin.
+        case imagej1
+        /// A SciJava command (ImageJ2's, or a plugin's: Labkit, the Script Editor, …).
+        case command
+        /// A script in Fiji's `scripts/` or `plugins/` folders.
+        case script
+        /// A separator line, after the items before it in the same menu.
+        case separator
+    }
+
+    public let kind: Kind
+    /// The menus down to the item, the item's own label last: `["Plugins",
+    /// "Tracking", "TrackMate"]`. A separator's is its menu's; a command in
+    /// no menu has none.
+    public let path: [String]
+    /// The name ``Bridge/run(_:options:images:interactive:)`` and macros'
+    /// `run` take (the item's label); `nil` for a separator.
+    public let command: String?
+    /// ImageJ 1.x's class and argument (`ij.plugin.filter.Filters("invert")`),
+    /// or a SciJava module's identifier (`command:<class>`, `script:<path>`).
+    public let identifier: String?
+    /// The class that runs it, when there is one.
+    public let className: String?
+    /// The keyboard shortcut ImageJ gives it, e.g. `Shift+I` (with Command on macOS, Control elsewhere).
+    public let shortcut: String?
+
+    public var isSeparator: Bool { kind == .separator }
+
+    public init(
+        kind: Kind, path: [String], command: String?, identifier: String? = nil, className: String? = nil, shortcut: String? = nil
+    ) {
+        self.kind = kind
+        self.path = path
+        self.command = command
+        self.identifier = identifier
+        self.className = className
+        self.shortcut = shortcut
+    }
+}
+
+/// A script language installed in Fiji (SciJava's script languages).
+public struct BridgeScriptLanguage: Sendable, Hashable, Decodable {
+    /// E.g. `Groovy`, `Python (Jython)`, `JavaScript`, `ImageJ Macro`.
+    public let name: String
+    /// File extensions, without the dot: `groovy`, `py`, `js`, `ijm`.
+    public let extensions: [String]
+    /// Other names ``Bridge/runScript(_:language:parameters:images:interactive:)`` takes for it.
+    public let aliases: [String]
 }
 
 /// A cell of ImageJ's results table.
@@ -102,6 +230,8 @@ struct RunParams: Encodable {
     /// Each input's title, which its file name may not hold.
     let titles: [String]
     let outputDir: String
+    /// Left out, the helper's default (``Bridge/Configuration/interactive``).
+    var interactive: Bool?
 }
 
 struct MacroParams: Encodable {
@@ -110,6 +240,39 @@ struct MacroParams: Encodable {
     let inputs: [String]
     let titles: [String]
     let outputDir: String
+    var interactive: Bool?
+}
+
+/// A SciJava module: by identifier, class, menu path or label.
+struct ModuleParams: Encodable {
+    let command: String
+    let parameters: [String: BridgeValue]
+    let inputs: [String]
+    let titles: [String]
+    let outputDir: String
+    var interactive: Bool?
+}
+
+struct ScriptParams: Encodable {
+    let language: String
+    let code: String
+    let parameters: [String: BridgeValue]
+    let inputs: [String]
+    let titles: [String]
+    let outputDir: String
+    var interactive: Bool?
+}
+
+struct ImagesParams: Encodable {
+    let outputDir: String
+}
+
+struct MenusResult: Decodable {
+    let menus: [BridgeMenuItem]
+}
+
+struct LanguagesResult: Decodable {
+    let languages: [BridgeScriptLanguage]
 }
 
 struct OpenParams: Encodable {
@@ -134,6 +297,8 @@ struct RunResult: Decodable {
     let value: String?
     let macroError: String?
     let macroErrorLine: Int?
+    let values: [String: BridgeValue]?
+    let scriptError: String?
 }
 
 /// Just the envelope; the result is decoded separately once the type is known.

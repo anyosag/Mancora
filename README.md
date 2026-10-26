@@ -54,13 +54,13 @@ create a release.
 
 | Path | What it is |
 | --- | --- |
-| `Package.swift`, `Sources/` | The platform-neutral Swift packages, which build on macOS, Windows and Linux: `MancoraCore` (image model, LUTs, display mapping), `MancoraIO` (TIFF, LUT and ROI files), `MancoraProcess` (filters, statistics, thresholds), `MancoraCommands` (ImageJ's commands and option strings), `MancoraMacro` (the macro language), `MancoraBridge` (ImageJ in a Java helper), `MancoraPlugins` (Fiji update sites), `MancoraUpdate` and `MancoraSupport`, and the `mancora` CLI. |
+| `Package.swift`, `Sources/` | The platform-neutral Swift packages, which build on macOS, Windows and Linux: `MancoraCore` (image model, LUTs, display mapping), `MancoraIO` (TIFF, LUT and ROI files), `MancoraProcess` (filters, statistics, thresholds), `MancoraCommands` (ImageJ's commands and option strings), `MancoraMacro` (the macro language), `MancoraBridge` (ImageJ or Fiji in a Java helper), `MancoraFiji` (installs Fiji and keeps it up to date), `MancoraPlugins` (Fiji update sites), `MancoraUpdate` and `MancoraSupport`, and the `mancora` CLI. |
 | `Apps/macOS/` | The macOS app shell (SwiftUI). |
 | `Apps/Windows/` | The Windows app: a small native Win32 viewer until the WinUI 3 shell arrives in Phase 5. |
 | `Resources/` | LUTs, macros and sample scripts carried over from Fiji, and the Mancora brand assets in `Resources/Branding/`. |
 | `Tests/` | Swift Testing suites and their fixtures. |
 | `Tools/fixtures/` | Scripts that regenerate test fixtures with ImageJ, tifffile and ImageMagick. |
-| `legacy/fiji/` | The original Fiji top-level project, kept as a reference and for the future Java plugin bridge. |
+| `legacy/fiji/` | The original Fiji top-level project, kept as a reference. |
 
 ## Building
 
@@ -78,9 +78,60 @@ swift run mancora -eval 'print(getVersion());'
 
 ImageJ macros run natively. A macro that uses something only ImageJ has
 (plots, overlays, dialogs, Fiji plugins) runs in ImageJ instead, through
-the Java bridge, once `mancora bridge setup` has installed it.
+the Java bridge.
 
-Fiji's update sites install plugins for the bridge, as Fiji's updater does:
+### Fiji behind the bridge
+
+The bridge runs a Java helper. Once Fiji is installed, the helper runs
+inside it: Fiji's bundled Java, Fiji's class path (`jars/`, `plugins/` and
+their subfolders, with the options Fiji's own launcher gives) and ImageJ2
+with its legacy layer, so ImageJ 1.x is Fiji's patched `ij.jar` and
+Fiji's commands are all there: ImageJ 1.x plugins, SciJava commands
+(TrackMate, Labkit, the Script Editor), and scripts in every installed
+language.
+
+```sh
+swift run mancora fiji install                      # the latest Fiji for this computer, Java included
+swift run mancora fiji status                       # version, location, last update check
+swift run mancora fiji update --check               # what Fiji's update sites changed
+swift run mancora fiji update                       # apply it (or stage it while a helper runs)
+swift run mancora fiji auto-update off              # on by default: checked at most once a day
+swift run mancora bridge menus                      # Fiji's menus, ImageJ 1.x and SciJava alike
+swift run mancora bridge command "Process > Filters > Gaussian Blur..." sigma=2 in.tif
+swift run mancora bridge script analyze.groovy threshold=0.5 in.tif
+```
+
+Fiji comes from `https://downloads.imagej.net/fiji/latest/`, which publishes
+one archive per platform with Java bundled (`fiji-latest-macos-arm64-jdk.zip`,
+`fiji-latest-macos64-jdk.zip`, `fiji-latest-linux64-jdk.zip`,
+`fiji-latest-linux-arm64-jdk.zip`, `fiji-latest-win64-jdk.zip`), each beside
+its SHA-256 (`<archive>.sha256`). The download is checked against it,
+unpacked into a staging folder and renamed into place, in
+`~/Library/Application Support/Mancora/Fiji` on macOS and
+`$XDG_DATA_HOME/mancora/Fiji` (`~/.local/share/mancora/Fiji`) on Linux, or
+`MANCORA_FIJI_HOME`. Fiji is downloaded on the user's computer, not
+shipped with Mancora. A Fiji without Java of its own (Fiji's no-Java
+download, say) runs on the JDK in `MANCORA_JAVA_HOME` or `JAVA_HOME`
+(Java 11 or newer).
+
+Updates come from the update sites Fiji's own `db.xml.gz` enables, read
+by Mancora's port of Fiji's updater. They're applied to a copy of the
+installation (hard links, so it costs only the new files), every
+download checked against the site's checksum, and the copy is swapped in
+by renaming: at once when no helper is running, else before the next
+helper starts. Nothing changes the installation in place, so it's never
+half updated. Files Fiji's own updater (run inside the helper) leaves in
+`update/` are applied the same way, as Fiji's launcher would.
+
+Requests run in batch, as tests need them: dialogs ImageJ shows are closed
+by a watchdog and reported as errors. A bridge (or a single request) made
+interactive shows ImageJ's dialogs and plugins' own windows (TrackMate's
+wizard, Labkit) for the user instead; on macOS the helper then has a Dock
+icon, named Fiji. Images a plugin's window goes on using stay open in the
+helper.
+
+Without Fiji, the bridge runs plain ImageJ 1.54p, which the parity tests
+pin:
 
 ```sh
 swift run mancora bridge setup                      # ImageJ 1.54p for the Java bridge (needs Java 11+)
@@ -91,10 +142,10 @@ swift run mancora update-sites update               # download, verify and insta
 swift run mancora bridge open image.czi out.tif     # any format ImageJ or Bio-Formats reads
 ```
 
-The bridge's folder (`MANCORA_BRIDGE_HOME`, by default in your user's
-application data) is laid out like Fiji's, with the same `db.xml.gz`. Its
-ImageJ update site starts out disabled, because the bridge runs plain
-ImageJ 1.x. Enable the site for plugins that need ImageJ2.
+The plain bridge's folder (`MANCORA_BRIDGE_HOME`, by default in your user's
+application data) is laid out like Fiji's, with the same `db.xml.gz`, and
+`mancora update-sites` manages it. Its ImageJ update site starts out
+disabled, because the plain bridge runs ImageJ 1.x alone.
 
 Run the viewer with:
 
@@ -102,6 +153,16 @@ Run the viewer with:
 swift run --package-path Apps/macOS     # macOS
 swift run --package-path Apps/Windows   # Windows
 ```
+
+The macOS app downloads Fiji the first time a command needs the bridge (a
+sheet says so, shows the download and runs the command when it is done) and
+keeps it up to date; Settings ▸ Fiji turns that off, checks now, shows the
+version and location, and reinstalls. Fiji's menus are merged into the menu
+bar, from a list kept beside the installation (`Fiji.menus.json`) so they
+are there at launch, before any Java runs. Entries only Fiji has (TrackMate,
+Labkit, the Script Editor) run in a second helper with a Dock icon named
+Fiji; the one that runs Mancora's own commands stays out of sight. An ImageJ
+that an earlier Mancora installed keeps working until Fiji is installed.
 
 To build installers locally, run `Tools/package/macos/package.sh`,
 `Tools/package/windows/package.ps1` or `Tools/package/linux/package.sh`.
@@ -127,7 +188,14 @@ with code written alongside it:
 - Update sites replay decisions recorded from Fiji's own updater
   (`Tools/parity/updater`): every file's status and action, the installed
   folder and the bytes of `db.xml.gz`. With `MANCORA_NETWORK_TESTS=1`,
-  plugins are installed from Fiji's real sites and run through the bridge.
+  plugins are installed from Fiji's real sites and run through the bridge,
+  and the latest Fiji is downloaded, run behind the bridge (an ImageJ 1.x
+  command, SciJava commands and scripts, Fiji's menus) and checked for
+  updates (`FijiNetworkTests`; `MANCORA_TEST_FIJI_DOWNLOADS` can name a
+  folder already holding the archive and its `.sha256`). With
+  `MANCORA_TEST_FIJI_FROM_SITES=1`, as in CI (whose runners can't reach
+  downloads.imagej.net), Fiji is put together from its own update site
+  instead and runs on the JDK in `JAVA_HOME`.
 
 `Tools/fixtures/generate.sh` regenerates the fixtures.
 

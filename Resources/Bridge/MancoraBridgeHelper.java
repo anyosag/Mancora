@@ -16,16 +16,28 @@
 // Methods:
 //   hello                                 -> {imagej, java, pluginsDir}
 //   commands                              -> {commands: [{name, className}]}
-//   run {command, options, inputs[], titles[], outputDir}
+//   menus                                 -> {menus: [{kind, path[], command, identifier, className, shortcut}]}
+//   run {command, options, inputs[], titles[], outputDir, interactive}
 //                                         -> {outputs[], log, results}
-//   macro {code, inputs[], titles[], outputDir}
+//   macro {code, inputs[], titles[], outputDir, interactive}
 //                                         -> {outputs[], log, results, value}
+//   images {outputDir}                    -> {outputs[], log, results}
 //   shutdown                              -> {} (then exits)
 //
 // "inputs" are TIFF paths opened in order (the last is the active image),
 // each given its title from "titles" (a file name can't hold every title);
 // every image open afterwards that wasn't an input, plus inputs a command
 // changed, is saved as TIFF into outputDir and listed in "outputs".
+//
+// A request is interactive when it says so ("interactive": true) or, saying
+// nothing, when the helper was started with -Dmancora.interactive=true:
+// ImageJ's dialogs and windows are then shown for someone to use, instead
+// of being closed by the dialog watchdog, and the images it opens are shown.
+// Images still shown in a window afterwards (a plugin's own window may be
+// using them) stay open across requests; "images" saves them.
+//
+// In Fiji (MancoraFijiBridge.java), an extension adds SciJava's modules,
+// scripts and languages to these methods.
 
 import ij.IJ;
 import ij.ImageJ;
@@ -46,15 +58,43 @@ import java.util.*;
 public class MancoraBridgeHelper {
     static PrintStream protocol;
     static ByteArrayOutputStream captured = new ByteArrayOutputStream();
+    /** Fiji's SciJava layer, when the helper runs in Fiji (MancoraFijiBridge.java). */
+    static Extension extension;
+    /** Whether a request that doesn't say is interactive (-Dmancora.interactive). */
+    static final boolean interactiveByDefault = Boolean.getBoolean("mancora.interactive");
+    /** No one can see this display (Xvfb): every request is batch. */
+    static final boolean virtualDisplay = Boolean.getBoolean("mancora.virtualDisplay");
+    /** IJ.log's text, when ImageJ's (hidden) main window exists, as in Fiji: never shown, read into each request's log. */
+    static Object logPanel;
+
+    /** What the Fiji layer adds: methods of its own, details for hello, and SciJava's menu entries. */
+    interface Extension {
+        /** Answers a method the helper doesn't know, or returns null. */
+        Map<String, Object> handle(String method, Map<String, Object> params) throws Exception;
+
+        void describe(Map<String, Object> hello);
+
+        /** Adds menu entries ImageJ 1.x's menu bar doesn't hold; `listed` has the commands listed already. */
+        void addMenus(List<Object> menus, Set<String> listed);
+    }
 
     public static void main(String[] args) throws Exception {
-        protocol = new PrintStream(new FileOutputStream(FileDescriptor.out), true, "UTF-8");
+        serve(new PrintStream(new FileOutputStream(FileDescriptor.out), true, "UTF-8"), null);
+    }
+
+    /** Answers requests on stdin until shutdown, with `fiji` adding its methods when the helper runs in Fiji. */
+    static void serve(PrintStream protocolStream, Extension fiji) throws Exception {
+        protocol = protocolStream;
+        extension = fiji;
         PrintStream capture = new PrintStream(captured, true, "UTF-8");
         System.setOut(capture);
         System.setErr(capture);
         Interpreter.batchMode = true;
-        if (java.awt.GraphicsEnvironment.isHeadless()) installHeadlessCommands();
+        // In Fiji the legacy layer has patched ImageJ to run headless.
+        if (java.awt.GraphicsEnvironment.isHeadless()) { if (fiji == null) installHeadlessCommands(); }
         else DialogWatchdog.start();
+        installLogPanel();
+        endRequest();
         BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
         String line;
         while ((line = in.readLine()) != null) {
@@ -146,7 +186,49 @@ public class MancoraBridgeHelper {
     static String takeLog() {
         String text = new String(captured.toByteArray(), StandardCharsets.UTF_8);
         captured.reset();
+        if (logPanel != null) {
+            ij.text.TextPanel panel = (ij.text.TextPanel) logPanel;
+            StringBuilder b = new StringBuilder(text);
+            for (int i = 0; i < panel.getLineCount(); i++) b.append(panel.getLine(i)).append('\n');
+            panel.clear();
+            text = b.toString();
+        }
         return text;
+    }
+
+    /**
+     * With ImageJ's main window (hidden, as Fiji's legacy layer makes it),
+     * IJ.log writes to a Log window rather than System.out. Give it a panel
+     * that is never shown instead, read like System.out.
+     */
+    static void installLogPanel() {
+        if (IJ.getInstance() == null) return;
+        try {
+            ij.text.TextPanel panel = new ij.text.TextPanel("Log");
+            java.lang.reflect.Field field = IJ.class.getDeclaredField("logPanel");
+            field.setAccessible(true);
+            field.set(null, panel);
+            logPanel = panel;
+        } catch (Throwable t) {
+            System.err.println("The Log stays a window: " + t);
+        }
+    }
+
+    /** Sets up a request: whether it's interactive, for ImageJ's batch mode and the dialog watchdog. */
+    static boolean beginRequest(Map<String, Object> params, boolean interactiveUnlessSaid) {
+        Object flag = params.get("interactive");
+        boolean interactive = flag instanceof Boolean ? (Boolean) flag : interactiveUnlessSaid;
+        // No one could answer a dialog on a display no one sees, or without one.
+        if (virtualDisplay || java.awt.GraphicsEnvironment.isHeadless()) interactive = false;
+        Interpreter.batchMode = !interactive;
+        DialogWatchdog.closing = !interactive;
+        return interactive;
+    }
+
+    /** Between requests: batch mode, and the watchdog as the helper was started. */
+    static void endRequest() {
+        Interpreter.batchMode = true;
+        DialogWatchdog.closing = !interactiveByDefault || virtualDisplay;
     }
 
     static Map<String, Object> handle(String method, Map<String, Object> params) throws Exception {
@@ -157,7 +239,12 @@ public class MancoraBridgeHelper {
                 result.put("java", System.getProperty("java.version"));
                 result.put("pluginsDir", System.getProperty("plugins.dir"));
                 result.put("pid", ProcessHandle.current().pid());
+                if (extension != null) extension.describe(result);
                 return result;
+            case "menus":
+                return listMenus();
+            case "images":
+                return openImages(params);
             case "commands": {
                 Hashtable<?, ?> table = Menus.getCommands();
                 List<Object> commands = new ArrayList<>();
@@ -177,9 +264,15 @@ public class MancoraBridgeHelper {
             case "macro":
                 return runWithImages(method, params);
             case "open":
-                return openFile(params);
             case "dialog":
-                return describeDialog(params);
+                // Batch, unless the request says otherwise: a dialog's fields
+                // are read from ImageJ's macro mode, where it never shows.
+                beginRequest(params, false);
+                try {
+                    return method.equals("open") ? openFile(params) : describeDialog(params);
+                } finally {
+                    endRequest();
+                }
             case "crash":
                 // For tests of the supervisor: die without answering.
                 Runtime.getRuntime().halt(3);
@@ -187,32 +280,222 @@ public class MancoraBridgeHelper {
             case "shutdown":
                 return result;
             default:
-                throw new IllegalArgumentException("unknown method " + method);
+                Map<String, Object> answer = extension == null ? null : extension.handle(method, params);
+                if (answer == null) throw new IllegalArgumentException("unknown method " + method);
+                return answer;
         }
     }
 
-    static Map<String, Object> runWithImages(String method, Map<String, Object> params) throws Exception {
+    /**
+     * Every menu command, in ImageJ's menu bar order (Fiji's, in Fiji, where
+     * the legacy layer adds SciJava's commands and scripts to it), with
+     * separators; then SciJava modules the menu bar doesn't hold; then
+     * commands in no menu.
+     */
+    static Map<String, Object> listMenus() {
+        if (Menus.getCommands() == null) IJ.run("Close All");  // builds the table (and, with a display, the menus)
+        Hashtable<?, ?> table = Menus.getCommands();
+        List<Object> menus = new ArrayList<>();
+        Set<String> listed = new HashSet<>();
+        java.awt.MenuBar bar = Menus.getMenuBar();
+        if (bar != null) for (int i = 0; i < bar.getMenuCount(); i++) addMenu(bar.getMenu(i), new ArrayList<>(), table, menus, listed);
+        if (extension != null) extension.addMenus(menus, listed);
+        if (table != null) {
+            List<String> rest = new ArrayList<>();
+            for (Object key : table.keySet()) if (!listed.contains(String.valueOf(key))) rest.add(String.valueOf(key));
+            Collections.sort(rest);
+            for (String name : rest) menus.add(menuEntry(new ArrayList<>(), name, String.valueOf(table.get(name)), null));
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("menus", menus);
+        return result;
+    }
+
+    static void addMenu(java.awt.Menu menu, List<String> parent, Hashtable<?, ?> table, List<Object> menus, Set<String> listed) {
+        List<String> path = new ArrayList<>(parent);
+        path.add(menu.getLabel());
+        for (int i = 0; i < menu.getItemCount(); i++) {
+            java.awt.MenuItem item = menu.getItem(i);
+            if (item instanceof java.awt.Menu) {
+                addMenu((java.awt.Menu) item, path, table, menus, listed);
+                continue;
+            }
+            String label = item.getLabel();
+            if ("-".equals(label)) {
+                Map<String, Object> separator = new LinkedHashMap<>();
+                separator.put("kind", "separator");
+                separator.put("path", path);
+                menus.add(separator);
+                continue;
+            }
+            // Items that aren't commands (recent files, open windows) are left out.
+            Object identifier = table == null || label == null ? null : table.get(label);
+            if (identifier == null) continue;
+            java.awt.MenuShortcut key = item.getShortcut();
+            String shortcut = key == null ? null
+                : (key.usesShiftModifier() ? "Shift+" : "") + java.awt.event.KeyEvent.getKeyText(key.getKey());
+            List<String> itemPath = new ArrayList<>(path);
+            itemPath.add(label);
+            menus.add(menuEntry(itemPath, label, String.valueOf(identifier), shortcut));
+            listed.add(label);
+        }
+    }
+
+    /** One command: ImageJ 1.x's (its class and argument), or a SciJava command or script the legacy layer added. */
+    static Map<String, Object> menuEntry(List<String> path, String command, String identifier, String shortcut) {
+        Map<String, Object> entry = new LinkedHashMap<>();
+        String kind = identifier.startsWith("command:") ? "command" : identifier.startsWith("script:") ? "script" : "imagej1";
+        entry.put("kind", kind);
+        entry.put("path", path);
+        entry.put("command", command);
+        entry.put("identifier", identifier);
+        String className = identifier;
+        if (kind.equals("command")) className = identifier.substring("command:".length());
+        else if (kind.equals("script")) className = null;
+        else if (className.indexOf('(') >= 0) className = className.substring(0, className.indexOf('(')).trim();
+        entry.put("className", className);
+        entry.put("shortcut", shortcut);
+        return entry;
+    }
+
+    /** Saves every image open in ImageJ (those interactive requests left shown, which plugins' windows may have changed). */
+    static Map<String, Object> openImages(Map<String, Object> params) throws Exception {
+        File outputDir = new File((String) params.get("outputDir"));
+        List<Object> outputs = new ArrayList<>();
+        int[] ids = WindowManager.getIDList();
+        int n = 0;
+        if (ids != null) for (int id : ids) {
+            ImagePlus imp = WindowManager.getImage(id);
+            if (imp != null) outputs.add(saveOutput(imp, new File(outputDir, String.format("output-%03d.tif", n++)), null));
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("outputs", outputs);
+        result.put("results", resultsTable());
+        result.put("log", takeLog());
+        return result;
+    }
+
+    static Map<String, Object> saveOutput(ImagePlus imp, File out, String replaces) throws IOException {
+        if (!new FileSaver(imp).saveAsTiff(out.getPath())) throw new IOException("ImageJ could not save " + imp.getTitle());
+        Map<String, Object> o = new LinkedHashMap<>();
+        o.put("path", out.getPath());
+        o.put("title", imp.getTitle());
+        o.put("replaces", replaces);
+        return o;
+    }
+
+    /** One request's images: its inputs (and how they were), and what was open before it. */
+    static final class Request {
+        final Map<Integer, String> inputIDs = new LinkedHashMap<>();
+        final Map<Integer, Long> inputStamps = new HashMap<>();
+        /** Images an earlier interactive request left shown. */
+        final Set<Integer> before = new HashSet<>();
+        final Set<java.awt.Window> windowsBefore = Collections.newSetFromMap(new IdentityHashMap<>());
+        File outputDir;
+        boolean interactive;
+    }
+
+    /** Starts from ImageJ's defaults and opens the request's inputs, the last one active. */
+    static Request beginWithImages(Map<String, Object> params) throws Exception {
         closeAll();
         resetSettings();
         takeLog();
         ensureResultsPanel();
         ij.plugin.filter.Analyzer.resetCounter();
+        Request request = new Request();
+        request.interactive = beginRequest(params, interactiveByDefault);
+        int[] open = WindowManager.getIDList();
+        if (open != null) for (int id : open) request.before.add(id);
+        if (request.interactive) request.windowsBefore.addAll(Arrays.asList(java.awt.Window.getWindows()));
         List<String> inputs = new ArrayList<>();
         if (params.get("inputs") != null) for (Object o : Json.array(params.get("inputs"))) inputs.add((String) o);
         List<Object> titles = params.get("titles") == null ? new ArrayList<>() : Json.array(params.get("titles"));
-        File outputDir = new File((String) params.get("outputDir"));
-        Map<Integer, String> inputIDs = new LinkedHashMap<>();
-        Map<Integer, Long> inputStamps = new HashMap<>();
+        request.outputDir = new File((String) params.get("outputDir"));
         for (int k = 0; k < inputs.size(); k++) {
             String path = inputs.get(k);
             ImagePlus imp = IJ.openImage(path);
             if (imp == null) throw new IOException("ImageJ could not open " + path);
             if (k < titles.size() && titles.get(k) instanceof String) imp.setTitle((String) titles.get(k));
-            Interpreter.addBatchModeImage(imp);
+            if (request.interactive) imp.show();
+            else Interpreter.addBatchModeImage(imp);
             WindowManager.setTempCurrentImage(imp);
-            inputIDs.put(imp.getID(), path);
-            inputStamps.put(imp.getID(), fingerprint(imp));
+            request.inputIDs.put(imp.getID(), path);
+            request.inputStamps.put(imp.getID(), fingerprint(imp));
         }
+        return request;
+    }
+
+    /**
+     * Saves every image the request created, the inputs it changed and any
+     * `extra` images (a SciJava module's outputs), then closes them, unless
+     * an interactive request left a window of its own open, which may be
+     * using them.
+     */
+    static Map<String, Object> finishWithImages(Request request, Map<String, Object> result, List<ImagePlus> extra)
+        throws Exception {
+        List<Object> outputs = new ArrayList<>();
+        Set<ImagePlus> saved = Collections.newSetFromMap(new IdentityHashMap<>());
+        int[] ids = WindowManager.getIDList();
+        int n = 0;
+        if (ids != null) for (int id : ids) {
+            ImagePlus imp = WindowManager.getImage(id);
+            if (imp == null) continue;
+            boolean isInput = request.inputIDs.containsKey(id);
+            if (!isInput && request.before.contains(id)) continue;
+            if (isInput && request.inputStamps.get(id) == fingerprint(imp)) continue;
+            outputs.add(saveOutput(imp, new File(request.outputDir, String.format("output-%03d.tif", n++)),
+                isInput ? request.inputIDs.get(id) : null));
+            saved.add(imp);
+        }
+        if (extra != null) for (ImagePlus imp : extra) {
+            if (imp == null || saved.contains(imp)) continue;
+            boolean isInput = request.inputIDs.containsKey(imp.getID());
+            if (isInput && request.inputStamps.get(imp.getID()) == fingerprint(imp)) continue;
+            outputs.add(saveOutput(imp, new File(request.outputDir, String.format("output-%03d.tif", n++)),
+                isInput ? request.inputIDs.get(imp.getID()) : null));
+            saved.add(imp);
+        }
+        result.put("outputs", outputs);
+        result.put("results", resultsTable());
+        result.put("log", takeLog());
+        if (request.interactive) {
+            // A plugin's own window (TrackMate's, say) may go on using the
+            // images; otherwise its dialogs were all, and they're Mancora's again.
+            if (openedOwnWindow(request)) {
+                int[] now = WindowManager.getIDList();
+                if (now != null) for (int id : now) {
+                    ImagePlus imp = WindowManager.getImage(id);
+                    if (imp != null && imp.getWindow() != null) kept.add(imp);
+                }
+            }
+            // Dialogs left open belong to someone; the watchdog leaves them be.
+            DialogWatchdog.ignoreOpenDialogs();
+        }
+        closeAll();
+        endRequest();
+        return result;
+    }
+
+    /** Whether an interactive request left a window open besides images and ImageJ's own. */
+    static boolean openedOwnWindow(Request request) {
+        for (java.awt.Window w : java.awt.Window.getWindows()) {
+            if (!w.isShowing() || request.windowsBefore.contains(w) || w == IJ.getInstance()) continue;
+            if (w instanceof ij.gui.ImageWindow || w instanceof ij.text.TextWindow) continue;
+            return true;
+        }
+        return false;
+    }
+
+    static Map<String, Object> runWithImages(String method, Map<String, Object> params) throws Exception {
+        try {
+            Request request = beginWithImages(params);
+            return finishWithImages(request, runCommandOrMacro(method, params, request), null);
+        } finally {
+            endRequest();
+        }
+    }
+
+    static Map<String, Object> runCommandOrMacro(String method, Map<String, Object> params, Request request) throws Exception {
         Map<String, Object> result = new LinkedHashMap<>();
         if (method.equals("run")) {
             String command = (String) params.get("command");
@@ -223,8 +506,10 @@ public class MancoraBridgeHelper {
                 throw new IllegalArgumentException("Unrecognized command: \"" + command + "\"");
             // Empty options would make ImageJ treat the call as interactive
             // (asking, for example, whether to process every slice); a space
-            // keeps it a macro call that gives no options.
-            if (options.isEmpty()) options = " ";
+            // keeps it a macro call that gives no options. Someone at the
+            // screen answers instead.
+            if (options.isEmpty() && !request.interactive) options = " ";
+            if (options.isEmpty()) options = null;
             DialogWatchdog.reset();
             ImagePlus active = WindowManager.getCurrentImage();
             if (active != null) IJ.run(active, command, options);
@@ -259,28 +544,6 @@ public class MancoraBridgeHelper {
             DialogWatchdog.check("The macro");
             result.put("value", value);
         }
-        // Save every image a command created, and the inputs it changed.
-        List<Object> outputs = new ArrayList<>();
-        int[] ids = WindowManager.getIDList();
-        int n = 0;
-        if (ids != null) for (int id : ids) {
-            ImagePlus imp = WindowManager.getImage(id);
-            if (imp == null) continue;
-            boolean isInput = inputIDs.containsKey(id);
-            if (isInput && inputStamps.get(id) == fingerprint(imp)) continue;
-            File out = new File(outputDir, String.format("output-%03d.tif", n++));
-            if (!new FileSaver(imp).saveAsTiff(out.getPath()))
-                throw new IOException("ImageJ could not save " + imp.getTitle());
-            Map<String, Object> o = new LinkedHashMap<>();
-            o.put("path", out.getPath());
-            o.put("title", imp.getTitle());
-            o.put("replaces", isInput ? inputIDs.get(id) : null);
-            outputs.add(o);
-        }
-        result.put("outputs", outputs);
-        result.put("results", resultsTable());
-        result.put("log", takeLog());
-        closeAll();
         return result;
     }
 
@@ -670,7 +933,17 @@ public class MancoraBridgeHelper {
             return false;
         }
 
+        /** Whether dialogs are closed: in batch requests (and between requests, unless the helper is interactive). */
+        static volatile boolean closing = true;
+
+        /** Leaves the dialogs open now alone: an interactive request's, someone's to answer or close. */
+        static void ignoreOpenDialogs() {
+            for (java.awt.Window w : java.awt.Window.getWindows())
+                if (w instanceof java.awt.Dialog && w.isShowing()) handled.add(w);
+        }
+
         static void closeNewDialogs() {
+            if (!closing) return;
             for (java.awt.Window w : java.awt.Window.getWindows()) {
                 if (!(w instanceof java.awt.Dialog) || !w.isShowing() || handled.contains(w)) continue;
                 java.awt.Dialog d = (java.awt.Dialog) w;
@@ -851,11 +1124,19 @@ public class MancoraBridgeHelper {
         if (rm != null) rm.reset();
     }
 
+    /** Images an interactive request left shown for its plugin's window. */
+    static final Set<ImagePlus> kept = Collections.newSetFromMap(new java.util.WeakHashMap<>());
+
+    /**
+     * Closes the images requests opened, except those an interactive request
+     * left shown for a plugin's window that may still be using them (in
+     * batch use there are none).
+     */
     static void closeAll() {
         int[] ids = WindowManager.getIDList();
         if (ids != null) for (int id : ids) {
             ImagePlus imp = WindowManager.getImage(id);
-            if (imp != null) {
+            if (imp != null && !(kept.contains(imp) && imp.getWindow() != null)) {
                 imp.changes = false;
                 Interpreter.removeBatchModeImage(imp);
                 imp.close();

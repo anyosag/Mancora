@@ -1,6 +1,8 @@
 public import Foundation
 public import MancoraCore
+public import MancoraFiji
 import MancoraIO
+import MancoraPlugins
 import MancoraSupport
 
 #if canImport(Darwin)
@@ -27,23 +29,46 @@ public struct BridgeRunResult: Sendable {
     public let results: BridgeResults
     /// Everything ImageJ logged meanwhile.
     public let log: String
-    /// A macro's return value.
+    /// A macro's or script's return value.
     public let value: String?
     /// The message of the error that stopped the macro, as ImageJ's "Macro Error" dialog shows it, and its line.
     public var macroError: String? = nil
     public var macroErrorLine: Int? = nil
+    /// A SciJava module's or script's outputs that aren't images, by name.
+    public var outputValues: [String: BridgeValue] = [:]
+    /// The exception that stopped a script, e.g. `groovy.lang.MissingPropertyException: …` (its trace is in the log).
+    public var scriptError: String? = nil
 }
 
 /// Runs ImageJ, its plugins and Bio-Formats in a supervised Java helper
-/// process (`Resources/Bridge/MancoraBridgeHelper.java`).
+/// process (`Resources/Bridge/MancoraBridgeHelper.java`): inside Fiji when
+/// one is installed (``Configuration/fiji``), plain ImageJ otherwise.
 ///
 /// Images go to the helper as TIFF files and come back the same way, so a
 /// crash in Java (or the helper being killed) never loses Mancora's data:
 /// the bridge starts a new helper and retries the request once.
 public actor Bridge {
     public struct Configuration: Sendable {
+        /// The Java for plain ImageJ; in Fiji, Fiji's bundled Java is used.
         public var java: JavaRuntime
+        /// Plain ImageJ's folder (``BridgeHome``); the compiled helper is kept there in either mode.
         public var home: BridgeHome
+        /// Run inside this Fiji instead: its bundled Java and class path, with
+        /// ImageJ2 and its legacy layer, so ImageJ 1.x is Fiji's own `ij.jar`
+        /// and SciJava's commands and scripts run too
+        /// (`MancoraFijiBridge.java`, beside the helper). A staged update is
+        /// swapped in before each helper starts, and updates wait while one runs.
+        public var fiji: FijiManager?
+        /// Whether requests show ImageJ's dialogs and windows for someone to
+        /// use, rather than closing them (batch, as tests run): a plugin's own
+        /// window (TrackMate's, Labkit's) stays up, and on macOS the helper gets
+        /// a Dock icon. A request's `interactive` argument overrides it. With
+        /// only a virtual display (Xvfb), every request is batch.
+        public var interactive = false
+        /// The helper's name in the Dock (macOS), when interactive.
+        public var dockName = "Fiji"
+        /// The helper's Dock icon (macOS), when interactive; Fiji's own if `nil`.
+        public var dockIcon: URL?
         /// `MancoraBridgeHelper.java`, compiled once into the home folder.
         public var helperSource: URL
         /// ImageJ's command table for headless runs (`imagej-commands.tsv`).
@@ -68,13 +93,27 @@ public actor Bridge {
         }
 
         /// The bundled helper and command table in `resources` (an app's
-        /// `Resources/Bridge` folder), the first Java found, and the standard home.
-        public static func standard(resources: URL) throws(BridgeError) -> Configuration {
-            guard let java = JavaRuntime.discover() else { throw .noJava }
+        /// `Resources/Bridge` folder) and the standard home: in the installed
+        /// Fiji (``FijiManager/shared``) unless `preferFiji` is false or none
+        /// is installed, else plain ImageJ on the first Java found.
+        public static func standard(resources: URL, preferFiji: Bool = true) throws(BridgeError) -> Configuration {
+            let helper = resources.appendingPathComponent("MancoraBridgeHelper.java")
             let table = resources.appendingPathComponent("imagej-commands.tsv")
-            return Configuration(
-                java: java, home: .standard(), helperSource: resources.appendingPathComponent("MancoraBridgeHelper.java"),
-                commandTable: FileManager.default.fileExists(atPath: table.path) ? table : nil)
+            let commandTable = FileManager.default.fileExists(atPath: table.path) ? table : nil
+            if preferFiji, FijiManager.shared.isInstalled, let java = FijiManager.shared.installation.javaExecutable,
+                let runtime = JavaRuntime.probe(java)
+            {
+                var configuration = Configuration(java: runtime, home: .standard(), helperSource: helper, commandTable: commandTable)
+                configuration.fiji = .shared
+                return configuration
+            }
+            guard let java = JavaRuntime.discover() else { throw .noJava }
+            return Configuration(java: java, home: .standard(), helperSource: helper, commandTable: commandTable)
+        }
+
+        /// `MancoraFijiBridge.java`, beside the helper.
+        public var fijiHelperSource: URL {
+            helperSource.deletingLastPathComponent().appendingPathComponent("MancoraFijiBridge.java")
         }
     }
 
@@ -113,19 +152,88 @@ public actor Bridge {
         try await call("commands", NoParams?.none, as: CommandsResult.self, retry: true).commands
     }
 
+    /// Every entry of ImageJ's menus, in order (Fiji's, in Fiji: ImageJ 1.x
+    /// commands, SciJava commands and scripts, with separators), for an
+    /// app's menus. ``BridgeMenuItem/command`` is what ``run(_:options:images:interactive:)`` takes.
+    public func menus() async throws -> [BridgeMenuItem] {
+        try await call("menus", NoParams?.none, as: MenusResult.self, retry: true).menus
+    }
+
     /// Runs an ImageJ command with an options string (as recorded by
-    /// ImageJ's macro recorder) on `images`, the last one being active.
-    public func run(_ command: String, options: String = "", images: [Hyperstack] = []) async throws -> BridgeRunResult {
+    /// ImageJ's macro recorder) on `images`, the last one being active. In
+    /// Fiji that includes every SciJava command and script in its menus.
+    ///
+    /// `interactive` (by default ``Configuration/interactive``) shows the
+    /// command's dialogs and windows for someone to use; with empty options
+    /// its dialog then asks. Images a plugin's own window goes on using stay
+    /// open in the helper (``openImages()`` fetches them).
+    public func run(_ command: String, options: String = "", images: [Hyperstack] = [], interactive: Bool? = nil) async throws
+        -> BridgeRunResult
+    {
         try await withImages(images, method: "run") { inputs, titles, outputDir in
-            RunParams(command: command, options: options, inputs: inputs, titles: titles, outputDir: outputDir)
+            RunParams(command: command, options: options, inputs: inputs, titles: titles, outputDir: outputDir, interactive: interactive)
         }
     }
 
     /// Runs ImageJ macro code with `images` open, the last one active.
-    public func runMacro(_ code: String, argument: String = "", images: [Hyperstack] = []) async throws -> BridgeRunResult {
+    public func runMacro(_ code: String, argument: String = "", images: [Hyperstack] = [], interactive: Bool? = nil)
+        async throws -> BridgeRunResult
+    {
         try await withImages(images, method: "macro") { inputs, titles, outputDir in
-            MacroParams(code: code, argument: argument, inputs: inputs, titles: titles, outputDir: outputDir)
+            MacroParams(code: code, argument: argument, inputs: inputs, titles: titles, outputDir: outputDir, interactive: interactive)
         }
+    }
+
+    /// Runs a SciJava module in Fiji: `command` is a command's class
+    /// (`net.imagej.plugins.commands.app.AboutImageJ`), a module identifier
+    /// (`command:<class>`, `script:<path>`), a menu path
+    /// (`"Plugins > Tracking > TrackMate"`) or a menu label. `parameters`
+    /// set its inputs by name, converted as SciJava converts them (an image
+    /// input takes an open image's title); image inputs left unset take the
+    /// active image, the last of `images`. Image outputs come back as
+    /// images, others in ``BridgeRunResult/outputValues``. An ImageJ 1.x
+    /// command found this way runs as ``run(_:options:images:interactive:)``
+    /// would, with the parameters as its options.
+    ///
+    /// A batch run never asks for anything: inputs left unset keep their
+    /// defaults. An interactive one asks for them in SciJava's dialog.
+    public func runCommand(
+        _ command: String, parameters: [String: BridgeValue] = [:], images: [Hyperstack] = [], interactive: Bool? = nil
+    ) async throws -> BridgeRunResult {
+        try await withImages(images, method: "module") { inputs, titles, outputDir in
+            ModuleParams(
+                command: command, parameters: parameters, inputs: inputs, titles: titles, outputDir: outputDir, interactive: interactive)
+        }
+    }
+
+    /// Runs a script in any language Fiji has (``scriptLanguages()``: a
+    /// name, alias or extension such as `groovy`, `python`, `js`, `ijm`)
+    /// through SciJava's script service, with `#@` parameters set from
+    /// `parameters` and `images` open, the last one active. The return
+    /// value comes back as ``BridgeRunResult/value``, `#@output`s as
+    /// ``BridgeRunResult/outputValues`` (images as images), what the script
+    /// printed in the log, and an exception that stopped it as
+    /// ``BridgeRunResult/scriptError``.
+    public func runScript(
+        _ code: String, language: String, parameters: [String: BridgeValue] = [:], images: [Hyperstack] = [],
+        interactive: Bool? = nil
+    ) async throws -> BridgeRunResult {
+        try await withImages(images, method: "script") { inputs, titles, outputDir in
+            ScriptParams(
+                language: language, code: code, parameters: parameters, inputs: inputs, titles: titles, outputDir: outputDir,
+                interactive: interactive)
+        }
+    }
+
+    /// The script languages Fiji has.
+    public func scriptLanguages() async throws -> [BridgeScriptLanguage] {
+        try await call("languages", NoParams?.none, as: LanguagesResult.self, retry: true).languages
+    }
+
+    /// The images open in the helper: those interactive requests left shown
+    /// for a plugin's window, as that window has changed them.
+    public func openImages() async throws -> BridgeRunResult {
+        try await withImages([], method: "images") { _, _, outputDir in ImagesParams(outputDir: outputDir) }
     }
 
     /// Opens a file in a format Mancora doesn't read, as ImageJ (with Fiji's
@@ -219,7 +327,8 @@ public actor Bridge {
         }
         return BridgeRunResult(
             images: produced, results: result.results, log: result.log, value: result.value,
-            macroError: result.macroError, macroErrorLine: result.macroErrorLine)
+            macroError: result.macroError, macroErrorLine: result.macroErrorLine, outputValues: result.values ?? [:],
+            scriptError: result.scriptError)
     }
 
     private func call<P: Encodable, R: Decodable>(_ method: String, _ params: P?, as type: R.Type, retry: Bool)
@@ -283,51 +392,121 @@ public actor Bridge {
         guard recentLaunches.count < configuration.maximumRestartsPerMinute else {
             throw BridgeError.helperExited(status: -1)
         }
-        let launch = try helperLaunch()
-        let started = try HelperConnection(launch)
+        // In Fiji: a staged update goes in first, and the installation is held while the helper runs.
+        let lease = try await configuration.fiji?.prepareForLaunch()
+        let started: HelperConnection
+        do {
+            let launch = try helperLaunch(fiji: lease?.installation)
+            var onExit: (@Sendable () -> Void)?
+            if let lease { onExit = { lease.release() } }
+            started = try HelperConnection(launch, onExit: onExit)
+        } catch {
+            lease?.release()
+            throw error
+        }
         recentLaunches.append(now)
         launchCount += 1
         connection = started
         return started
     }
 
-    /// The java command line, compiling the helper into the home folder first if needed.
-    func helperLaunch() throws -> HelperLaunch {
+    /// The java command line, compiling the helper into the home folder
+    /// first if needed: plain ImageJ from the home folder, or in `fiji`.
+    func helperLaunch(fiji: FijiInstallation? = nil) throws -> HelperLaunch {
         let config = configuration
         let home = config.home
-        guard FileManager.default.fileExists(atPath: home.imageJJar.path) else {
+        if fiji == nil, !FileManager.default.fileExists(atPath: home.imageJJar.path) {
             throw BridgeError.imageJMissing(path: home.imageJJar.path)
         }
         try home.createFolders()
-        let classes = try compiledHelper()
-        let separator = JavaRuntime.isWindows ? ";" : ":"
-        let classPath = (home.classPath().map(\.path) + [classes.path]).joined(separator: separator)
-        var arguments: [String] = []
-        if let heap = config.maximumHeapMegabytes { arguments.append("-Xmx\(heap)m") }
-        arguments += ["-Dplugins.dir=\(home.root.path)", "-Dij.dir=\(home.root.path)", "-Dfile.encoding=UTF-8"]
-        if FileManager.default.fileExists(atPath: home.nativeLibraries.path) {
-            arguments.append("-Djava.library.path=\(home.nativeLibraries.path)")
-        }
-        if let table = config.commandTable { arguments.append("-Dmancora.commands=\(table.path)") }
-        #if os(macOS)
-        arguments.append("-Dapple.awt.UIElement=true")  // no Dock icon or menu bar for the helper
-        #endif
+        let classes = try compiledHelper(fiji: fiji)
         var environment = config.environment
+        var display = HelperDisplay.own
         #if os(Linux)
         // Java names files in the locale's encoding (sun.jnu.encoding): outside a
         // UTF-8 locale it can't open a path, or an input titled, beyond ASCII.
         if !Self.isUTF8Locale(environment) { environment["LC_ALL"] = "C.UTF-8" }
-        let display = (environment["DISPLAY"] ?? "") + (environment["WAYLAND_DISPLAY"] ?? "")
-        if display.isEmpty {
+        if ((environment["DISPLAY"] ?? "") + (environment["WAYLAND_DISPLAY"] ?? "")).isEmpty {
             if config.useVirtualDisplay, let name = startVirtualDisplay() {
                 environment["DISPLAY"] = name
+                display = .virtual
             } else {
-                arguments.append("-Djava.awt.headless=true")
+                display = .headless
             }
         }
         #endif
-        arguments += ["-cp", classPath, "MancoraBridgeHelper"]
-        return HelperLaunch(executable: config.java.executable, arguments: arguments, environment: environment)
+        var arguments = Self.javaArguments(config, fiji: fiji, classes: classes, display: display)
+        let java = fiji?.javaExecutable ?? config.java.executable
+        if JavaRuntime.isWindows, fiji != nil {
+            // Fiji's class path outgrows Windows' command line: Java reads it from a file.
+            arguments = ["@" + (try Self.argumentFile(arguments, in: classes).path)]
+        }
+        return HelperLaunch(executable: java, arguments: arguments, environment: environment)
+    }
+
+    /// Where the helper's windows go (Linux): the session's display, a virtual one (Xvfb) no one sees, or none.
+    enum HelperDisplay: Sendable { case own, virtual, headless }
+
+    /// The helper's Java options, class path and main class. In Fiji, the
+    /// options Fiji's launcher gives (``FijiInstallation/javaOptions(maximumHeapMegabytes:javaMajorVersion:)``)
+    /// and Fiji's class path, then `MancoraFijiBridge`, which starts ImageJ2.
+    static func javaArguments(
+        _ config: Configuration, fiji: FijiInstallation?, classes: URL, display: HelperDisplay, macOS: Bool = isMacOS
+    ) -> [String] {
+        let home = config.home
+        var arguments: [String] = []
+        let classPath: [URL]
+        if let fiji {
+            let major = fiji.version.java.flatMap { Int($0.prefix { $0.isNumber }) } ?? config.java.majorVersion
+            arguments += fiji.javaOptions(maximumHeapMegabytes: config.maximumHeapMegabytes, javaMajorVersion: major)
+            classPath = fiji.classPath()
+        } else {
+            if let heap = config.maximumHeapMegabytes { arguments.append("-Xmx\(heap)m") }
+            arguments += ["-Dplugins.dir=\(home.root.path)", "-Dij.dir=\(home.root.path)", "-Dfile.encoding=UTF-8"]
+            if FileManager.default.fileExists(atPath: home.nativeLibraries.path) {
+                arguments.append("-Djava.library.path=\(home.nativeLibraries.path)")
+            }
+            if let table = config.commandTable { arguments.append("-Dmancora.commands=\(table.path)") }
+            classPath = home.classPath()
+        }
+        if config.interactive { arguments.append("-Dmancora.interactive=true") }
+        if macOS {
+            if config.interactive {
+                // Its windows are someone's to use: a Dock icon and menu bar, named.
+                arguments += ["-Xdock:name=\(config.dockName)", "-Dapple.awt.application.name=\(config.dockName)"]
+                if let icon = config.dockIcon ?? fiji?.icon { arguments.append("-Xdock:icon=\(icon.path)") }
+            } else {
+                arguments.append("-Dapple.awt.UIElement=true")  // no Dock icon or menu bar for the helper
+            }
+        }
+        switch display {
+        case .own: break
+        case .virtual: arguments.append("-Dmancora.virtualDisplay=true")
+        case .headless: arguments.append("-Djava.awt.headless=true")
+        }
+        let separator = JavaRuntime.isWindows ? ";" : ":"
+        arguments += ["-cp", (classPath + [classes]).map(\.path).joined(separator: separator)]
+        arguments.append(fiji == nil ? "MancoraBridgeHelper" : "MancoraFijiBridge")
+        return arguments
+    }
+
+    static var isMacOS: Bool {
+        #if os(macOS)
+        true
+        #else
+        false
+        #endif
+    }
+
+    /// A Java argument file (`java @file`, `javac @file`): one argument a
+    /// line, quoted, with forward slashes (which Java takes on Windows too).
+    static func argumentFile(_ arguments: [String], in folder: URL) throws -> URL {
+        let text = arguments.map { argument in
+            "\"" + argument.replacingOccurrences(of: "\\", with: "/").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+        }.joined(separator: "\n")
+        let file = folder.appendingPathComponent("arguments-\(UUID().uuidString).txt")
+        try Data(text.utf8).write(to: file)
+        return file
     }
 
     /// Starts Xvfb on a free display number (once; helpers that restart
@@ -369,23 +548,42 @@ public actor Bridge {
     /// `<home>/helper/<hash of the source>/`, compiled with `javac` once.
     /// Each compile writes a folder of its own and renames it into place,
     /// so bridges starting together never run a half-written helper.
-    func compiledHelper() throws -> URL {
+    ///
+    /// In Fiji, `MancoraFijiBridge.java` too, against Fiji's class path with
+    /// Fiji's JDK, in `<home>/helper/fiji-<hash>/`: the hash covers the jars'
+    /// names, so an update that changes them compiles it again.
+    func compiledHelper(fiji: FijiInstallation? = nil) throws -> URL {
         let config = configuration
-        let source = try Data(contentsOf: config.helperSource)
-        let hash = hexString(SHA256.hash([UInt8](source) + Array(BridgeHome.imageJVersion.utf8))).prefix(16)
-        let folder = config.home.root.appendingPathComponent("helper").appendingPathComponent(String(hash))
-        let compiled = folder.appendingPathComponent("MancoraBridgeHelper.class")
+        var sources = [config.helperSource]
+        var classPath = [config.home.imageJJar]
+        var key = Array(BridgeHome.imageJVersion.utf8)
+        var compiler = config.java.compiler
+        var prefix = ""
+        if let fiji {
+            sources.append(config.fijiHelperSource)
+            classPath = fiji.classPath()
+            key = Array(("Fiji\n" + classPath.map(\.lastPathComponent).joined(separator: "\n")).utf8)
+            compiler = fiji.javaCompiler ?? config.java.compiler
+            prefix = "fiji-"
+        }
+        var bytes: [UInt8] = []
+        for source in sources { bytes += [UInt8](try Data(contentsOf: source)) }
+        let hash = prefix + hexString(SHA256.hash(bytes + key)).prefix(16)
+        let main = fiji == nil ? "MancoraBridgeHelper" : "MancoraFijiBridge"
+        let folder = config.home.root.appendingPathComponent("helper").appendingPathComponent(hash)
+        let compiled = folder.appendingPathComponent(main + ".class")
         if FileManager.default.fileExists(atPath: compiled.path) { return folder }
-        guard let javac = config.java.compiler else { throw BridgeError.noCompiler }
+        guard let javac = compiler else { throw BridgeError.noCompiler }
         let staging = folder.deletingLastPathComponent().appendingPathComponent(".\(hash)-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: staging) }
         let process = Process()
         process.executableURL = javac
-        process.arguments = [
-            "-encoding", "UTF-8", "-nowarn", "-cp", config.home.imageJJar.path, "-d", staging.path,
-            config.helperSource.path,
-        ]
+        let separator = JavaRuntime.isWindows ? ";" : ":"
+        let arguments = ["-encoding", "UTF-8", "-nowarn", "-cp", classPath.map(\.path).joined(separator: separator), "-d", staging.path]
+            + sources.map(\.path)
+        // Fiji's class path is long: javac reads it from a file, kept out of the compiled folder.
+        process.arguments = fiji == nil ? arguments : ["@" + (try Self.argumentFile(arguments, in: staging.deletingLastPathComponent()).path)]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
@@ -393,7 +591,8 @@ public actor Bridge {
         try process.run()
         let output = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        let staged = staging.appendingPathComponent("MancoraBridgeHelper.class")
+        if fiji != nil, let file = process.arguments?.first?.dropFirst() { try? FileManager.default.removeItem(atPath: String(file)) }
+        let staged = staging.appendingPathComponent(main + ".class")
         guard process.terminationStatus == 0, FileManager.default.fileExists(atPath: staged.path) else {
             throw BridgeError.compileFailed(String(decoding: output, as: UTF8.self))
         }
