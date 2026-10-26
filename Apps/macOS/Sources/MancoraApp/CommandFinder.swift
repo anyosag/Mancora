@@ -12,27 +12,38 @@ enum CommandCatalog {
         let shortcut: String?
     }
 
-    /// Every command in ImageJ's menus, by name.
-    static let places: [String: Place] = {
+    /// Every command in ImageJ's menus, by name. Built once, on the main
+    /// actor, where the menu tables and shortcut rules live.
+    static var places: [String: Place] {
+        if let cached { return cached }
+        let built = build()
+        cached = built
+        return built
+    }
+
+    private static var cached: [String: Place]?
+
+    private static func build() -> [String: Place] {
         var found: [String: Place] = [:]
-        func walk(_ menu: ImageJMenu) {
-            let path = menu.path.split(separator: ">").joined(separator: " ▸ ")
-            for entry in menu.entries {
-                switch entry {
-                case .command(let name, let shortcut):
-                    if found[name] == nil {
-                        found[name] = Place(menu: path, shortcut: shortcutText(name: name, shortcut: shortcut))
-                    }
-                case .submenu(let child):
-                    walk(child)
-                case .separator:
-                    break
+        for menu in ImageJMenuCommands.menus { walk(menu, into: &found) }
+        return found
+    }
+
+    private static func walk(_ menu: ImageJMenu, into found: inout [String: Place]) {
+        let path = menu.path.split(separator: ">").joined(separator: " ▸ ")
+        for entry in menu.entries {
+            switch entry {
+            case .command(let name, let shortcut):
+                if found[name] == nil {
+                    found[name] = Place(menu: path, shortcut: shortcutText(name: name, shortcut: shortcut))
                 }
+            case .submenu(let child):
+                walk(child, into: &found)
+            case .separator:
+                break
             }
         }
-        for menu in ImageJMenuCommands.menus { walk(menu) }
-        return found
-    }()
+    }
 
     /// The shortcut as the menu bar gives it: the same ones, by `MenuCommandButton.keyEquivalent`'s rules.
     static func shortcutText(name: String, shortcut: Character?) -> String? {
