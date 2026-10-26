@@ -100,9 +100,12 @@ enum RoiFormat {
 
 private struct Decoder {
     let reader: ByteReader
+    /// The whole file, which opaque ROIs keep as read.
+    let bytes: [UInt8]
     var fileName: String?
 
     init(bytes: [UInt8], fileName: String?) {
+        self.bytes = bytes
         reader = ByteReader(bytes, bigEndian: true)
         if let fileName, fileName.hasSuffix(".roi") {
             self.fileName = String(fileName.dropLast(4))
@@ -177,7 +180,7 @@ private struct Decoder {
             // A composite ShapeRoi: segment types and coordinates as floats.
             guard type == F.rect else { throw .invalidFormat("composite ROI of type \(type)") }
             try reader.check(F.coordinates, Int(try int(F.shapeRoiSize)) * 4)
-            roi = Roi(.opaque(Roi.Opaque(kind: .composite, bytes: reader.bytes, bounds: headerBounds)))
+            roi = Roi(.opaque(Roi.Opaque(kind: .composite, bytes: bytes, bounds: headerBounds)))
             roi.name = try roiName(hdr2)
             if version >= 218 { try strokeWidthAndColor(&roi, hdr2, scaleStrokeWidth, isArrow: false) }
             roi.position = Self.position(position, channel, slice, frame)
@@ -301,7 +304,7 @@ private struct Decoder {
         if version >= 221 && subtype == F.image && imageSize > 0 {
             try reader.check(F.coordinates, Int(imageSize))
             // A new ImageRoi: no name, fill or stroke width, and a black outline.
-            roi = Roi(.opaque(Roi.Opaque(kind: .image, bytes: reader.bytes, bounds: headerBounds)), strokeColor: 0xFF00_0000)
+            roi = Roi(.opaque(Roi.Opaque(kind: .image, bytes: bytes, bounds: headerBounds)), strokeColor: 0xFF00_0000)
         }
         if version >= 224 { roi.properties = try properties(hdr2) }
 
@@ -408,7 +411,7 @@ private struct Decoder {
         let nameLength = Int(try int(h + 8)), textLength = Int(try int(h + 12))
         guard nameLength >= 0, textLength >= 0 else { throw .invalidFormat("bad text ROI lengths") }
         try reader.check(h + 16, (nameLength + textLength) * 2 + (version >= 225 ? 4 : 0))
-        var text = Roi(.opaque(Roi.Opaque(kind: .text, bytes: reader.bytes, bounds: bounds)))
+        var text = Roi(.opaque(Roi.Opaque(kind: .text, bytes: bytes, bounds: bounds)))
         text.name = roi.name
         text.strokeColor = roi.strokeColor
         text.fillColor = roi.fillColor
