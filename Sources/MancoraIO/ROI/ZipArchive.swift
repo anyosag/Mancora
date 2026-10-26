@@ -214,3 +214,17 @@ enum ZipArchive {
         return out
     }
 }
+
+/// Reads every file in a zip (or jar) archive.
+public enum ZipContents {
+    /// Each entry's name and uncompressed contents (empty for directories),
+    /// in the order of their data in the archive; each is checked against
+    /// its CRC-32. `limit` bounds any one entry's size.
+    public static func read(_ bytes: [UInt8], limit: Int = 1 << 30) throws(MancoraIOError) -> [(name: String, data: [UInt8])] {
+        var files: [(name: String, data: [UInt8])] = []
+        for entry in try ZipArchive.entries(bytes) {
+            files.append((entry.name, try ZipArchive.data(of: entry, in: bytes, limit: limit)))
+        }
+        return files
+    }
+}

@@ -20,6 +20,7 @@ let package = Package(
         .library(name: "MancoraCore", targets: ["MancoraCore"]),
         .library(name: "MancoraIO", targets: ["MancoraIO"]),
         .library(name: "MancoraMacro", targets: ["MancoraMacro"]),
+        .library(name: "MancoraPlugins", targets: ["MancoraPlugins"]),
         .library(name: "MancoraProcess", targets: ["MancoraProcess"]),
         .library(name: "MancoraSupport", targets: ["MancoraSupport"]),
         .library(name: "MancoraUpdate", targets: ["MancoraUpdate"]),
@@ -39,6 +40,8 @@ let package = Package(
             dependencies: ["MancoraCommands", "MancoraCore", "MancoraIO", "MancoraProcess", "MancoraSupport"],
             swiftSettings: strictness
         ),
+        .target(
+            name: "MancoraPlugins", dependencies: ["MancoraIO", "MancoraSupport", "MancoraUpdate"], swiftSettings: strictness),
         .target(name: "MancoraProcess", dependencies: ["MancoraCore"], swiftSettings: strictness),
         .target(name: "MancoraSupport", swiftSettings: strictness),
         .target(name: "MancoraUpdate", dependencies: ["MancoraSupport"], swiftSettings: strictness),
@@ -78,6 +81,12 @@ let package = Package(
         .testTarget(
             name: "MancoraParityTests",
             dependencies: ["MancoraBridge", "MancoraCommands", "MancoraCore", "MancoraIO", "MancoraMacro"],
+            swiftSettings: strictness
+        ),
+        .testTarget(
+            name: "MancoraPluginsTests",
+            dependencies: ["MancoraIO", "MancoraPlugins", "MancoraSupport", "MancoraUpdate"],
+            resources: [.copy("Fixtures")],
             swiftSettings: strictness
         ),
         .testTarget(
