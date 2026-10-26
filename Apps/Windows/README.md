@@ -1,7 +1,7 @@
 # Mancora for Windows
 
 `MancoraViewer` is a small native Win32 app written in Swift on top of
-`MancoraCore` and `MancoraIO`. It ships in the 0.1.0 installer and can:
+`MancoraCore` and `MancoraIO`. It ships in the Windows installer and can:
 
 - open TIFF images from **File ▸ Open**, by drag and drop, or with
   "Open with" in Explorer
