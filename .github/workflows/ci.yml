@@ -31,7 +31,7 @@ jobs:
           swift run mancora lut Resources/LUTs/mpl-viridis.lut
 
   imagej-parity:
-    name: ImageJ reopens Mancora's TIFFs · Java bridge
+    name: ImageJ parity · Java bridge
     runs-on: ubuntu-24.04
     container: swift:6.2-noble
     steps:
@@ -46,6 +46,8 @@ jobs:
         run: Tools/parity/tiff-reopen.sh "$(swift build --show-bin-path)/mancora"
       - name: Java bridge integration tests
         run: MANCORA_TEST_IJ_JAR="$GITHUB_WORKSPACE/Tools/fixtures/.cache/ij-1.54p.jar" swift test --skip-build --filter MancoraBridgeTests
+      - name: Native commands against ImageJ 1.54p
+        run: MANCORA_TEST_IJ_JAR="$GITHUB_WORKSPACE/Tools/fixtures/.cache/ij-1.54p.jar" swift test --skip-build --filter MancoraParityTests
 
   windows:
     name: Windows · Swift 6.2

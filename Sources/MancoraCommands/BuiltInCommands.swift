@@ -8,17 +8,37 @@ enum BuiltInCommands {
 
     // MARK: Image ▸ Lookup Tables
 
-    /// `ij.plugin.LutLoader("fire")` and friends: the current channel's LUT.
+    /// `ij.plugin.LutLoader("fire")` and friends: the current channel's LUT
+    /// (every channel's, for a composite shown in grayscale, which turns to
+    /// color), remembered in the `CurrentLUT` property.
     static let lutCommands: [CommandDefinition] = LUT.builtIn.map { lut in
         CommandDefinition(lut.name, menu: "Image>Lookup Tables") { context, _ in
             try context.withCurrent(lut.name) { (open: inout OpenImage) throws(CommandError) in
                 guard open.image.pixelType.usesLUT else {
                     throw .failed(command: lut.name, detail: "LUTs cannot be assigned to RGB images.")
                 }
-                var display = open.image.channels[open.channel]
-                display.lut = lut
-                open.image.setDisplay(display, forChannel: open.channel)
+                let all = open.image.channels.count > 1 && open.image.compositeMode == .grayscale
+                if all { open.image.compositeMode = .color }
+                for channel in all ? Array(open.image.channels.indices) : [open.channel] {
+                    var display = open.image.channels[channel]
+                    display.lut = lut
+                    open.image.setDisplay(display, forChannel: channel)
+                }
+                let name = lutLoaderArgument(lut.name)
+                open.image.properties[currentLUTKey] = name == "grays" ? nil : name
             }
+        }
+    }
+
+    /// `LUT.nameKey`.
+    static let currentLUTKey = "CurrentLUT"
+
+    /// The argument the menu passes to LutLoader, which it saves as the LUT's name.
+    static func lutLoaderArgument(_ command: String) -> String {
+        switch command {
+        case "3-3-2 RGB": command
+        case "Red/Green": "redgreen"
+        default: command.lowercased()
         }
     }
 
@@ -81,50 +101,86 @@ enum BuiltInCommands {
     /// `ij.plugin.Duplicator`: the current plane, or with `duplicate` the
     /// whole stack, optionally limited to `channels=`, `slices=`, `frames=`
     /// (or `range=` for a plain stack), titled `title=` or a unique name.
+    /// `ij.plugin.Duplicator` as a macro drives it. Hyperstacks and
+    /// composites take `channels=`, `slices=` and `frames=` ranges when
+    /// `duplicate` is given, and otherwise the current position (every
+    /// channel of a composite shown as one); other images take `range=`
+    /// with `duplicate`, and otherwise the current slice.
     static let duplicate = CommandDefinition("Duplicate...", menu: "Image") { context, options in
         let name = "Duplicate..."
         guard let open = context.current else { throw CommandError.noImage(name) }
         let image = open.image
         let dims = image.dimensions
-        let wholeStack = options.flag(forLabel: "duplicate") || image.stack.count == 1
-        func range(_ label: String, _ count: Int, _ current: Int) throws(CommandError) -> ClosedRange<Int> {
-            guard wholeStack else { return current...current }
-            guard let text = options.value(forLabel: label) else { return 0...(count - 1) }
-            let parts = text.split(separator: "-").compactMap { Int(MacroOptions.trimmed(String($0))) }
-            guard let first = parts.first, (1...count).contains(first) else {
-                throw .invalidOption(command: name, detail: "\(label)=\(text) is out of range")
+        let wholeStack = options.flag(forLabel: "duplicate")
+        let isHyper = dims.channels > 1 || (dims.slices > 1 && dims.frames > 1)
+        var indices: [Int] = []
+        var newDims: HyperstackDimensions
+        var channels = image.channels
+        if isHyper {
+            /// `showHSDialog`: "2-3" or "2"; out-of-range ends are clamped, and a backwards range means all.
+            func range(_ label: String, _ count: Int, _ current: Int) -> ClosedRange<Int> {
+                guard wholeStack else { return current...current }
+                guard count > 1, let text = options.value(forLabel: label) else { return 0...(count - 1) }
+                let parts = splitRange(text)
+                let first = max(parts.first.flatMap { $0 } ?? 1, 1)
+                let last = min(parts.count == 2 ? parts[1] ?? first : first, count)
+                return first > last ? 0...(count - 1) : (first - 1)...(last - 1)
             }
-            let last = min(parts.count > 1 ? parts[1] : first, count)
-            guard last >= first else { throw .invalidOption(command: name, detail: "\(label)=\(text) is empty") }
-            return (first - 1)...(last - 1)
-        }
-        let isHyper = dims.channels > 1 || dims.frames > 1
-        let c = try range("channels", dims.channels, wholeStack ? 0 : open.channel)
-        let z = try range(isHyper ? "slices" : "range", dims.slices, open.slice)
-        let t = try range("frames", dims.frames, open.frame)
-        var planes: [Plane] = []
-        var labels: [String?] = []
-        for frame in t {
-            for slice in z {
-                for channel in c {
-                    let index = dims.planeIndex(channel: channel, slice: slice, frame: frame)
-                    planes.append(image.stack[index])
-                    labels.append(image.stack.labels[index])
+            let singleComposite = dims.channels == image.stack.count
+            let allChannels = !wholeStack && !singleComposite && image.compositeMode == .composite
+            let c = allChannels ? 0...(dims.channels - 1) : range("channels", dims.channels, open.channel)
+            let z = range("slices", dims.slices, open.slice)
+            let t = range("frames", dims.frames, open.frame)
+            for frame in t {
+                for slice in z {
+                    for channel in c { indices.append(dims.planeIndex(channel: channel, slice: slice, frame: frame)) }
                 }
             }
+            newDims = HyperstackDimensions(channels: c.count, slices: z.count, frames: t.count)
+            channels = c.map { image.channels[$0] }
+        } else {
+            let count = image.stack.count
+            let current = dims.planeIndex(channel: 0, slice: open.slice, frame: open.frame)
+            if count == 1 || !wholeStack {
+                indices = [count == 1 ? 0 : current]
+            } else {
+                // `showDialog`: "2-4", or "2" for 2 to the end.
+                let parts = options.value(forLabel: "range").map(splitRange) ?? []
+                var first = parts.isEmpty ? 1 : parts[0] ?? 1
+                var last = parts.count == 2 ? parts[1] ?? count : count
+                first = max(first, 1)
+                last = min(last, count)
+                if first > last { (first, last) = (1, count) }
+                indices = Array((first - 1)...(last - 1))
+            }
+            let timeSeries = dims.frames == count && count > 1
+            newDims = timeSeries
+                ? HyperstackDimensions(frames: indices.count) : HyperstackDimensions(slices: indices.count)
         }
-        let newDims = HyperstackDimensions(channels: c.count, slices: z.count, frames: t.count)
         let title = options.value(forLabel: "title") ?? uniqueName(image.title, among: context.images.map(\.title))
         do {
-            let stack = try ImageStack(width: image.width, height: image.height, planes: planes, labels: labels)
+            let stack = try ImageStack(
+                width: image.width, height: image.height, planes: indices.map { image.stack[$0] },
+                labels: indices.map { image.stack.labels[$0] })
             var copy = try Hyperstack(
                 title: title, stack: stack, dimensions: newDims, calibration: image.calibration,
-                channels: c.map { image.channels[$0] }, compositeMode: image.compositeMode, info: image.info,
+                channels: channels, compositeMode: image.compositeMode, info: image.info,
                 properties: image.properties)
             copy.encodedROI = image.encodedROI
+            // Duplicator marks plain images and stacks, not hyperstacks.
+            if !isHyper { copy.properties["UniqueName"] = "true" }
             context.add(copy)
         } catch {
             throw CommandError.failed(command: name, detail: "\(error)")
+        }
+    }
+
+    /// `Tools.split(text, " -")`, each part cast to `int` as Java does
+    /// (saturating), or `nil` for a part that isn't a number (NaN).
+    static func splitRange(_ text: String) -> [Int?] {
+        text.split(whereSeparator: { $0 == " " || $0 == "-" }).map { part in
+            guard let value = Double(String(part)), !value.isNaN else { return nil }
+            return Int(min(max(value, Double(Int32.min)), Double(Int32.max)))
         }
     }
 

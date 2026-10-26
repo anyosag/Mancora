@@ -27,12 +27,14 @@
 
 import ij.IJ;
 import ij.ImageJ;
+import ij.CompositeImage;
 import ij.ImagePlus;
 import ij.Menus;
 import ij.WindowManager;
 import ij.io.FileSaver;
 import ij.macro.Interpreter;
 import ij.measure.ResultsTable;
+import ij.process.LUT;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -241,7 +243,7 @@ public class MancoraBridgeHelper {
         return result;
     }
 
-    /** A cheap change detector: pixel hash of every plane plus the image's shape and type. */
+    /** A cheap change detector: a hash of every plane, the image's shape and type, and its metadata. */
     static long fingerprint(ImagePlus imp) {
         long h = 1125899906842597L;
         h = 31 * h + imp.getWidth();
@@ -259,7 +261,26 @@ public class MancoraBridgeHelper {
             else ph = 0;
             h = 31 * h + ph;
         }
-        h = 31 * h + Objects.hashCode(imp.getCalibration().getUnit());
+        // And what ImageJ saves alongside the pixels: title, calibration and
+        // the description (units, spacing, display range), LUTs, labels, info, ROI.
+        h = 31 * h + Objects.hashCode(imp.getTitle());
+        ij.measure.Calibration cal = imp.getCalibration();
+        h = 31 * h + Double.hashCode(cal.pixelWidth);
+        h = 31 * h + Double.hashCode(cal.pixelHeight);
+        h = 31 * h + Double.hashCode(cal.xOrigin) + 7 * Double.hashCode(cal.yOrigin);
+        h = 31 * h + Objects.hashCode(new FileSaver(imp).getDescriptionString());
+        LUT[] luts = imp.isComposite() ? ((CompositeImage) imp).getLuts() : new LUT[] { imp.getProcessor().getLut() };
+        byte[] reds = new byte[256], greens = new byte[256], blues = new byte[256];
+        for (LUT lut : luts) {
+            if (lut == null) continue;
+            lut.getReds(reds); lut.getGreens(greens); lut.getBlues(blues);
+            h = 31 * h + Arrays.hashCode(reds) + 3 * Arrays.hashCode(greens) + 7 * Arrays.hashCode(blues);
+            h = 31 * h + Double.hashCode(lut.min) + 7 * Double.hashCode(lut.max);
+        }
+        h = 31 * h + Double.hashCode(imp.getDisplayRangeMin()) + 7 * Double.hashCode(imp.getDisplayRangeMax());
+        h = 31 * h + Arrays.hashCode(stack.getSliceLabels());
+        h = 31 * h + Objects.hashCode(imp.getInfoProperty());
+        h = 31 * h + (imp.getRoi() == null ? 0 : imp.getRoi().toString().hashCode());
         return h;
     }
 

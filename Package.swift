@@ -69,6 +69,11 @@ let package = Package(
             swiftSettings: strictness
         ),
         .testTarget(
+            name: "MancoraParityTests",
+            dependencies: ["MancoraBridge", "MancoraCommands", "MancoraCore", "MancoraIO"],
+            swiftSettings: strictness
+        ),
+        .testTarget(
             name: "MancoraProcessTests",
             dependencies: ["MancoraCore", "MancoraProcess"],
             swiftSettings: strictness

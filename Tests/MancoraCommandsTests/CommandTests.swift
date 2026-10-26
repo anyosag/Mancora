@@ -101,10 +101,15 @@ struct CommandTests {
         #expect(sub.image.dimensions == HyperstackDimensions(channels: 1, slices: 2))
         // Plane (c=2, z=2) of the original is plane index 3.
         #expect(sub.image.stack[0] == context.images[0].image.stack[3])
-        #expect(throws: CommandError.self) {
-            try context.select(title: "blobs.gif")
-            try registry.run("Duplicate...", options: MacroOptions("duplicate slices=5"), in: &context)
-        }
+        // As in ImageJ, an out-of-range end is clamped, and a backwards range means all.
+        try context.select(title: "blobs.gif")
+        try registry.run("Duplicate...", options: MacroOptions("duplicate slices=5"), in: &context)
+        #expect(context.current?.image.dimensions == HyperstackDimensions(channels: 2, slices: 3))
+        #expect(context.current?.image.properties["UniqueName"] == nil)
+        context.add(try image("stack.tif", planes: 4, dims: HyperstackDimensions(frames: 4)))
+        try registry.run("Duplicate...", options: MacroOptions("duplicate range=3"), in: &context)
+        #expect(context.current?.image.dimensions == HyperstackDimensions(frames: 2))
+        #expect(context.current?.image.properties["UniqueName"] == "true")
         try registry.run("Close All", in: &context)
         #expect(context.images.isEmpty && context.current == nil)
     }
