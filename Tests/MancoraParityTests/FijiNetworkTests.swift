@@ -76,12 +76,13 @@ struct FijiNetworkTests {
         #expect(hello.imagej.contains("/1."), "\(hello.imagej)")
 
         // 1. An ImageJ 1.x command on an image: Fiji's patched ij.jar.
-        let pixels = (0..<64).map { UInt8(($0 % 16) * 16) }
+        let pixels: [UInt8] = (0..<64).map { UInt8(($0 % 16) * 16) }
         let ramp = try Hyperstack(title: "ramp", stack: ImageStack(width: 16, height: 4, planes: [.gray8(pixels)]))
         let inverted = try await bridge.run("Invert", images: [ramp])
         let output = try #require(inverted.images.first, "log: \(inverted.log)")
         #expect(output.replacesInput == 0)
-        #expect(output.image.stack[0] == .gray8((0..<64).map { 255 - UInt8(($0 % 16) * 16) }))
+        let invertedPixels: [UInt8] = pixels.map { 255 - $0 }
+        #expect(output.image.stack[0] == .gray8(invertedPixels))
 
         // 2. Scripts in SciJava's languages, with parameters, images and outputs.
         let groovy = try await bridge.runScript(
