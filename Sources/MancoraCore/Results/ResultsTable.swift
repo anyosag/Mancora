@@ -33,6 +33,11 @@ public struct ResultsTable: Sendable, Hashable {
     public private(set) var labels: [String?] = []
     /// Whether cells never set read as NaN rather than 0 (Set Measurements ▸ NaN empty cells).
     public var emptyCellsAreNaN = false
+    /// ImageJ's `showRowNumbers` once something has set it (opening a file,
+    /// `Table.showRowNumbers`), or `nil` for the default of the window the
+    /// table is shown in: row numbers in "Results", none elsewhere. Saved
+    /// tables start with a " " column of row numbers when this is on.
+    public var showsRowNumbers: Bool?
 
     public init() {}
 

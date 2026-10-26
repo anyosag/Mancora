@@ -34,6 +34,14 @@ struct TIFFBuilder {
         return b
     }
 
+    /// Bytes per value: 1 for BYTE and ASCII, 2 for SHORT, 4 otherwise.
+    static func size(of type: UInt16) -> Int { type == 3 ? 2 : type == 1 || type == 2 ? 1 : 4 }
+
+    /// An ASCII tag (type 2), NUL-terminated.
+    mutating func set(_ tag: UInt16, text: String) {
+        set(tag, 2, Array(text.utf8).map(UInt32.init) + [0])
+    }
+
     mutating func set(_ tag: UInt16, _ type: UInt16 = 4, _ values: [UInt32]) {
         entries.removeAll { $0.tag == tag }
         entries.append(Entry(tag: tag, type: type, values: values))
@@ -63,7 +71,7 @@ struct TIFFBuilder {
                 u16(e.tag)
                 u16(e.type)
                 u32(UInt32(e.values.count))
-                let size = e.type == 3 ? 2 : 4
+                let size = Self.size(of: e.type)
                 if e.values.count * size <= 4 {
                     var inline: [UInt8] = []
                     for v in e.values {
@@ -86,7 +94,7 @@ struct TIFFBuilder {
         if secondIFDPointsBackToFirst {
             // Estimate the second IFD's start: after the first IFD and its values.
             let extraBytes = sorted.reduce(0) { acc, e in
-                let size = e.type == 3 ? 2 : 4
+                let size = Self.size(of: e.type)
                 return acc + (e.values.count * size > 4 ? e.values.count * size : 0)
             }
             let second = ifdOffset + ifdSize + UInt32(extraBytes)

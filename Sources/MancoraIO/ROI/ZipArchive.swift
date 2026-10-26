@@ -1,12 +1,12 @@
 import MancoraSupport
 
-/// A minimal zip reader and writer for ROI sets.
+/// A minimal zip reader and writer for ROI sets and ImageJ's TIFF-in-ZIP files.
 ///
 /// Reading parses the central directory (including ZIP64 end records and
 /// sizes), supports stored and deflated entries, and checks every entry's
-/// CRC-32. Writing stores entries uncompressed, with sizes and CRC in each
-/// local header, so `java.util.zip.ZipInputStream` (which ImageJ's ROI
-/// Manager reads zips with, front to back) accepts them.
+/// CRC-32. Writing stores or deflates entries, with sizes and CRC in each
+/// local header, so `java.util.zip.ZipInputStream` (which ImageJ reads zips
+/// with, front to back) accepts them.
 enum ZipArchive {
     struct Entry {
         var name: String
@@ -125,6 +125,13 @@ enum ZipArchive {
     /// A zip of stored (uncompressed) files, dated 1980-01-01 00:00 so the
     /// same input always gives the same bytes.
     static func stored(_ files: [(name: String, data: [UInt8])]) -> [UInt8] {
+        write(files, deflated: false)
+    }
+
+    /// A zip of `files`, deflated (as `ZipOutputStream` does by default) or
+    /// stored, dated 1980-01-01 00:00 so the same input always gives the same
+    /// bytes.
+    static func write(_ files: [(name: String, data: [UInt8])], deflated: Bool) -> [UInt8] {
         var out: [UInt8] = []
         var central: [UInt8] = []
         func u16(_ v: Int, _ b: inout [UInt8]) {
@@ -144,31 +151,34 @@ enum ZipArchive {
             let name = Array(file.name.utf8)
             let flags = name.allSatisfy { $0 < 0x80 } ? 0 : 0x0800  // UTF-8 names, as ZipOutputStream marks them
             let crc = Int(Inflate.crc32(file.data))
+            let packed = deflated ? Deflate.compress(file.data) : file.data
+            let method = deflated ? 8 : 0
+            let needed = method == 8 ? 20 : 10
             let offset = out.count
             let zip64 = offset >= 0xFFFF_FFFF
             u32(0x0403_4B50, &out)
-            u16(10, &out)
+            u16(needed, &out)
             u16(flags, &out)
-            u16(0, &out)
+            u16(method, &out)
             u16(dosTime, &out)
             u16(dosDate, &out)
             u32(crc, &out)
-            u32(file.data.count, &out)
+            u32(packed.count, &out)
             u32(file.data.count, &out)
             u16(name.count, &out)
             u16(0, &out)
             out += name
-            out += file.data
+            out += packed
 
             u32(0x0201_4B50, &central)
             u16(zip64 ? 45 : 20, &central)  // made by: MS-DOS, version 2.0 (4.5 with ZIP64)
-            u16(zip64 ? 45 : 10, &central)
+            u16(zip64 ? 45 : needed, &central)
             u16(flags, &central)
-            u16(0, &central)
+            u16(method, &central)
             u16(dosTime, &central)
             u16(dosDate, &central)
             u32(crc, &central)
-            u32(file.data.count, &central)
+            u32(packed.count, &central)
             u32(file.data.count, &central)
             u16(name.count, &central)
             u16(zip64 ? 12 : 0, &central)
@@ -215,8 +225,14 @@ enum ZipArchive {
     }
 }
 
-/// Reads every file in a zip (or jar) archive.
+/// Reads and writes every file in a zip (or jar) archive.
 public enum ZipContents {
+    /// A zip holding `files` in order, deflated or stored. Entries are dated
+    /// 1980-01-01, so the same files always give the same bytes.
+    public static func write(_ files: [(name: String, data: [UInt8])], deflated: Bool = true) -> [UInt8] {
+        ZipArchive.write(files, deflated: deflated)
+    }
+
     /// Each entry's name and uncompressed contents (empty for directories),
     /// in the order of their data in the archive; each is checked against
     /// its CRC-32. `limit` bounds any one entry's size.

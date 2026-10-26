@@ -59,6 +59,14 @@ public enum Deflate {
         return out.finish()
     }
 
+    /// A zlib stream (RFC 1950) holding `input`, as PNG's image data is.
+    public static func zlib(_ input: [UInt8]) -> [UInt8] {
+        let adler = Inflate.adler32(input)
+        // CMF 0x78 (deflate, 32 KiB window), FLG 0x01 (no dictionary, check bits).
+        return [0x78, 0x01] + compress(input)
+            + [UInt8(adler >> 24), UInt8(adler >> 16 & 0xFF), UInt8(adler >> 8 & 0xFF), UInt8(adler & 0xFF)]
+    }
+
     /// A gzip member (RFC 1952) holding `input`.
     public static func gzip(_ input: [UInt8]) -> [UInt8] {
         var out: [UInt8] = [0x1F, 0x8B, 8, 0, 0, 0, 0, 0, 0, 255]

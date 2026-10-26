@@ -12,6 +12,8 @@ be hidden by the same bug in a test helper.
 | `tiff/im-*.tif` | ImageMagick (libtiff): LZW and Deflate tiles, PackBits, 16-bit big-endian and 1-bit images |
 | `tiff/manifest.json` | `make_tiffs.py`: the pattern each `tf-`/`im-` file holds |
 | `deflate/*` | `make_deflate.py`, Python's zlib: raw, zlib and gzip streams at several levels |
+| `png/*.png`, `gif/*.gif`, `zip/*.zip` | `make_formats.py`, written from the specifications with Python's zlib and zipfile and a hand-written PNG filter/Adam7 writer and GIF LZW encoder: every PNG colour type, bit depth, filter, interlacing and tRNS case; single, interlaced and animated GIFs with every disposal method; TIFF-in-ZIP, ROI and other zips |
+| `png/manifest.json`, `gif/manifest.json` | `make_formats.py`: the samples each file holds and, where ImageJ converts them on opening (alpha composited on white, linear gray to sRGB, animated GIFs composed by its `GifDecoder`), what ImageJ 1.54p opens, which the parity suite checks against ImageJ itself |
 | `roi/*.roi`, `roi/RoiSet.zip` | ImageJ 1.54p `RoiEncoder` and the ROI Manager's own `saveMultiple()` (`RoiFixtures.java`): every ROI type, plus a few patched older-version files |
 | `roi/golden.json` | `RoiFixtures.java`: each ROI as `RoiDecoder` reads it back, with `Roi.getMask()` and `ImageProcessor.fill(roi)` |
 | `roi/mancora/RoiSet.zip` | Mancora's `RoiSet.encode`, from the ROIs described in `golden.json` |
