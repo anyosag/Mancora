@@ -28,6 +28,10 @@ public enum MacroSupport {
                     continue
                 }
                 if unsupportedFunctions.contains(name) { note(name) }
+                // ImageJ smooths a thresholded wand selection with a macro of its own.
+                if symbol.type == DO_WAND, stringArgument(of: pgm, at: i + 1, contains: "smooth") {
+                    note("doWand(\"smooth\")")
+                }
                 if symbol.type == RUN, code[i + 1] == ch("("), code[i + 2] & TOK_MASK == STRING_CONSTANT,
                     let command = pgm.table[code[i + 2] >> TOK_SHIFT].str
                 {
@@ -43,10 +47,31 @@ public enum MacroSupport {
         return found
     }
 
+    /// Whether a string constant among the arguments of the call whose "("
+    /// is at `start` contains `text`.
+    static func stringArgument(of pgm: Program, at start: Int, contains text: String) -> Bool {
+        let code = pgm.code
+        guard start < code.count, code[start] == ch("(") else { return false }
+        var depth = 0
+        var i = start
+        while i < code.count, code[i] & TOK_MASK != EOF {
+            if code[i] == ch("(") { depth += 1 }
+            if code[i] == ch(")") {
+                depth -= 1
+                if depth == 0 { return false }
+            }
+            if code[i] & TOK_MASK == STRING_CONSTANT, pgm.table[code[i] >> TOK_SHIFT].str?.contains(text) == true {
+                return true
+            }
+            i += 1
+        }
+        return false
+    }
+
     /// Top-level built-ins that only ImageJ has (user interface, plots,
     /// fitting, overlays, drawing text...).
     static let unsupportedFunctions: Set<String> = [
-        "Dialog", "doCommand", "doWand", "drawString", "exec", "Ext",
+        "Dialog", "doCommand", "drawString", "exec", "Ext",
         "Fit", "floodFill", "getCursorLoc", "getDisplayedArea", "getFontList", "getImageInfo",
         "getLine", "getLocationAndSize", "getProfile", "getStringWidth", "makeArrow", "makeEllipse",
         "makeRotatedRectangle", "makeText", "newMenu", "Overlay", "Plot", "selectionContains", "setLut",

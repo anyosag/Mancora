@@ -279,6 +279,66 @@ enum MacroCorpus {
     /// Images: the current image, pixels, selections, statistics,
     /// thresholds, display ranges, calibration and commands.
     static let images: [MacroParityCase] = [
+        .init("wand on every mode", #"""
+            function trace(x, y, tolerance, mode) {
+                if (mode == "") doWand(x, y); else doWand(x, y, tolerance, mode);
+                getSelectionCoordinates(xs, ys);
+                print(x, y, tolerance, mode, selectionType(), xs.length);
+                Array.print(xs);
+                Array.print(ys);
+            }
+            newImage("w", "8-bit black", 48, 32, 1);
+            setColor(200); makeOval(4, 4, 16, 13); fill();
+            setColor(120); makeRectangle(26, 6, 12, 16); fill();
+            setColor(0); makeRectangle(29, 10, 4, 5); fill();
+            setColor(121); makeRectangle(40, 6, 4, 4); fill();
+            for (i = 0; i < 20; i++) setPixel(2 + i, 28 - (i % 2), 90);
+            setPixel(30, 24, 90); setPixel(31, 25, 90); setPixel(32, 26, 90);
+            run("Select None");
+            trace(10, 10, 0, "");
+            trace(27, 7, 0, "");
+            trace(30, 11, 0, "");
+            trace(3, 28, 0, "");
+            trace(30, 24, 0, "");
+            trace(0, 0, 0, "");
+            trace(27, 7, 1, "Legacy");
+            trace(27, 7, 0, "4-connected");
+            trace(30, 24, 0, "8-connected");
+            trace(30, 24, 0, "4-connected");
+            trace(0, 0, 0, "8-connected");
+            trace(30, 11, 0, "8-connected");
+            trace(10, 10, 100, "8-connected");
+            setThreshold(100, 255);
+            trace(1, 10, 0, "");
+            trace(30, 11, 0, "");
+            trace(30, 11, 0, "4-connected");
+            trace(2, 30, 0, "");
+            resetThreshold();
+            makeRectangle(1, 1, 3, 3);
+            doWand(-5, 3);
+            print(selectionType());
+            """#),
+        .init("wand on 16-bit, float and RGB", #"""
+            newImage("a", "16-bit black", 30, 20, 1);
+            setColor(4000); makeOval(3, 3, 12, 10); fill();
+            setColor(4100); makeRectangle(18, 4, 8, 9); fill();
+            run("Select None");
+            doWand(8, 8); getSelectionCoordinates(xs, ys); Array.print(xs); Array.print(ys);
+            doWand(8, 8, 150, "8-connected"); getSelectionCoordinates(xs, ys); Array.print(xs); Array.print(ys);
+            newImage("b", "32-bit black", 30, 20, 1);
+            setColor(1.5); makeRectangle(4, 4, 9, 7); fill();
+            setPixel(6, 6, NaN);
+            run("Select None");
+            doWand(5, 5); getSelectionCoordinates(xs, ys); Array.print(xs); Array.print(ys);
+            makeRectangle(20, 2, 3, 3);
+            doWand(6, 6); print(selectionType()); getSelectionBounds(x, y, w, h); print(x, y, w, h);
+            newImage("c", "RGB black", 30, 20, 1);
+            setColor(255, 0, 0); makeRectangle(3, 3, 8, 8); fill();
+            setColor(0, 0, 255); makeRectangle(11, 3, 8, 8); fill();
+            run("Select None");
+            doWand(5, 5); getSelectionCoordinates(xs, ys); Array.print(xs); Array.print(ys);
+            doWand(5, 5, 1, "8-connected"); getSelectionCoordinates(xs, ys); Array.print(xs); Array.print(ys);
+            """#),
         .init("image basics", #"""
             print(getTitle(), getWidth(), getHeight(), nSlices, nImages, bitDepth(), getImageID() < 0);
             getDimensions(w, h, c, z, t);

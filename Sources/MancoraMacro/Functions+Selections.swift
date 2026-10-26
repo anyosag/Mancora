@@ -42,6 +42,23 @@ extension Functions {
         try setSelection(Roi(.rectangle(Self.rect(x, y, w, h), cornerDiameter: max(arcSize, 0))))
     }
 
+    /// `doWand(x, y)` or `doWand(x, y, tolerance, mode)`: the selection
+    /// stays as it was when the wand finds nothing.
+    func doWand() throws(MacroSignal) {
+        let x = jIntI(try getFirstArg())
+        let y = jIntI(try getNextArg())
+        var tolerance = 0.0
+        var mode: String?
+        if interp.nextToken() == ch(",") {
+            tolerance = try getNextArg()
+            mode = try getNextString()
+        }
+        try interp.getRightParen()
+        let open = try image()
+        if mode?.contains("smooth") == true, open.threshold != nil { try unsupported("doWand(\"smooth\")") }
+        if let roi = open.wandSelection(x: x, y: y, tolerance: tolerance, mode: mode) { try setSelection(roi) }
+    }
+
     func makeOval() throws(MacroSignal) {
         let x = try getFirstArg()
         let y = try getNextArg()

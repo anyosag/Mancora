@@ -76,6 +76,7 @@ final class Functions {
         case MAKE_LINE: try makeLine()
         case MAKE_OVAL: try makeOval()
         case MAKE_RECTANGLE: try makeRectangle()
+        case DO_WAND: try doWand()
         case DUMP: try interp.getParens()
         case MOVE_TO: try moveTo()
         case LINE_TO: try lineTo()
