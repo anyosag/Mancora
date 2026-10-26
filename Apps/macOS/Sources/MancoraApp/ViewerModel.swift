@@ -4,6 +4,7 @@ import MancoraBridge
 import MancoraCommands
 import MancoraCore
 import MancoraIO
+import MancoraMacro
 import Observation
 import UniformTypeIdentifiers
 
@@ -169,10 +170,65 @@ final class ViewerModel {
         }
     }
 
-    /// Runs ImageJ macro code with this image open (Plugins ▸ Macros ▸ Run).
+    /// Runs ImageJ macro code with this image open (Plugins ▸ Macros ▸ Run):
+    /// natively when Mancora has everything it uses, otherwise in ImageJ
+    /// through the bridge.
     func runMacro(_ code: String, bridge: AppBridge) async -> [URL] {
         isBusy = true
         defer { isBusy = false }
+        if MacroSupport.unsupported(in: code, registry: .standard).isEmpty {
+            let input = image
+            let position = (channel, slice, frame)
+            // log, results, return value, error, the input as the macro left it, new images
+            let outcome = await Task.detached(priority: .userInitiated) {
+                () -> (String, ResultsTable, String?, String?, Hyperstack?, [Hyperstack]) in
+                let session = MacroSession()
+                session.batchMode = false
+                var inputID: Int?
+                if let input {
+                    inputID = session.add(input)
+                    try? session.context.withCurrent("") { (open: inout OpenImage) in
+                        (open.channel, open.slice, open.frame) = position
+                    }
+                }
+                var value: String?
+                var failure: String?
+                do { value = try session.run(code) } catch { failure = error.description }
+                var changed: Hyperstack?
+                var created: [Hyperstack] = []
+                for open in session.context.images {
+                    if open.id == inputID {
+                        if open.image != input { changed = open.image }
+                    } else {
+                        created.append(open.image)
+                    }
+                }
+                return (session.logText, session.context.results, value, failure, changed, created)
+            }.value
+            let (log, results, value, failure, changed, created) = outcome
+            if let changed { replace(with: changed) }
+            var lines: [String] = []
+            if !log.isEmpty { lines.append(log) }
+            if !results.isEmpty {
+                let hasLabels = results.labels.contains { $0 != nil }
+                lines.append(((hasLabels ? ["Label"] : []) + results.columns).joined(separator: "\t"))
+                for row in 0..<results.count {
+                    var cells = hasLabels ? [results.labels[row] ?? ""] : []
+                    for column in results.columns {
+                        if case .text(let t)? = results.value(column, row: row) {
+                            cells.append(t)
+                        } else {
+                            cells.append(String(format: "%.4g", results.number(column, row: row)))
+                        }
+                    }
+                    lines.append(cells.joined(separator: "\t"))
+                }
+            }
+            if let value { lines.append("Returned: \(value)") }
+            if !lines.isEmpty { report = lines.joined(separator: "\n") }
+            if let failure { errorMessage = "Macro Error: " + failure }
+            return saveForNewWindows(created)
+        }
         do {
             return handle(try await bridge.runMacro(code, on: image))
         } catch {
