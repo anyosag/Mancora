@@ -2,6 +2,8 @@
 *.swift text eol=lf
 *.yml text eol=lf
 *.sh text eol=lf
+# Tables the app and the bridge read: the same bytes on every platform.
+*.tsv text eol=lf
 # Windows build inputs
 *.ps1 text eol=crlf
 *.iss text eol=crlf
@@ -20,3 +22,4 @@ Tests/Fixtures/** -text
 
 # The Fiji sources kept for reference are not Mancora's code; keep their bytes as they are.
 legacy/** -text linguist-vendored
+Tests/MancoraPluginsTests/Fixtures/** -text

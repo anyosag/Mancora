@@ -1,3 +1,4 @@
+import Foundation
 import MancoraCommands
 import MancoraCore
 import Testing
@@ -30,12 +31,14 @@ struct MacroSupportTests {
     }
 
     @Test func fileFormats() {
+        // TIFF, ZIP, PNG and GIF images, selections and tables are native; JPEG, BMP and the rest are ImageJ's.
         let code = #"""
             saveAs("Tiff", "/tmp/a.tif"); saveAs("PNG", "/tmp/a.png"); saveAs("Results", "/tmp/r.csv");
-            save("/tmp/b.tif"); save(dir + "c.jpg"); save(dir + name);
-            open("/tmp/a.tif"); open(dir + "x.png"); open(path); saveAs("/tmp/d.gif");
+            saveAs("Jpeg", "/tmp/a.jpg"); save("/tmp/b.tif"); save(dir + "c.jpg"); save(dir + name);
+            open("/tmp/a.tif"); open(dir + "x.png"); open(dir + "y.bmp"); open(path); saveAs("/tmp/d.gif");
+            saveAs("/tmp/e.bmp");
             """#
-        #expect(found(code) == [#"saveAs("PNG")"#, #"save("c.jpg")"#, #"open("x.png")"#, #"save("d.gif")"#])
+        #expect(found(code) == [#"saveAs("Jpeg")"#, #"save("c.jpg")"#, #"open("y.bmp")"#, #"save("e.bmp")"#])
         #expect(found(#"saveAs("Tiff");"#) == [#"saveAs("Tiff") with a save dialog"#])
     }
 
@@ -76,17 +79,24 @@ struct MacroTableTests {
         #expect(Functions.variableNames(["Area", "%Area", "1st", "Area", "Area"]) == ["Area", "_Area", "_1st", "Area_0", "Area_1"])
     }
 
-    @Test func readsImageJsTables() throws {
-        let csv = " ,Label,Area,Note\n1,a,1.5,\"x, y\"\n2,b,2,z\n"
-        let rt = try Functions.readTable(csv, path: "/tmp/Results.csv")
-        #expect(rt.columns == ["Area", "Note"])
-        #expect(rt.labels == ["a", "b"])
-        #expect(rt.value("Note", row: 0) == .text("x, y"))
-        #expect(rt.number("Area", row: 1) == 2)
-        let numeric = try Functions.readTable("1\t2\n3\t4\n", path: "/tmp/t.txt")
-        #expect(numeric.columns == ["C1", "C2"])
-        #expect(numeric.count == 2)
-        #expect(javaSplit("a,,b,,", ",") == ["a", "", "b"])
+    @Test func opensImageJsTables() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mancora-tables-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let path = dir.appendingPathComponent("Results.csv").path
+        try Data(" ,Label,Mean,Area,Note\n1,a,1.5,3,\"x, y\"\n2,b,2,4,z\n".utf8).write(to: URL(fileURLWithPath: path))
+        let headings = dir.appendingPathComponent("headings.tsv").path
+        try Data("B\tA\n".utf8).write(to: URL(fileURLWithPath: headings))
+        let session = MacroSession()
+        try session.run("path = \"\(path)\"; headings = \"\(headings)\";\n" + #"""
+            Table.open(path, "T");
+            print(Table.headings("T"));
+            print(Table.getString("Label", 1, "T"), Table.getString("Note", 0, "T"), Table.get("Area", 1, "T"));
+            Table.open(headings);
+            print(Table.title, Table.size, Table.headings);
+            """#)
+        // A new table keeps its columns in the file's order, and a file of
+        // headings alone gives the columns without rows.
+        #expect(session.logLines == [" \tLabel\tMean\tArea\tNote", "b x, y 4", "headings.tsv 0 B\tA"])
     }
 
     @Test func sessionTablesAndFrontWindow() throws {

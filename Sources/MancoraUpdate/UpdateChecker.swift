@@ -98,6 +98,14 @@ public enum UpdateError: Error, Equatable, Sendable, CustomStringConvertible {
 /// canned responses.
 public protocol HTTPClient: Sendable {
     func data(from url: URL) async throws -> Data
+    /// The body and the server's `Last-Modified` time, if it sent one.
+    func dataAndLastModified(from url: URL) async throws -> (data: Data, lastModified: Date?)
+}
+
+extension HTTPClient {
+    public func dataAndLastModified(from url: URL) async throws -> (data: Data, lastModified: Date?) {
+        (try await data(from: url), nil)
+    }
 }
 
 public struct URLSessionHTTPClient: HTTPClient {
@@ -108,14 +116,36 @@ public struct URLSessionHTTPClient: HTTPClient {
     }
 
     public func data(from url: URL) async throws -> Data {
+        try await dataAndLastModified(from: url).data
+    }
+
+    public func dataAndLastModified(from url: URL) async throws -> (data: Data, lastModified: Date?) {
         var request = URLRequest(url: url)
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         let (data, response) = try await URLSession.shared.data(for: request)
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+        guard let http = response as? HTTPURLResponse else { return (data, nil) }
+        if !(200..<300).contains(http.statusCode) {
             throw UpdateError.httpStatus(http.statusCode, url: url.absoluteString)
         }
-        return data
+        return (data, (http.value(forHTTPHeaderField: "Last-Modified")).flatMap(Self.httpDate))
+    }
+
+    /// An HTTP-date in any of the forms RFC 7231 §7.1.1.1 has recipients
+    /// accept (as Java's `URLConnection` does): `Sun, 06 Nov 1994 08:49:37 GMT`,
+    /// RFC 850's `Sunday, 06-Nov-94 08:49:37 GMT` and asctime's
+    /// `Sun Nov  6 08:49:37 1994`.
+    public static func httpDate(_ text: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        // asctime pads a one-digit day with a second space.
+        let spaced = text.split(separator: " ").joined(separator: " ")
+        for format in ["EEE, dd MMM yyyy HH:mm:ss zzz", "EEEE, dd-MMM-yy HH:mm:ss zzz", "EEE MMM d HH:mm:ss yyyy"] {
+            formatter.dateFormat = format
+            if let date = formatter.date(from: spaced) { return date }
+        }
+        return nil
     }
 }
 

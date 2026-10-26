@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<pluginRecords>
+    <disabled-update-site name="ImageJ" url="https://update.imagej.net/" official="true" timestamp="0"/>
+    <update-site name="Alpha" url="@BASE@Alpha/" official="false" timestamp="20240101000000"/>
+    <update-site name="Beta" url="@BASE@Beta" official="false" timestamp="0"/>
+    <update-site name="Gone" url="@BASE@Gone/" official="false" timestamp="0"/>
+    <disabled-update-site name="Off" url="@BASE@Off/" official="false" timestamp="0"/>
+</pluginRecords>

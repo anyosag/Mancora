@@ -32,6 +32,34 @@ struct ParityTests {
             ParityCase("Enhance Contrast...", "saturated=0.5 use", on: .stack32),
             ParityCase("Enhance Contrast...", "saturated=0.35", on: .hyperstack),
             ParityCase("Enhance Contrast...", "saturated=0.35", on: .fixtureHyperstack),
+            // The histogram is the selection's.
+            ParityCase("Enhance Contrast...", "saturated=0.35", on: .rectangleROI),
+            ParityCase("Enhance Contrast...", "saturated=0.35", on: .ovalROI),
+            ParityCase("Enhance Contrast...", "saturated=1", on: .polygonROI),
+            ParityCase("Enhance Contrast...", "saturated=0.35", on: .edgeROI),
+            // A composite has no "Use stack histogram"; saturation is limited to 0–100%.
+            ParityCase("Enhance Contrast...", "saturated=0.35 use", on: .hyperstack),
+            ParityCase("Enhance Contrast...", "saturated=150", on: .gray16),
+        ])
+    }
+
+    /// Enhance Contrast with Normalize, which "Process all" implies.
+    @Test func normalize() async throws {
+        try await Parity.check([
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize", on: .gray8),
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize", on: .gray16),
+            ParityCase("Enhance Contrast...", "saturated=1 normalize", on: .gray32),
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize", on: .stack8),
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize process_all", on: .stack16),
+            ParityCase("Enhance Contrast...", "saturated=0.35 process_all use", on: .stack32),
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize_all", on: .stack8),
+            // Only the selection, unless "Update all when normalizing" (32-bit: all).
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize", on: .ovalROI),
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize update", on: .ovalROI),
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize", on: .rectangleROI),
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize", on: .polygonROI),
+            // Composites aren't normalized.
+            ParityCase("Enhance Contrast...", "saturated=0.35 normalize", on: .hyperstack),
         ])
     }
 
@@ -51,6 +79,18 @@ struct ParityTests {
             ParityCase("Duplicate...", "title=current", on: .hyperstack),
             ParityCase("Duplicate...", "title=current", on: .fixtureHyperstack),
             ParityCase("Duplicate...", "duplicate frames=2", on: .fixtureHyperstack),
+            // An area selection crops the copy to its bounds within the image.
+            ParityCase("Duplicate...", "title=copy", on: .rectangleROI),
+            ParityCase("Duplicate...", "title=copy", on: .ovalROI),
+            ParityCase("Duplicate...", "title=copy", on: .edgeROI),
+            ParityCase("Duplicate...", "title=copy", on: .polygonROI),
+            ParityCase("Duplicate...", "title=copy", on: .roundedROI),
+            ParityCase("Duplicate...", "title=copy", on: .freehandROI),
+            ParityCase("Duplicate...", "title=copy", on: .namedROI),
+            ParityCase(
+                steps: [.init(command: "Properties...", options: "channels=1 slices=1 frames=1 unit=nm pixel_width=3 pixel_height=3 voxel_depth=3 origin=4,5"),
+                        .init(command: "Duplicate...", options: "title=copy")],
+                inputs: [.rectangleROI]),
         ])
     }
 
@@ -106,6 +146,8 @@ struct MeasurementParityTests {
             .measure("circularity slice display redirect=None decimal=3", on: .stack8),
             .measure("area display redirect=None decimal=3", on: .gray16, then: [.init(command: "Measure", options: "")]),
             .measure("area mean redirect=None decimal=3", on: .gray8, then: [.init(command: "Clear Results", options: "")]),
+            // Decimal places are cast to int as Java casts them, then limited to 0–9.
+            .measure("area mean redirect=None decimal=1e20", on: .gray8),
         ])
     }
 }
@@ -124,6 +166,34 @@ struct FilterParityTests {
             ParityCase("Gaussian Blur...", "sigma=0.5 scaled stack", on: .calibrated),
             ParityCase("Gaussian Blur...", "radius=5", on: .gray8),
             ParityCase("Gaussian Blur...", "sigma=3", on: .hyperstack),
+            ParityCase("Gaussian Blur...", "sigma=12", on: .gray16),
+            // The dialog listener takes a negative sigma as given: nothing is blurred.
+            ParityCase("Gaussian Blur...", "sigma=-2", on: .gray8),
+        ])
+    }
+
+    /// Filters that support masking change only the selection, reading the
+    /// image around it.
+    @Test func selections() async throws {
+        try await Parity.check([
+            ParityCase("Gaussian Blur...", "sigma=2", on: .rectangleROI),
+            ParityCase("Gaussian Blur...", "sigma=2", on: .ovalROI),
+            ParityCase("Gaussian Blur...", "sigma=1.5", on: .polygonROI),
+            ParityCase("Gaussian Blur...", "sigma=9", on: .edgeROI),
+            // Downscaled lines start where the kernel starts reading.
+            ParityCase("Gaussian Blur...", "sigma=12", on: .rectangleROI),
+            ParityCase("Gaussian Blur...", "sigma=12", on: .ovalROI),
+            ParityCase("Mean...", "radius=2", on: .ovalROI),
+            ParityCase("Median...", "radius=1", on: .rectangleROI),
+            ParityCase("Variance...", "radius=2", on: .rectangleROI),
+            ParityCase("Remove Outliers...", "radius=2 threshold=20 which=Bright", on: .ovalROI),
+            ParityCase("Despeckle", on: .edgeROI),
+            ParityCase("Smooth", on: .ovalROI),
+            ParityCase("Sharpen", on: .polygonROI),
+            ParityCase("Find Edges", on: .edgeROI),
+            ParityCase("Convolve...", "text1=[1 2 1 2 4 2 1 2 1] normalize", on: .ovalROI),
+            // With a selection, Convolver keeps the display range.
+            ParityCase("Convolve...", "text1=[0 1 0\n1 1 1\n0 1 0]", on: .rectangleROI),
         ])
     }
 
@@ -143,6 +213,10 @@ struct FilterParityTests {
             ParityCase("Despeckle", on: .gray8),
             ParityCase("Despeckle", on: .rgb),
             ParityCase("Despeckle", "stack", on: .stack16),
+            // makeLineRadii squares a negative radius (without the 1.5 and 2.5 adjustments).
+            ParityCase("Mean...", "radius=-1.6", on: .gray8),
+            ParityCase("Median...", "radius=-2.6", on: .gray16),
+            ParityCase("Median...", "radius=0.5", on: .gray8),
         ])
     }
 
@@ -159,6 +233,9 @@ struct FilterParityTests {
             ParityCase("Convolve...", "text1=[1 2 1 2 4 2 1 2 1] normalize", on: .gray32),
             ParityCase("Convolve...", "text1=[0 1 0\n1 1 1\n0 1 0]", on: .gray16),
             ParityCase("Convolve...", "text1=[1 1 1\n1 1 1\n1 1 1] normalize stack", on: .stack8),
+            // One line: the largest odd square of the values (here the first 9, then 25).
+            ParityCase("Convolve...", "text1=[1 2 1 2 4 2 1 2 1 7] normalize", on: .gray8),
+            ParityCase("Convolve...", "text1=[1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1]", on: .gray32),
         ])
     }
 
@@ -187,6 +264,29 @@ struct FilterParityTests {
                     ParityCase(
                         steps: [.init(command: "Options...", options: "iterations=1 count=1 black do=Skeletonize"), reset],
                         inputs: [.binary]),
+                    // Numbers are cast as Java casts them, then limited to 1–100.
+                    ParityCase(
+                        steps: [.init(command: "Options...", options: "iterations=1e20 count=1 black do=Erode"), reset],
+                        inputs: [.binary]),
+                ])
+    }
+
+    /// Erode and dilate change the selection's bounds at each iteration and
+    /// its mask at the end; Fill Holes fills the whole image but the mask's
+    /// bounds; Skeletonize ignores the selection.
+    @Test func binaryWithinSelections() async throws {
+        typealias Step = ParityCase.Step
+        let reset = Step(command: "Options...", options: "iterations=1 count=1 black do=Nothing")
+        let iterations = Step(command: "Options...", options: "iterations=3 count=2 black do=Nothing")
+        let white = Step(command: "Options...", options: "iterations=1 count=1 do=Nothing")
+        try await Parity.check(
+            ["Erode", "Dilate", "Fill Holes", "Skeletonize", "Outline"].map { ParityCase($0, on: .binaryOvalROI) }
+                + ["Open", "Outline"].map { ParityCase($0, on: .binaryRectangleROI) }
+                + [
+                    ParityCase(steps: [iterations, Step(command: "Erode", options: ""), reset], inputs: [.binaryOvalROI]),
+                    ParityCase(steps: [iterations, Step(command: "Close-", options: ""), reset], inputs: [.binaryRectangleROI]),
+                    ParityCase(steps: [white, Step(command: "Outline", options: ""), reset], inputs: [.binaryOvalROI]),
+                    ParityCase(steps: [white, Step(command: "Erode", options: ""), reset], inputs: [.binaryOvalROI]),
                 ])
     }
 }
@@ -200,7 +300,11 @@ struct ProcessParityTests {
                 .map { ParityCase("8-bit", on: $0) }
                 + [ParityInput.gray8, .gray32, .stack32, .rgb].map { ParityCase("16-bit", on: $0) }
                 + [ParityInput.gray8, .gray16, .rgb, .hyperstack, .fixtureHyperstack].map { ParityCase("32-bit", on: $0) }
-                + [ParityInput.gray8, .gray16, .gray32, .fixtureFire, .stack8].map { ParityCase("RGB Color", on: $0) })
+                + [ParityInput.gray8, .gray16, .gray32, .fixtureFire, .stack8].map { ParityCase("RGB Color", on: $0) }
+                // "RGB Color" forgets the name of the LUT it was drawn through.
+                + [ParityInput.gray8, .gray16, .stack8].map {
+                    ParityCase(steps: [.init(command: "Fire", options: ""), .init(command: "RGB Color", options: "")], inputs: [$0])
+                })
     }
 
     @Test func math() async throws {
@@ -226,6 +330,26 @@ struct ProcessParityTests {
             ParityCase("XOR...", "value=1010", on: .gray16),
             ParityCase("Invert", on: .gray8), ParityCase("Invert", on: .gray16), ParityCase("Invert", on: .gray32),
             ParityCase("Invert", on: .rgb), ParityCase("Invert", "stack", on: .stack16), ParityCase("Invert", on: .stack8),
+            // One slice of a stack is the image's processor, whose display range Min, Max and Abs reset.
+            ParityCase("Max...", "value=2000", on: .stack16),
+            ParityCase("Min...", "value=1000", on: .stack16),
+            ParityCase("Abs", on: .stack32),
+            ParityCase("Min...", "value=0", on: .stack32),
+        ])
+    }
+
+    /// Process ▸ Math and Invert change only the selection; a display range
+    /// reset sees its bounds changed, before the mask restores the rest.
+    @Test func mathWithinSelections() async throws {
+        try await Parity.check([
+            ParityCase("Add...", "value=25", on: .ovalROI),
+            ParityCase("Add...", "value=25", on: .rectangleROI),
+            ParityCase("Multiply...", "value=1.5", on: .polygonROI),
+            ParityCase("Min...", "value=1500", on: .rectangleROI),
+            ParityCase("Max...", "value=1", on: .polygonROI),
+            ParityCase("Invert", on: .rectangleROI),
+            ParityCase("Invert", on: .polygonROI),
+            ParityCase("Invert", on: .ovalROI),
         ])
     }
 
@@ -250,6 +374,8 @@ struct ProcessParityTests {
             ParityCase("Z Project...", "projection=[Max Intensity] all", on: .hyperstack),
             ParityCase("Z Project...", "projection=[Min Intensity]", on: .hyperstack),
             ParityCase("Z Project...", "projection=[Max Intensity] all", on: .fixtureHyperstack),
+            // A slice number beyond the stack is ignored (cast to int as Java casts).
+            ParityCase("Z Project...", "start=1e20 projection=[Max Intensity]", on: .stack8),
             ParityCase("Split Channels", on: .hyperstack),
             ParityCase("Split Channels", on: .rgb),
             ParityCase("Split Channels", on: .fixtureHyperstack),
@@ -283,6 +409,21 @@ struct ThresholdParityTests {
                 ParityCase("Convert to Mask", "method=Default background=Default only black", on: .stack8),
                 ParityCase("Convert to Mask", "method=Otsu background=Dark calculate black create", on: .stack16),
             ])
+    }
+
+    /// A stack's processors have its LUT: an inverted one swaps the side each
+    /// slice's own threshold takes.
+    @Test func invertedLUTStacks() async throws {
+        let invert = ParityCase.Step(command: "Invert LUT", options: "")
+        func mask(_ options: String, on input: ParityInput) -> ParityCase {
+            ParityCase(steps: [invert, .init(command: "Convert to Mask", options: options)], inputs: [input])
+        }
+        try await Parity.check([
+            mask("method=Otsu background=Light calculate", on: .stack8),
+            mask("method=Otsu background=Light calculate", on: .stack16),
+            mask("method=Default background=Default calculate black", on: .stack8),
+            mask("method=Huang background=Dark calculate black", on: .stack32),
+        ])
     }
 
     @Test(arguments: [ParityInput.stack8, .stack16, .stack32])

@@ -3,8 +3,10 @@
 struct TIFFBuilder {
     struct Entry {
         let tag: UInt16
-        let type: UInt16  // 3 = SHORT, 4 = LONG
+        let type: UInt16  // 1 = BYTE, 2 = ASCII, 3 = SHORT, 4 = LONG
         let values: [UInt32]
+
+        var valueSize: Int { type == 1 || type == 2 ? 1 : type == 3 ? 2 : 4 }
     }
 
     var bigEndian = false
@@ -15,6 +17,8 @@ struct TIFFBuilder {
     var nextIFD: UInt32? = nil
     /// When set, a second copy of the IFD is written and the first points to it.
     var secondIFDPointsBackToFirst = false
+    /// Out-of-line values of these tags are said to be at the given offset instead.
+    var valueOffsets: [UInt16: UInt32] = [:]
 
     /// An uncompressed 8-bit image with one strip.
     static func gray8(width: Int, height: Int, pixels: [UInt8]? = nil) -> TIFFBuilder {
@@ -37,6 +41,11 @@ struct TIFFBuilder {
     mutating func set(_ tag: UInt16, _ type: UInt16 = 4, _ values: [UInt32]) {
         entries.removeAll { $0.tag == tag }
         entries.append(Entry(tag: tag, type: type, values: values))
+    }
+
+    /// An ASCII entry, NUL-terminated.
+    mutating func set(_ tag: UInt16, text: String) {
+        set(tag, 2, Array(text.utf8).map(UInt32.init) + [0])
     }
 
     func build() -> [UInt8] {
@@ -63,7 +72,7 @@ struct TIFFBuilder {
                 u16(e.tag)
                 u16(e.type)
                 u32(UInt32(e.values.count))
-                let size = e.type == 3 ? 2 : 4
+                let size = e.valueSize
                 if e.values.count * size <= 4 {
                     var inline: [UInt8] = []
                     for v in e.values {
@@ -71,6 +80,8 @@ struct TIFFBuilder {
                         inline += bigEndian ? bytes.reversed() : bytes
                     }
                     out += inline + [UInt8](repeating: 0, count: 4 - inline.count)
+                } else if let offset = valueOffsets[e.tag] {
+                    u32(offset)
                 } else {
                     u32(extraOffset)
                     for v in e.values {
@@ -86,8 +97,7 @@ struct TIFFBuilder {
         if secondIFDPointsBackToFirst {
             // Estimate the second IFD's start: after the first IFD and its values.
             let extraBytes = sorted.reduce(0) { acc, e in
-                let size = e.type == 3 ? 2 : 4
-                return acc + (e.values.count * size > 4 ? e.values.count * size : 0)
+                acc + (e.values.count * e.valueSize > 4 ? e.values.count * e.valueSize : 0)
             }
             let second = ifdOffset + ifdSize + UInt32(extraBytes)
             writeIFD(at: ifdOffset, next: second)

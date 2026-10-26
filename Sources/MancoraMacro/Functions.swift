@@ -34,6 +34,12 @@ final class Functions {
     var pen: (x: Int, y: Int) = (0, 0)
     /// `snapshot()`'s copy of a plane, for `reset()`.
     var snapshot: (id: Int, index: Int, plane: Plane)?
+    /// The shift and alt keys `setKeyDown` held for the next selection
+    /// function (ImageJ's `shiftKeyDown`, `altKeyDown`), and whether it was
+    /// called (`Interpreter.keysSet`: the keys are released at the end).
+    var selectionShift = false
+    var selectionAlt = false
+    var keysSet = false
 
     init(interp: Interpreter) {
         self.interp = interp
@@ -53,6 +59,11 @@ final class Functions {
             try? writer.close()
             self.writer = nil
         }
+        if keysSet {
+            session.keys.alt = false
+            session.keys.shift = false
+            session.keys.space = false
+        }
         session.finishMacro()
     }
 
@@ -60,7 +71,9 @@ final class Functions {
 
     func doFunction(_ type: Int) throws(MacroSignal) {
         switch type {
-        case RUN: try doRun()
+        case RUN:
+            try doRun()
+            releaseKeys()
         case SELECT: try selectWindow()
         case WAIT:
             let ms = try getArg()
@@ -80,8 +93,10 @@ final class Functions {
         case SET_BACKGROUND: try setBackgroundColor()
         case SET_COLOR: try setColor()
         case MAKE_LINE: try makeLine()
-        case MAKE_OVAL: try makeOval()
-        case MAKE_RECTANGLE: try makeRectangle()
+        case MAKE_OVAL: try makingSelection("makeOval", releasingKeys: true) { () throws(MacroSignal) in try makeOval() }
+        case MAKE_RECTANGLE:
+            try makingSelection("makeRectangle", releasingKeys: true) { () throws(MacroSignal) in try makeRectangle() }
+        case DO_WAND: try doWand()
         case DUMP: try interp.getParens()
         case MOVE_TO: try moveTo()
         case LINE_TO: try lineTo()
@@ -104,10 +119,14 @@ final class Functions {
         case SET_LOCATION: try skipArgs()
         case GET_VOXEL_SIZE: try getVoxelSize()
         case GET_HISTOGRAM: try getHistogram()
+        case GET_LINE: try getLine()
         case GET_BOUNDING_RECT, GET_BOUNDS: try getBounds()
         case GET_LUT: try getLut()
         case GET_COORDINATES: try getCoordinates()
-        case MAKE_SELECTION: try makeSelection()
+        case MAKE_SELECTION:
+            try makingSelection("makeSelection", combines: { $0.kind == .polygon || $0.kind == .freehand }) {
+                () throws(MacroSignal) in try makeSelection()
+            }
         case SET_RESULT: try setResult()
         case UPDATE_RESULTS: try interp.getParens()
         case SET_BATCH_MODE: try setBatchMode()
@@ -132,21 +151,27 @@ final class Functions {
         case GET_DATE_AND_TIME: try getDateAndTime()
         case SET_METADATA: try setMetadata()
         case CALCULATOR: try imageCalculator()
-        case MAKE_POLYGON: try makePolygon()
+        case MAKE_POLYGON: try makingSelection("makePolygon") { () throws(MacroSignal) in try makePolygon() }
         case SET_SELECTION_NAME: try setSelectionName()
         case DRAW_RECT, FILL_RECT, DRAW_OVAL, FILL_OVAL: try drawOrFill(type)
         case SET_OPTION: try setOption()
         case SET_SELECTION_LOC: try setSelectionLocation()
         case GET_DIMENSIONS: try getDimensions()
-        case MAKE_POINT: try makePoint()
-        case MAKE_ELLIPSE: try makeEllipse()
+        case MAKE_POINT:
+            // IJ.makePoint adds (shift) or removes (alt) a point of a point selection.
+            if session.keys.shift || session.keys.alt, session.context.current?.roi?.kind == .point {
+                try unsupported("makePoint with the shift or alt key down")
+            }
+            try makePoint()
+            (selectionShift, selectionAlt) = (false, false)
+        case MAKE_ELLIPSE: try makingSelection("makeEllipse") { () throws(MacroSignal) in try makeEllipse() }
         case MAKE_ROTATED_RECT: try makeRotatedRectangle()
         case MAKE_ARROW: try makeArrow()
-        case GET_LINE: try getLine()
         case TO_SCALED: try toScaled()
         case TO_UNSCALED: try toUnscaled()
         case WAIT_FOR_USER: try waitForUser()
-        case SET_JUSTIFICATION, SET_KEY_DOWN, RESTORE_PREVIOUS_TOOL:
+        case SET_KEY_DOWN: try setKeyDown()
+        case SET_JUSTIFICATION, RESTORE_PREVIOUS_TOOL:
             try skipArgs()
         default:
             try unsupported(type)
@@ -206,9 +231,7 @@ final class Functions {
             return 1
         case PARSE_FLOAT: return parseDouble(try getStringArg())
         case PARSE_INT: return try parseInt()
-        case IS_KEY_DOWN:
-            _ = try getStringArg()
-            return 0
+        case IS_KEY_DOWN: return try isKeyDown()
         case GET_SLICE_NUMBER:
             try interp.getParens()
             return Double(try image().currentSliceNumber)
@@ -573,8 +596,9 @@ final class Functions {
         case "asin": return jAsin(arg)
         case "acos": return jAcos(arg)
         case "erf": return ijErf(arg)
-        case "toRadians": return arg / 180.0 * Double.pi
-        case "toDegrees": return arg * 180.0 / Double.pi
+        // Java 9+'s Math.toRadians and toDegrees: one multiplication by a constant.
+        case "toRadians": return arg * 0.017453292519943295
+        case "toDegrees": return arg * 57.29577951308232
         default:
             try interp.error("Unrecognized function name")
             return .nan
@@ -661,6 +685,14 @@ final class Functions {
         try interp.getLeftParen()
         let first = try interp.getString()
         var s = first ?? "null"
+        if first == nil && interp.nextToken() != ch(",") {
+            // A string function that returns nothing (String.append, runMacro without a
+            // return value): IJ.log(null) prints no line.
+            try interp.getRightParen()
+            if interp.evaluating { interp.evalOutput = nil }
+            interp.inPrint = false
+            return
+        }
         if interp.nextToken() == ch(",") {
             if javaStartsWith(s, "[") && javaEndsWith(s, "]") {
                 try printToWindow(s)
@@ -676,13 +708,9 @@ final class Functions {
             repeat {
                 s += " " + (try getNextString())
             } while interp.nextToken() == ch(",")
-            try interp.getRightParen()
-            interp.log(s)
-            interp.inPrint = false
-            return
         }
         try interp.getRightParen()
-        interp.log(first)
+        interp.log(s)
         interp.inPrint = false
     }
 
@@ -956,10 +984,7 @@ final class Functions {
             }
         case "getResultsHeadings":
             try interp.getParens()
-            // ResultsTable.getColumnHeadings(): the row number column, Label, then the columns.
-            let rt = session.context.results
-            let label = rt.labels.contains { $0 != nil } ? "Label\t" : ""
-            return " \t" + label + rt.columns.map { $0 + "\t" }.joined()
+            return ResultsFormatter.headings(session.context.results)
         case "copy", "show", "copyResults", "paste", "setFontSize":
             try unsupported("String." + name)
         default:
@@ -1679,8 +1704,9 @@ final class Functions {
         case "open": return try openFile()
         case "openAsString":
             let path = try getStringArg()
+            // IJ.openAsString's error string, which the macro reports as the error.
             guard let data = fm.contents(atPath: path) else {
-                try interp.error("File not found")
+                try interp.error("Error: file not found")
                 return nil
             }
             return String(decoding: data, as: UTF8.self)
@@ -1857,21 +1883,31 @@ final class Functions {
     }
 
     /// `new File(path).getName()`.
-    static func javaFileName(_ path: String) -> String {
+    static func javaFileName(_ pathIn: String) -> String {
+        let path = javaNormalizedPath(pathIn)
         let i = max(javaLastIndexOf(path, "/"), javaLastIndexOf(path, Self.separator))
         return javaSubstring(path, i + 1)
     }
 
     /// `new File(path).getParent()`.
     static func javaParent(_ pathIn: String) -> String? {
-        var path = pathIn
-        while path.utf16.count > 1 && (javaEndsWith(path, "/") || javaEndsWith(path, Self.separator)) {
-            path = javaSubstring(path, 0, path.utf16.count - 1)
-        }
+        let path = javaNormalizedPath(pathIn)
         let i = max(javaLastIndexOf(path, "/"), javaLastIndexOf(path, Self.separator))
         if i < 0 { return nil }
         if i == 0 { return path.utf16.count > 1 ? javaSubstring(path, 0, 1) : nil }
         return javaSubstring(path, 0, i)
+    }
+
+    /// The path a `java.io.File` keeps: separators doubled or at the end removed ("a//b/" is "a/b").
+    static func javaNormalizedPath(_ path: String) -> String {
+        var out: [UInt16] = []
+        let separators: Set<UInt16> = [47, Self.separator.utf16.first!]
+        for c in path.utf16 {
+            if separators.contains(c), let last = out.last, separators.contains(last) { continue }
+            out.append(c)
+        }
+        if out.count > 1, let last = out.last, separators.contains(last) { out.removeLast() }
+        return utf16String(out)
     }
 
     #if os(Windows)

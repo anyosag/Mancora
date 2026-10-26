@@ -40,6 +40,15 @@ public struct ResultsTable: Sendable, Hashable {
     /// as in the Results table (`setDefaultHeadings`); a new table of
     /// ImageJ's has none.
     public var hasDefaultHeadings = true
+    /// Columns shown with the table's decimal places, integers included:
+    /// those that have held a value that isn't an int, and the shape
+    /// descriptors (ImageJ's `decimalPlaces[column]` other than AUTO_FORMAT).
+    public private(set) var decimalColumns: Set<String> = []
+    /// ImageJ's `showRowNumbers` once something has set it (opening a file,
+    /// `Table.showRowNumbers`), or `nil` for the default of the window the
+    /// table is shown in: row numbers in "Results", none elsewhere. Saved
+    /// tables start with a " " column of row numbers when this is on.
+    public var showsRowNumbers: Bool?
 
     public init() {}
 
@@ -64,14 +73,16 @@ public struct ResultsTable: Sendable, Hashable {
     public mutating func set(_ column: String, row: Int, _ value: Value) {
         if !used.contains(column) { used.append(column) }
         cells[row][column] = value
-        if case .number(let n) = value, !n.isNaN, n.rounded(.towardZero) != n || n > 2_147_483_647 || n < -2_147_483_648 {
-            fractionColumns.insert(column)
+        // `(int)value != value && !Double.isNaN(value)`
+        if case .number(let n) = value, !n.isNaN, !(n >= -2147483648 && n <= 2147483647 && n == n.rounded(.towardZero)) {
+            decimalColumns.insert(column)
         }
     }
 
-    /// Columns that were ever given a fraction: ImageJ then shows all their
-    /// numbers with the table's decimal places, whole ones too.
-    public private(set) var fractionColumns: Set<String> = []
+    /// `setDecimalPlaces(column, precision)`: shows `column` with decimals from now on.
+    public mutating func setDecimal(_ column: String) {
+        decimalColumns.insert(column)
+    }
 
     public mutating func set(_ column: String, row: Int, _ number: Double) {
         set(column, row: row, .number(number))
@@ -105,7 +116,7 @@ public struct ResultsTable: Sendable, Hashable {
         used = []
         cells = []
         labels = []
-        fractionColumns = []
+        decimalColumns = []
     }
 
     /// Renames a column, keeping its place, values and format.
@@ -115,14 +126,14 @@ public struct ResultsTable: Sendable, Hashable {
         for row in cells.indices {
             if let value = cells[row].removeValue(forKey: old) { cells[row][new] = value }
         }
-        if fractionColumns.remove(old) != nil { fractionColumns.insert(new) }
+        if decimalColumns.remove(old) != nil { decimalColumns.insert(new) }
     }
 
     /// Removes a column and its values.
     public mutating func removeColumn(_ column: String) {
         used.removeAll { $0 == column }
         for row in cells.indices { cells[row][column] = nil }
-        fractionColumns.remove(column)
+        decimalColumns.remove(column)
     }
 
     /// Removes rows `first` through `last` (clamped to the table).

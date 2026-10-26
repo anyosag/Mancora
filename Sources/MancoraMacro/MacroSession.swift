@@ -34,6 +34,11 @@ public final class MacroSession {
     /// Batch mode: on from the start, as for a macro ImageJ runs without its window (`IJ.runMacro` headless).
     public var batchMode = true
     public var lineWidth = 1
+    /// The keys `setKeyDown` holds down (`IJ.altKeyDown()`, `IJ.shiftKeyDown()`…).
+    var keys = HeldKeys()
+    /// `setOption("Bicubic", …)` (`ImageProcessor.setUseBicubic`), which
+    /// ImageJ applies to every interpolated value.
+    var bicubic = false
     /// `random("seed", n)`'s seed, which ImageJ also uses for its noise filters.
     public var randomSeed = Double.nan
     /// The foreground and background colors (`0xRRGGBB`), kept in the command settings.
@@ -79,7 +84,7 @@ public final class MacroSession {
     /// The table window in front: `Table.*` calls without a title use it,
     /// as ImageJ uses its front table window.
     var frontTable: String?
-    /// How each table shows and saves its rows, by title.
+    /// How each table numbers and saves its rows, by title.
     var tableDisplay: [String: TableDisplay] = [:]
     /// `Roi.copy`'s selection, for `Roi.paste`.
     var roiClipboard: Roi?
@@ -112,7 +117,41 @@ public final class MacroSession {
             macroPath = previousPath
             if options != nil { macroOptions = previousOptions }
         }
-        return try Interpreter(session: self).run(macro, argument: argument)
+        return try Self.withLargeStack { () throws(MacroError) -> String? in
+            try Interpreter(session: self).run(macro, argument: argument)
+        }
+    }
+
+    /// Each call of a macro function is a dozen Swift frames, so ImageJ's limit
+    /// on recursion ("Stack overflow" once its variable stack is full, after
+    /// about 1000 calls) needs more than a secondary thread's 512 KB stack.
+    static let stackSize = 512 << 20
+    private static let largeStackKey = "MancoraMacro.largeStack"
+
+    static func withLargeStack<T>(_ body: @escaping () throws(MacroError) -> T) throws(MacroError) -> T {
+        if Thread.current.threadDictionary[largeStackKey] != nil { return try body() }
+        let run = LargeStackRun(body)
+        let thread = Thread {
+            Thread.current.threadDictionary[largeStackKey] = true
+            run.run()
+        }
+        thread.stackSize = stackSize
+        thread.start()
+        run.finished.wait()
+        return try run.result!.get()
+    }
+
+    private final class LargeStackRun<T>: @unchecked Sendable {
+        let body: () throws(MacroError) -> T
+        var result: Result<T, MacroError>?
+        let finished = DispatchSemaphore(value: 0)
+
+        init(_ body: @escaping () throws(MacroError) -> T) { self.body = body }
+
+        func run() {
+            do throws(MacroError) { result = .success(try body()) } catch { result = .failure(error) }
+            finished.signal()
+        }
     }
 
     // MARK: - The Log window
@@ -225,6 +264,7 @@ public final class MacroSession {
         guard lo <= hi else { return }
         var table = ResultsTable()
         table.emptyCellsAreNaN = context.results.emptyCellsAreNaN
+        for column in context.results.decimalColumns { table.setDecimal(column) }
         for row in 0..<rows where row < lo || row > hi {
             let r = table.addRow(label: context.results.labels[row])
             for column in context.results.columns {
@@ -300,6 +340,11 @@ public struct RoiManagerList: Sendable {
     public struct Entry: Sendable, Hashable {
         public var name: String
         public var roi: Roi
+
+        public init(name: String, roi: Roi) {
+            self.name = name
+            self.roi = roi
+        }
     }
 
     public var entries: [Entry] = []
@@ -308,4 +353,17 @@ public struct RoiManagerList: Sendable {
     public init() {}
 
     public var count: Int { entries.count }
+}
+
+/// ImageJ's key state (`IJ.setKeyDown`/`setKeyUp`), which macros set with
+/// `setKeyDown` and some functions read: Alt makes `getProfile()` average
+/// the rows of a rectangle.
+struct HeldKeys {
+    var alt = false
+    var shift = false
+    var control = false
+    var space = false
+
+    /// `IJ.setKeyUp(IJ.ALL_KEYS)`.
+    mutating func releaseAll() { self = HeldKeys() }
 }

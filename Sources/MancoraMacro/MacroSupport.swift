@@ -77,6 +77,10 @@ public enum MacroSupport {
                     continue
                 }
                 if unsupportedFunctions.contains(name) { note(name) }
+                // ImageJ smooths a thresholded wand selection with a macro of its own.
+                if symbol.type == DO_WAND, stringArgument(of: pgm, at: i + 1, contains: "smooth") {
+                    note("doWand(\"smooth\")")
+                }
                 switch symbol.type {
                 case RUN:
                     // run("Command") or run("Command", "options"): a constant name.
@@ -173,12 +177,33 @@ public enum MacroSupport {
         return found
     }
 
+    /// Whether a string constant among the arguments of the call whose "("
+    /// is at `start` contains `text`.
+    static func stringArgument(of pgm: Program, at start: Int, contains text: String) -> Bool {
+        let code = pgm.code
+        guard start < code.count, code[start] == ch("(") else { return false }
+        var depth = 0
+        var i = start
+        while i < code.count, code[i] & TOK_MASK != EOF {
+            if code[i] == ch("(") { depth += 1 }
+            if code[i] == ch(")") {
+                depth -= 1
+                if depth == 0 { return false }
+            }
+            if code[i] & TOK_MASK == STRING_CONSTANT, pgm.table[code[i] >> TOK_SHIFT].str?.contains(text) == true {
+                return true
+            }
+            i += 1
+        }
+        return false
+    }
+
     /// Top-level built-ins that only ImageJ has (user interface, plots,
     /// fitting, overlays, drawing text...).
     static let unsupportedFunctions: Set<String> = [
-        "doCommand", "doWand", "drawString", "exec", "Ext",
+        "doCommand", "drawString", "exec", "Ext",
         "Fit", "floodFill", "getCursorLoc", "getDisplayedArea", "getFontList", "getImageInfo",
-        "getLocationAndSize", "getProfile", "getStringWidth", "makeText", "newMenu", "Overlay", "Plot", "setLut",
+        "getLocationAndSize", "getStringWidth", "makeText", "newMenu", "Overlay", "Plot", "setLut",
         "showText",
     ]
 

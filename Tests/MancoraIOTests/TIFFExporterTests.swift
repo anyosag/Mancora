@@ -120,6 +120,22 @@ struct TIFFMetadataTests {
         #expect(ImageJMetadata(counts: [12], data: Array("IJIJinfo\0\0\0\u{1}".utf8)[...], bigEndian: true) == nil)
     }
 
+    /// TiffDecoder reads ImageJ's private tags without checking where they
+    /// point, and skips records whose header doesn't check out; the image
+    /// opens without them.
+    @Test func unreadableMetadataTagsAreIgnored() throws {
+        let pixels: [UInt8] = [1, 2, 3, 4]
+        for tag: UInt16 in [50838, 50839] {
+            var b = TIFFBuilder.gray8(width: 2, height: 2, pixels: pixels)
+            b.set(50838, 4, [12, 8])
+            b.set(50839, 1, Array("IJIJinfo\0\0\0\u{1}\0H\0i".utf8).map(UInt32.init))
+            b.valueOffsets[tag] = 0x00FF_FFF0  // past the end of the file
+            let image = try TIFFImporter.decode(b.build(), title: "x")
+            #expect(image.stack[0] == .gray8(pixels))
+            #expect(image.info == nil)
+        }
+    }
+
     @Test func metadataRoundTrip() throws {
         var m = ImageJMetadata()
         m.info = "ünïcödé ✓ 𝛑"
@@ -143,6 +159,7 @@ struct TIFFExporterTests {
         Fixtures.tiffManifest.map(\.file) + [
             "ij-hyperstack-16bit.tif", "ij-8bit-fire.tif", "ij-stack-8bit.tif", "ij-32bit-float.tif", "ij-rgb.tif",
             "ij-metadata-be.tif", "ij-metadata-le.tif", "ij-16bit-lut-inverted.tif", "ij-16bit-signed.tif",
+            "ij-rgb48.tif",
         ]
 
     /// Every image Mancora reads survives being saved and read again.
@@ -163,7 +180,7 @@ struct TIFFExporterTests {
         "Same bytes as ImageJ",
         arguments: [
             "ij-hyperstack-16bit.tif", "ij-8bit-fire.tif", "ij-stack-8bit.tif", "ij-32bit-float.tif", "ij-rgb.tif",
-            "ij-16bit-lut-inverted.tif", "ij-16bit-signed.tif",
+            "ij-16bit-lut-inverted.tif", "ij-16bit-signed.tif", "ij-rgb48.tif",
         ])
     func byteIdentical(_ name: String) throws {
         let path = Fixtures.path("Tests/Fixtures/tiff/\(name)")
@@ -234,6 +251,23 @@ struct TIFFExporterTests {
         let scale = try #require(TIFFExporter.resolution(image.calibration))
         #expect(scale.x == (3_333_333, 1_000_000))
         #expect(scale.unit == 1)
+    }
+
+    /// FileSaver writes `finterval` and `fps` as integers when `(int)value
+    /// == value`, which holds for every whole number Java's `int` holds.
+    @Test func wholeFrameIntervalsAsJavaCastsThem() throws {
+        let stack = try ImageStack(width: 1, height: 1, planes: [.gray8([0]), .gray8([0])])
+        var image = try Hyperstack(title: "t", stack: stack, dimensions: HyperstackDimensions(frames: 2))
+        for (value, text) in [
+            (2_100_000_000.0, "2100000000"), (2_147_483_647, "2147483647"), (-2_147_483_648, "-2147483648"),
+            (2_147_483_648, "2.147483648E9"), (-3, "-3"), (4.5, "4.5"),
+        ] {
+            image.calibration.frameInterval = value
+            image.calibration.fps = value
+            let description = TIFFExporter.descriptionString(image)
+            #expect(description.contains("\nfinterval=\(text)\n"), "\(description)")
+            #expect(description.contains("\nfps=\(text)\n"), "\(description)")
+        }
     }
 
     @Test func refusesMultiChannelRGB() throws {

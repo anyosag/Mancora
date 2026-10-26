@@ -13,7 +13,26 @@ public struct OpenImage: Sendable {
     public var frame = 0
     /// The threshold set on the image (ImageJ's `getMinThreshold()` and
     /// `getMaxThreshold()`, in raw values), or `nil`.
-    public var threshold: ThresholdLevels?
+    public var threshold: ThresholdLevels? {
+        didSet { thresholdIsBinary = false }
+    }
+    /// Whether ``threshold`` is the invisible one (`NO_LUT_UPDATE`) that
+    /// Convert to Mask, Make Binary and the binary commands leave, which the
+    /// next filter run on the image clears (`resetBinaryThreshold`).
+    public private(set) var thresholdIsBinary = false
+
+    /// `ImageProcessor.setThreshold(level, level, NO_LUT_UPDATE)`, as a binary
+    /// image's processor gets it.
+    public mutating func setBinaryThreshold(_ level: Double) {
+        threshold = ThresholdLevels(lower: level, upper: level)
+        thresholdIsBinary = true
+    }
+
+    /// `ImageProcessor.resetBinaryThreshold()`: removes an invisible
+    /// one-level threshold, which PlugInFilters do after changing an image.
+    public mutating func resetBinaryThreshold() {
+        if thresholdIsBinary, let t = threshold, t.lower == t.upper { threshold = nil }
+    }
 
     public var title: String { image.title }
 
@@ -37,6 +56,14 @@ public struct CommandSettings: Sendable, Hashable {
     public var binaryIterations = 1
     public var binaryCount = 1
     public var padEdges = false
+    /// Process ▸ Binary ▸ Options ▸ EDM output: where Distance Map, Ultimate
+    /// Points and Voronoi put their result.
+    public var edmOutput = EDMOutput.overwrite
+    /// Process ▸ Find Maxima's prominence and output type, which ImageJ
+    /// keeps from one run to the next: a macro that leaves them out gets
+    /// the last ones.
+    public var maximaProminence = 10.0
+    public var maximaOutput = MaximaOutput.pointSelection
     /// Edit ▸ Options ▸ Conversions ▸ Scale when converting.
     public var scaleConversions = true
     /// Analyze ▸ Set Measurements ▸ Decimal places.
@@ -50,6 +77,12 @@ public struct CommandSettings: Sendable, Hashable {
     /// macro drawing functions use instead of the foreground color.
     public var fillValue: Double?
     public var fillColor: UInt32?
+    /// Edit ▸ Options ▸ Plots ▸ Interpolate line profiles (on by default;
+    /// the macro's `setOption("InterpolateLines", …)`).
+    public var interpolateLineProfiles = true
+    /// Edit ▸ Options ▸ Plots ▸ Vertical profile: Plot Profile averages the
+    /// rows of a rectangle rather than its columns.
+    public var verticalProfile = false
 
     public init() {}
 }

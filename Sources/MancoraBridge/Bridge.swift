@@ -116,16 +116,42 @@ public actor Bridge {
     /// Runs an ImageJ command with an options string (as recorded by
     /// ImageJ's macro recorder) on `images`, the last one being active.
     public func run(_ command: String, options: String = "", images: [Hyperstack] = []) async throws -> BridgeRunResult {
-        try await withImages(images, method: "run") { inputs, outputDir in
-            RunParams(command: command, options: options, inputs: inputs, outputDir: outputDir)
+        try await withImages(images, method: "run") { inputs, titles, outputDir in
+            RunParams(command: command, options: options, inputs: inputs, titles: titles, outputDir: outputDir)
         }
     }
 
     /// Runs ImageJ macro code with `images` open, the last one active.
     public func runMacro(_ code: String, argument: String = "", images: [Hyperstack] = []) async throws -> BridgeRunResult {
-        try await withImages(images, method: "macro") { inputs, outputDir in
-            MacroParams(code: code, argument: argument, inputs: inputs, outputDir: outputDir)
+        try await withImages(images, method: "macro") { inputs, titles, outputDir in
+            MacroParams(code: code, argument: argument, inputs: inputs, titles: titles, outputDir: outputDir)
         }
+    }
+
+    /// Opens a file in a format Mancora doesn't read, as ImageJ (with Fiji's
+    /// extra file types) or Bio-Formats does when installed. The result's
+    /// value names the reader: "ImageJ" or "Bio-Formats".
+    public func open(_ path: String) async throws -> BridgeRunResult {
+        let absolute = URL(fileURLWithPath: path).standardizedFileURL.path
+        return try await withImages([], method: "open") { _, _, outputDir in OpenParams(path: absolute, outputDir: outputDir) }
+    }
+
+    /// The dialogs `command` shows for `images` (the last one active), so a
+    /// native dialog can ask for its options. Empty for commands without one.
+    public func describeDialog(_ command: String, images: [Hyperstack] = []) async throws -> BridgeDialogs {
+        let request = workRoot.appendingPathComponent("request-\(nextID)")
+        try FileManager.default.createDirectory(at: request, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: request) }
+        var inputs: [String] = []
+        for (k, image) in images.enumerated() {
+            let folder = request.appendingPathComponent("input-\(k)")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let path = folder.appendingPathComponent(Self.fileName(for: image.title)).path
+            try TIFFExporter.write(image, to: path)
+            inputs.append(path)
+        }
+        return try await call(
+            "dialog", DialogParams(command: command, inputs: inputs, outputDir: request.path), as: BridgeDialogs.self, retry: true)
     }
 
     /// Asks the helper to exit, and stops it if it doesn't.
@@ -167,7 +193,7 @@ public actor Bridge {
     private struct EmptyResult: Decodable {}
 
     private func withImages<P: Encodable>(
-        _ images: [Hyperstack], method: String, params: (_ inputs: [String], _ outputDir: String) -> P
+        _ images: [Hyperstack], method: String, params: (_ inputs: [String], _ titles: [String], _ outputDir: String) -> P
     ) async throws -> BridgeRunResult {
         let request = workRoot.appendingPathComponent("request-\(nextID)")
         let outputs = request.appendingPathComponent("out")
@@ -175,14 +201,15 @@ public actor Bridge {
         defer { try? FileManager.default.removeItem(at: request) }
         var inputs: [String] = []
         for (k, image) in images.enumerated() {
-            // ImageJ titles images after their file, so keep each image's title.
+            // Named after its title as far as a file name can be (ImageJ keeps the
+            // file name too); the helper gives the image its title as it is.
             let folder = request.appendingPathComponent("input-\(k)")
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let path = folder.appendingPathComponent(Self.fileName(for: image.title)).path
             try TIFFExporter.write(image, to: path)
             inputs.append(path)
         }
-        let result = try await call(method, params(inputs, outputs.path), as: RunResult.self, retry: true)
+        let result = try await call(method, params(inputs, images.map(\.title), outputs.path), as: RunResult.self, retry: true)
         var produced: [BridgeImage] = []
         for output in result.outputs {
             var image = try TIFFImporter.read(path: output.path)
@@ -201,8 +228,8 @@ public actor Bridge {
         do {
             return try await attempt(method, params, as: type)
         } catch BridgeError.helperExited where retry {
-            // The helper died (or was killed): start a new one and try once more.
-            connection = nil
+            // The helper died (or was killed): try once more on a new one, which
+            // another request that was waiting on it may have started already.
             return try await attempt(method, params, as: type)
         }
     }
@@ -218,7 +245,21 @@ public actor Bridge {
             connection.fail(id: id, with: BridgeError.timedOut(seconds: timeout))
         }
         defer { timer.cancel() }
-        let data = try await connection.send(id: id, line: line)
+        let data: Data
+        do {
+            data = try await connection.send(id: id, line: line)
+        } catch let error as BridgeError {
+            switch error {
+            case .timedOut, .helperExited:
+                // A helper that timed out is still busy with the request, and
+                // answers in order: stop it, so the next request gets a new one.
+                connection.terminate()
+                // Forget this helper only, not one another request has started since.
+                if self.connection === connection { self.connection = nil }
+            default: break
+            }
+            throw error
+        }
         let header: ResponseHeader
         do {
             header = try JSONDecoder().decode(ResponseHeader.self, from: data)
@@ -263,13 +304,19 @@ public actor Bridge {
         let classPath = (home.classPath().map(\.path) + [classes.path]).joined(separator: separator)
         var arguments: [String] = []
         if let heap = config.maximumHeapMegabytes { arguments.append("-Xmx\(heap)m") }
-        arguments += ["-Dplugins.dir=\(home.root.path)", "-Dfile.encoding=UTF-8"]
+        arguments += ["-Dplugins.dir=\(home.root.path)", "-Dij.dir=\(home.root.path)", "-Dfile.encoding=UTF-8"]
+        if FileManager.default.fileExists(atPath: home.nativeLibraries.path) {
+            arguments.append("-Djava.library.path=\(home.nativeLibraries.path)")
+        }
         if let table = config.commandTable { arguments.append("-Dmancora.commands=\(table.path)") }
         #if os(macOS)
         arguments.append("-Dapple.awt.UIElement=true")  // no Dock icon or menu bar for the helper
         #endif
         var environment = config.environment
         #if os(Linux)
+        // Java names files in the locale's encoding (sun.jnu.encoding): outside a
+        // UTF-8 locale it can't open a path, or an input titled, beyond ASCII.
+        if !Self.isUTF8Locale(environment) { environment["LC_ALL"] = "C.UTF-8" }
         let display = (environment["DISPLAY"] ?? "") + (environment["WAYLAND_DISPLAY"] ?? "")
         if display.isEmpty {
             if config.useVirtualDisplay, let name = startVirtualDisplay() {
@@ -320,6 +367,8 @@ public actor Bridge {
     }
 
     /// `<home>/helper/<hash of the source>/`, compiled with `javac` once.
+    /// Each compile writes a folder of its own and renames it into place,
+    /// so bridges starting together never run a half-written helper.
     func compiledHelper() throws -> URL {
         let config = configuration
         let source = try Data(contentsOf: config.helperSource)
@@ -328,11 +377,14 @@ public actor Bridge {
         let compiled = folder.appendingPathComponent("MancoraBridgeHelper.class")
         if FileManager.default.fileExists(atPath: compiled.path) { return folder }
         guard let javac = config.java.compiler else { throw BridgeError.noCompiler }
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let staging = folder.deletingLastPathComponent().appendingPathComponent(".\(hash)-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: staging) }
         let process = Process()
         process.executableURL = javac
         process.arguments = [
-            "-encoding", "UTF-8", "-nowarn", "-cp", config.home.imageJJar.path, "-d", folder.path, config.helperSource.path,
+            "-encoding", "UTF-8", "-nowarn", "-cp", config.home.imageJJar.path, "-d", staging.path,
+            config.helperSource.path,
         ]
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -341,17 +393,37 @@ public actor Bridge {
         try process.run()
         let output = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        guard process.terminationStatus == 0, FileManager.default.fileExists(atPath: compiled.path) else {
-            try? FileManager.default.removeItem(at: folder)
+        let staged = staging.appendingPathComponent("MancoraBridgeHelper.class")
+        guard process.terminationStatus == 0, FileManager.default.fileExists(atPath: staged.path) else {
             throw BridgeError.compileFailed(String(decoding: output, as: UTF8.self))
+        }
+        // Another bridge may have renamed its copy (the same one) into place first.
+        if (try? FileManager.default.moveItem(at: staging, to: folder)) == nil,
+            !FileManager.default.fileExists(atPath: compiled.path)
+        {
+            // A folder without the helper, left by an interrupted compile.
+            try? FileManager.default.removeItem(at: folder)
+            try FileManager.default.moveItem(at: staging, to: folder)
         }
         return folder
     }
 
-    /// A file name that keeps `title` as ImageJ will show it.
+    /// A file name like `title`, valid on every platform: separators and
+    /// other reserved characters become `_`, and a name that is empty, `.`,
+    /// `..` or longer than file systems allow becomes `Untitled.tif`.
     static func fileName(for title: String) -> String {
-        let cleaned = String(title.map { "/\\:*?\"<>|".contains($0) || $0.isNewline ? "_" : $0 })
-        return cleaned.trimmingCharacters(in: .whitespaces).isEmpty ? "Untitled.tif" : cleaned
+        let cleaned = String(title.map { "/\\:*?\"<>|\0".contains($0) || $0.isNewline ? "_" : $0 })
+        let trimmed = cleaned.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, trimmed != ".", trimmed != "..", cleaned.utf8.count <= 255 else { return "Untitled.tif" }
+        return cleaned
+    }
+
+    /// Whether the locale `environment` selects for character types (`LC_ALL`,
+    /// else `LC_CTYPE`, else `LANG`) is a UTF-8 one.
+    static func isUTF8Locale(_ environment: [String: String]) -> Bool {
+        let locale = ["LC_ALL", "LC_CTYPE", "LANG"].lazy.compactMap { environment[$0] }.first { !$0.isEmpty } ?? ""
+        let lowered = locale.lowercased()
+        return lowered.contains("utf-8") || lowered.contains("utf8")
     }
 
     static func findOnPath(_ tool: String, environment: [String: String]) -> URL? {

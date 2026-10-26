@@ -178,24 +178,6 @@ extension Functions {
 
     // MARK: - Geometry
 
-    /// `getLine(x1, y1, x2, y2, lineWidth)`: the straight line selection
-    /// (-1s for any other), and the selection's stroke width (1 without one).
-    func getLine() throws(MacroSignal) {
-        let vx1 = try getFirstVariable()
-        let vy1 = try getNextVariable()
-        let vx2 = try getNextVariable()
-        let vy2 = try getNextVariable()
-        let lineWidth = try getLastVariable()
-        let roi = try image().roi
-        var (x1, y1, x2, y2) = (-1.0, -1.0, -1.0, -1.0)
-        if let roi, case .line(let line) = roi.shape { (x1, y1, x2, y2) = (line.x1, line.y1, line.x2, line.y2) }
-        vx1.setValue(x1)
-        vy1.setValue(y1)
-        vx2.setValue(x2)
-        vy2.setValue(y2)
-        lineWidth.setValue(roi.map { Double($0.strokeWidth) } ?? 1)
-    }
-
     /// `selectionContains(x, y)`: whether the selection contains the pixel nearest (x, y).
     func selectionContains() throws(MacroSignal) -> Double {
         let x = Int(Int32(truncatingIfNeeded: javaMathRound(try getFirstArg())))

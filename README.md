@@ -7,9 +7,13 @@ scientific image analysis. It's built for macOS first (SwiftUI, Metal,
 Accelerate) and also ships natively on Windows (WinUI 3). A headless
 command-line tool runs on Linux.
 
-> **Status: 0.1.0, the first preview.** Mancora opens TIFF images, stacks
-> and hyperstacks and shows them through ImageJ's LUTs, on macOS and
-> Windows. See the [roadmap](docs/ROADMAP.md) for what comes next.
+> **Status: 0.2.0, a preview.** Mancora opens, saves and analyzes TIFF
+> images, stacks and hyperstacks as ImageJ does: selections, measurements,
+> filters and thresholds. It also runs ImageJ macros natively. Fiji's
+> plugins, installed from Fiji's update sites, run in ImageJ inside a Java
+> helper. The macOS app and the command line have all of this. Windows
+> has a simple viewer and the command line. See the
+> [roadmap](docs/ROADMAP.md) for what comes next.
 
 ## Installing
 
@@ -50,7 +54,7 @@ create a release.
 
 | Path | What it is |
 | --- | --- |
-| `Package.swift`, `Sources/` | The platform-neutral Swift packages: `MancoraCore` (image model, LUTs, display mapping), `MancoraIO` (LUT and TIFF readers) and the `mancora` CLI. They build on macOS, Windows and Linux. |
+| `Package.swift`, `Sources/` | The platform-neutral Swift packages, which build on macOS, Windows and Linux: `MancoraCore` (image model, LUTs, display mapping), `MancoraIO` (TIFF, LUT and ROI files), `MancoraProcess` (filters, statistics, thresholds), `MancoraCommands` (ImageJ's commands and option strings), `MancoraMacro` (the macro language), `MancoraBridge` (ImageJ in a Java helper), `MancoraPlugins` (Fiji update sites), `MancoraUpdate` and `MancoraSupport`, and the `mancora` CLI. |
 | `Apps/macOS/` | The macOS app shell (SwiftUI). |
 | `Apps/Windows/` | The Windows app: a small native Win32 viewer until the WinUI 3 shell arrives in Phase 5. |
 | `Resources/` | LUTs, macros and sample scripts carried over from Fiji, and the Mancora brand assets in `Resources/Branding/`. |
@@ -75,6 +79,22 @@ swift run mancora -eval 'print(getVersion());'
 ImageJ macros run natively. A macro that uses something only ImageJ has
 (plots, overlays, dialogs, Fiji plugins) runs in ImageJ instead, through
 the Java bridge, once `mancora bridge setup` has installed it.
+
+Fiji's update sites install plugins for the bridge, as Fiji's updater does:
+
+```sh
+swift run mancora bridge setup                      # ImageJ 1.54p for the Java bridge (needs Java 11+)
+swift run mancora update-sites known                # update sites Mancora knows by name
+swift run mancora update-sites add IJPB-plugins     # or: add <name> <url>
+swift run mancora update-sites update --dry-run     # what would change
+swift run mancora update-sites update               # download, verify and install
+swift run mancora bridge open image.czi out.tif     # any format ImageJ or Bio-Formats reads
+```
+
+The bridge's folder (`MANCORA_BRIDGE_HOME`, by default in your user's
+application data) is laid out like Fiji's, with the same `db.xml.gz`. Its
+ImageJ update site starts out disabled, because the bridge runs plain
+ImageJ 1.x. Enable the site for plugins that need ImageJ2.
 
 Run the viewer with:
 
@@ -104,6 +124,10 @@ with code written alongside it:
   through the Java bridge (`MancoraParityTests`, which needs a JDK and the
   path of ImageJ's jar in `MANCORA_TEST_IJ_JAR`). Their images, logs,
   errors and results must match.
+- Update sites replay decisions recorded from Fiji's own updater
+  (`Tools/parity/updater`): every file's status and action, the installed
+  folder and the bytes of `db.xml.gz`. With `MANCORA_NETWORK_TESTS=1`,
+  plugins are installed from Fiji's real sites and run through the bridge.
 
 `Tools/fixtures/generate.sh` regenerates the fixtures.
 

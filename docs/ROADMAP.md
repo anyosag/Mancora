@@ -13,7 +13,7 @@ The root `Package.swift` holds platform-neutral code only:
 | Module | Purpose | May import |
 | --- | --- | --- |
 | `MancoraCore` | Pixel model, stacks, hyperstacks, calibration, LUTs, `DisplayMapper`; later ROIs | Swift standard library, `FoundationEssentials` |
-| `MancoraIO` | `ByteReader`, LUT reader, TIFF reader and writer, virtual stacks; later OME-TIFF, OME-Zarr | Core, Support, `FoundationEssentials` |
+| `MancoraIO` | `ByteReader`, LUT reader, TIFF reader and writer, virtual stacks, ImageJ ZIP, PNG, GIF and table files, `ImageOpener` routing by file type; later OME-TIFF, OME-Zarr | Core, Support, `FoundationEssentials` |
 | `MancoraSupport` | Dependency-free building blocks: Inflate (zlib/gzip), SHA-256/SHA-1, SemVer | Swift standard library |
 | `MancoraUpdate` | Update checks against GitHub releases, verified downloads | Support, Foundation |
 | `MancoraProcess` | Filters, conversions, projections, pixel math; measurements (Phase 2) | Core |
@@ -182,13 +182,24 @@ ImageJ 1.54p's log, errors, images and results exactly, and CI runs
 
 ### P4: Java bridge and update sites
 
-- A Java helper process runs Fiji plugins and Bio-Formats; they appear in
-  Mancora's menus.
-- Fiji update sites: read `db.xml.gz`, resolve dependencies, download and
-  verify files by SHA-1, and keep them under Mancora's plugins folder, as
-  Fiji's updater does.
+- Fiji's update sites (`MancoraPlugins`), ported from imagej-updater:
+  - the updater's checksums, with its `.properties` and manifest filters and older digests
+  - `db.xml.gz` read and written as the updater's Java XML stack does
+  - every file status and action, sites shadowing each other, platforms, dependencies and the checksum cache
+  - verified downloads staged in `update/` before anything moves into place
+- `mancora update-sites` and the Mac app's Plugins ▸ Manage Update Sites…
+  keep the bridge's folder as Fiji's updater keeps Fiji (the same
+  `db.xml.gz`, so Fiji can manage it too).
+- The bridge runs what update sites install: jars in subfolders and
+  platform folders on its class path, native libraries, and ImageJ under
+  its versioned name. Plugin commands appear in the Plugins menu.
+- Any format ImageJ or Bio-Formats reads opens through the bridge
+  (`mancora bridge open`, File ▸ Open in the Mac app).
 
-**Exit:** killing the helper loses no data, and it restarts automatically.
+**Exit:** all of the following hold.
+- Killing the helper loses no data, and it restarts automatically (`recoversWhenTheHelperIsKilled`).
+- Replaying an installation and two sites, Mancora makes every decision that imagej-updater made, down to the bytes of the `db.xml.gz` it writes (`Tools/parity/updater`).
+- In CI, every known site's index parses. MorphoLibJ from IJPB-plugins and Bio-Formats from the Fiji site install, with their checksums verified, and run through the bridge.
 
 **Release 0.2.0** ships P1–P4.
 
@@ -201,6 +212,10 @@ passes.
 
 ### P6: Native formats
 
+- Done: ImageJ's TIFF-in-ZIP, PNG, GIF and animated GIF, and Results and
+  table files (`.csv`, `.xls`, `.tsv`), read and written as ImageJ 1.54p
+  does; `ImageOpener` routes files by ImageJ's file types and leaves
+  MetaMorph STK, Zeiss LSM and OME-TIFF to ImageJ or Bio-Formats.
 - OME-TIFF with pyramids, OME-Zarr 0.4/0.5 (zstd and blosc), CZI, LIF, ND2.
 
 **Exit:** the OME sample images open with the same dimensions, calibration

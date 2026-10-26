@@ -113,6 +113,9 @@ enum Parity {
         if parityCase.comparesResults {
             differences += ImageComparison.differences(context.results, result.results, tolerance: parityCase.tolerance)
         }
+        if parityCase.comparesSelection {
+            differences += ImageComparison.selectionDifferences(native, imageJ)
+        }
         return differences
     }
 
@@ -138,16 +141,24 @@ struct ParityCase: Sendable, CustomStringConvertible {
     /// relative to the value (absolute below 1).
     var tolerance = 1e-5
     var comparesResults = false
+    /// Whether the selections (as the saved TIFFs carry them) must match too.
+    var comparesSelection = false
 
-    init(_ command: String, _ options: String = "", on inputs: ParityInput..., tolerance: Double = 1e-5, results: Bool = false) {
-        self.init(steps: [Step(command: command, options: options)], inputs: inputs, tolerance: tolerance, results: results)
+    init(
+        _ command: String, _ options: String = "", on inputs: ParityInput..., tolerance: Double = 1e-5,
+        results: Bool = false, selection: Bool = false
+    ) {
+        self.init(
+            steps: [Step(command: command, options: options)], inputs: inputs, tolerance: tolerance, results: results,
+            selection: selection)
     }
 
-    init(steps: [Step], inputs: [ParityInput], tolerance: Double = 1e-5, results: Bool = false) {
+    init(steps: [Step], inputs: [ParityInput], tolerance: Double = 1e-5, results: Bool = false, selection: Bool = false) {
         self.steps = steps
         self.inputs = inputs
         self.tolerance = tolerance
         self.comparesResults = results
+        self.comparesSelection = selection
     }
 
     /// `Set Measurements...` with `measurements`, then `Measure`.
@@ -178,8 +189,27 @@ enum ParityInput: String, Sendable {
     // Images with a selection, which ImageJ reads from the TIFF.
     case rectangleROI, roundedROI, ovalROI, polygonROI, subpixelPolygonROI, freehandROI, tracedROI, edgeROI, namedROI
     case binaryRectangleROI, binaryOvalROI
+    // "<input>+<selection>": an input above with a selection (see `withSelection`).
+    case gray8Rect = "gray8+rect", gray8Oval = "gray8+oval", gray8Polygon = "gray8+polygon"
+    case gray8NearEdge = "gray8+nearEdge", gray8Line = "gray8+line", gray8Point = "gray8+point"
+    case gray16Oval = "gray16+oval", gray16NearEdge = "gray16+nearEdge", gray16Polygon = "gray16+polygon"
+    case gray32Rect = "gray32+rect", gray32Oval = "gray32+oval", gray32NearEdge = "gray32+nearEdge"
+    case rgbRect = "rgb+rect", rgbOval = "rgb+oval", rgbPolygon = "rgb+polygon", rgbNearEdge = "rgb+nearEdge"
+    case stack8Oval = "stack8+oval", stack16Rect = "stack16+rect", stack32Polygon = "stack32+polygon"
+    case binaryPolygon = "binary+polygon", binaryNearEdge = "binary+nearEdge", binaryStackOval = "binaryStack+oval"
+    case calibratedOval = "calibrated+oval", calibratedRect = "calibrated+rect", hyperstackOval = "hyperstack+oval"
+    case gray16Freehand = "gray16+freehand", gray32Subpixel = "gray32+subpixel", rgbLine = "rgb+line"
+    // Odd shapes for geometry: one pixel wide or high, and an RGB stack.
+    case column8, row16, row32, columnRGB, stackRGB
+    // Wide lines and other selections for profiles (macros can't set a polyline's width).
+    case polylineROI, subpixelPolylineROI, freelineROI, subpixelFreelineROI, angleROI, arrowROI
+    // 8- and 16-bit images with a straight-line value calibration.
+    case functionCalibrated8, functionCalibrated16
     case fixtureHyperstack = "ij-hyperstack-16bit.tif"
     case fixtureFire = "ij-8bit-fire.tif"
+    // Blobs-like images for background subtraction, maxima and EDMs (see BlobImages).
+    case blobs8, blobs16, blobs32, blobsRGB, blobsLight, blobsInverted, blobsStack8, blobsStack16, blobsStack32
+    case blobsROI, blobsOvalROI, blobsMask, blobsMaskInverted, blobsMaskStack
 
     func image() throws -> Hyperstack {
         let made: Hyperstack
@@ -191,6 +221,11 @@ enum ParityInput: String, Sendable {
         case .stack8: made = try Self.make("stack8.tif", .gray8, slices: 5)
         case .stack16: made = try Self.make("stack16.tif", .gray16, slices: 5)
         case .stack32: made = try Self.make("stack32.tif", .gray32Float, slices: 5)
+        case .column8: made = try Self.make("column8.tif", .gray8, width: 1)
+        case .row16: made = try Self.make("row16.tif", .gray16, height: 1)
+        case .row32: made = try Self.make("row32.tif", .gray32Float, height: 1)
+        case .columnRGB: made = try Self.make("columnRGB.tif", .rgb8, width: 1)
+        case .stackRGB: made = try Self.make("stackRGB.tif", .rgb8, slices: 4)
         case .hyperstack:
             made = try Self.make("hyperstack.tif", .gray16, channels: 2, slices: 3, frames: 2, composite: true)
         case .calibrated:
@@ -220,8 +255,22 @@ enum ParityInput: String, Sendable {
             }
             image.encodedROI = RoiCodec.encode(Self.roi(for: self))
             made = image
+        case .polylineROI, .subpixelPolylineROI, .freelineROI, .subpixelFreelineROI, .angleROI, .arrowROI:
+            var image = try Self.make(rawValue + ".tif", self == .freelineROI ? .gray8 : self == .arrowROI ? .rgb8 : .gray16)
+            image.encodedROI = RoiCodec.encode(Self.roi(for: self))
+            made = image
+        case .functionCalibrated8, .functionCalibrated16:
+            var image = try Self.make(rawValue + ".tif", self == .functionCalibrated8 ? .gray8 : .gray16)
+            image.calibration.valueFunction = .straightLine(intercept: -12.5, slope: self == .functionCalibrated8 ? 0.75 : 0.0625)
+            image.calibration.valueUnit = "OD"
+            made = image
         case .fixtureHyperstack, .fixtureFire:
             return try TIFFImporter.read(path: Parity.url("Tests/Fixtures/tiff/" + rawValue).path)
+        case .blobs8, .blobs16, .blobs32, .blobsRGB, .blobsLight, .blobsInverted, .blobsStack8, .blobsStack16,
+            .blobsStack32, .blobsROI, .blobsOvalROI, .blobsMask, .blobsMaskInverted, .blobsMaskStack:
+            made = try BlobImages.image(for: self)
+        default:
+            made = try withSelection()
         }
         return try Parity.roundTrip(made)
     }
@@ -251,12 +300,35 @@ enum ParityInput: String, Sendable {
             var roi = Roi(.oval(.integer(x: 5, y: 5, width: 25, height: 36)))
             roi.name = "cell 1"
             return roi
+        case .polylineROI:
+            return Roi(.polygon(.init(.polyline, ints([(5, 8), (22, 30), (40, 12), (55, 38), (30, 42)]))), strokeWidth: 5)
+        case .subpixelPolylineROI:
+            let points = [(3.25, 40.5), (20.75, 5.125), (38.5, 30.25), (57.875, 9.5)]
+                .map { Roi.FloatPoint(x: Float($0.0), y: Float($0.1)) }
+            return Roi(.polygon(.init(.polyline, .subpixel(points))), strokeWidth: 3)
+        case .freelineROI:
+            let points = (0..<24).map { k -> (Int32, Int32) in
+                let t = Double(k) / 23
+                return (Int32(6 + 48 * t), Int32(24 + 14 * sin(t * 2 * Double.pi)))
+            }
+            return Roi(.polygon(.init(.freeline, ints(points))), strokeWidth: 8)
+        case .subpixelFreelineROI:
+            let points = (0..<30).map { k -> Roi.FloatPoint in
+                let a = Double(k) / 30 * 1.5 * Double.pi
+                return Roi.FloatPoint(x: Float(30 + 16 * cos(a)), y: Float(23 + 15 * sin(a)))
+            }
+            return Roi(.polygon(.init(.freeline, .subpixel(points))), strokeWidth: 4)
+        case .angleROI:
+            return Roi(.polygon(.init(.angle, ints([(10, 40), (30, 8), (52, 30)]))))
+        case .arrowROI:
+            return Roi(.line(Roi.Line(x1: 6, y1: 6, x2: 52, y2: 38, arrow: Roi.Arrow())), strokeWidth: 3)
         default: return Roi(.rectangle(.integer(x: 10, y: 7, width: 25, height: 19)))
         }
     }
 
     static func make(
-        _ title: String, _ type: PixelType, channels: Int = 1, slices: Int = 1, frames: Int = 1, composite: Bool = false
+        _ title: String, _ type: PixelType, channels: Int = 1, slices: Int = 1, frames: Int = 1, composite: Bool = false,
+        width: Int = Self.width, height: Int = Self.height
     ) throws -> Hyperstack {
         var random = SeededRandom(seed: UInt64(title.utf8.reduce(0) { $0 &* 31 &+ UInt64($1) }))
         let count = width * height

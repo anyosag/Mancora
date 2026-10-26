@@ -45,12 +45,17 @@ extension Plane {
     ///   - normalize: ImageJ's "Normalize Kernel": divide by the sum of the
     ///     coefficients unless it is zero.
     ///   - width: The plane's width in pixels.
-    public func convolved(with kernel: ConvolutionKernel, normalize: Bool = true, width: Int) -> Plane {
+    ///   - rect: A selection's bounds, within the plane, or `nil` for the
+    ///     whole plane. Only the rectangle changes; the kernel reads the
+    ///     pixels around it.
+    public func convolved(with kernel: ConvolutionKernel, normalize: Bool = true, width: Int, rect: RoiBounds? = nil) -> Plane {
         let height = filterHeight(width: width)
         guard count > 0 else { return self }
+        let rect = rect ?? .whole(width: width, height: height)
+        guard !rect.isEmpty else { return self }
         let scale = normalize ? kernel.normalizationScale : 1
         let channels = FloatChannels.split(self).map {
-            Convolver.convolve($0, width: width, height: height, kernel: kernel, scale: scale)
+            Convolver.convolve($0, width: width, height: height, rect: rect, kernel: kernel, scale: scale)
         }
         return FloatChannels.merge(channels, as: pixelType)
     }
@@ -65,16 +70,20 @@ extension ImageStack {
 }
 
 /// A port of ImageJ 1.54p's `Convolver.convolveFloat` and
-/// `convolveFloat1D` for whole planes.
+/// `convolveFloat1D`, which write the processor's rectangle and read the
+/// snapshot (the input) around it.
 enum Convolver {
-    static func convolve(_ input: [Float], width: Int, height: Int, kernel: ConvolutionKernel, scale: Double) -> [Float] {
+    static func convolve(
+        _ input: [Float], width: Int, height: Int, rect: RoiBounds, kernel: ConvolutionKernel, scale: Double
+    ) -> [Float] {
         let uc = kernel.width / 2, vc = kernel.height / 2
         let xedge = width - uc, yedge = height - vc
-        return [Float](unsafeUninitializedCapacity: input.count) { out, initialized in
+        var output = input
+        output.withUnsafeMutableBufferPointer { out in
             input.withUnsafeBufferPointer { pixels in
                 kernel.values.withUnsafeBufferPointer { k in
-                    for y in 0..<height {
-                        for x in 0..<width {
+                    for y in rect.y..<(rect.y + rect.height) {
+                        for x in rect.x..<(rect.x + rect.width) {
                             var sum = 0.0
                             var i = 0
                             if y < vc || y >= yedge || x < uc || x >= xedge {
@@ -94,12 +103,12 @@ enum Convolver {
                                     }
                                 }
                             }
-                            (out.baseAddress! + y * width + x).initialize(to: Float(sum * scale))
+                            out[y * width + x] = Float(sum * scale)
                         }
                     }
                 }
             }
-            initialized = input.count
         }
+        return output
     }
 }

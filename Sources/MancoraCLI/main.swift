@@ -1,11 +1,12 @@
 // `mancora`: headless command-line access to Mancora's core.
 //
-//   mancora info [--virtual] <image.tif>   describe an image (--virtual reads planes on demand)
-//   mancora convert <in.tif> <out.tif>     re-save a TIFF the way ImageJ writes them
+//   mancora info [--virtual] <image>       describe an image: TIFF, ZIP, PNG or GIF (--virtual: TIFF planes on demand)
+//   mancora convert <in> <out>             re-save an image the way ImageJ writes it, as .tif, .zip, .png or .gif
 //   mancora lut <file.lut>                 describe a LUT file
 //   mancora luts                           list the built-in LUTs
 //   mancora update [--download <dir>]      check for a newer release
-//   mancora bridge <setup|info|commands|run|macro> …   ImageJ and its plugins in a Java helper
+//   mancora bridge <setup|info|commands|run|macro|open> …   ImageJ and its plugins in a Java helper
+//   mancora update-sites <list|add|enable|disable|status|update> …   Fiji update sites for the bridge
 //   mancora [--headless] -macro <macro.ijm> [arg]   run a macro, as ImageJ's -macro and -batch do
 //   mancora [--headless] -eval "<code>"             run macro code and print what it returns
 //   mancora --version
@@ -20,8 +21,8 @@ import MancoraSupport
 import MancoraUpdate
 
 let usage = """
-    usage: mancora info [--virtual] [--scan] <image.tif>
-           mancora convert <in.tif> <out.tif> [--big-endian]
+    usage: mancora info [--virtual] [--scan] <image>       (TIFF, ZIP, PNG or GIF)
+           mancora convert <in> <out> [--big-endian]       (out: .tif, .zip, .png or .gif)
            mancora lut <file.lut>
            mancora luts
            mancora update [--download <directory>]
@@ -29,6 +30,8 @@ let usage = """
            mancora bridge info | commands [--plugins]
            mancora bridge run "<command>" "<options>" <in.tif> [<out.tif>]
            mancora bridge macro <macro.ijm> [<in.tif> …]
+           mancora bridge open <file> [<out.tif>]     open any format ImageJ or Bio-Formats reads
+           mancora update-sites <command> …           Fiji update sites (see mancora update-sites help)
            mancora [--headless] -macro <macro.ijm> [<argument>]   (also -batch, or macro)
            mancora [--headless] -eval "<macro code>"
            mancora --version
@@ -75,7 +78,7 @@ case ("info", 2...4):
     guard flags.isSubset(of: ["--virtual", "--scan"]) else { fail(usage) }
     do {
         let started = Date()
-        let image = try TIFFImporter.read(path: args[args.count - 1], options: .init(virtual: flags.contains("--virtual")))
+        let image = try ImageOpener.read(path: args[args.count - 1], options: .init(virtual: flags.contains("--virtual")))
         print(describe(image))
         print("opened in \(milliseconds(since: started)) ms\(image.stack.isVirtual ? " (virtual)" : "")")
         if flags.contains("--scan") {
@@ -104,8 +107,12 @@ case ("lut", 2):
 case ("convert", 3), ("convert", 4):
     guard args.count == 3 || args[3] == "--big-endian" else { fail(usage) }
     do {
-        let image = try TIFFImporter.read(path: args[1])
-        try TIFFExporter.write(image, to: args[2], options: .init(bigEndian: args.count == 4))
+        let image = try ImageOpener.read(path: args[1])
+        if args.count == 4 || ImageSaver.Format(path: args[2]) == .tiff {
+            try TIFFExporter.write(image, to: args[2], options: .init(bigEndian: args.count == 4))
+        } else {
+            try ImageSaver.write(image, to: args[2])
+        }
     } catch {
         fail("mancora: \(error)")
     }
@@ -114,6 +121,8 @@ case ("update", 1), ("update", 3):
     await checkForUpdate(downloadTo: args.count == 3 ? args[2] : nil)
 case ("bridge", 2...):
     await bridgeCommand(Array(args.dropFirst()))
+case ("update-sites", 1...):
+    await updateSitesCommand(Array(args.dropFirst()))
 case ("luts", 1):
     for lut in LUT.builtIn { print(lut.name) }
 case ("--version", 1), ("version", 1):
@@ -200,7 +209,7 @@ func bridgeCommand(_ args: [String]) async {
                 print("\(command.name)\t\(command.className)")
             }
         case ("run", 4), ("run", 5):
-            let input = try TIFFImporter.read(path: args[3])
+            let input = try ImageOpener.read(path: args[3])
             let result = try await bridge.run(args[1], options: args[2], images: [input])
             printBridgeResult(result)
             if args.count == 5 {
@@ -208,9 +217,21 @@ func bridgeCommand(_ args: [String]) async {
                 try TIFFExporter.write(first.image, to: args[4])
                 print("saved \(first.title) to \(args[4])")
             }
+        case ("open", 2), ("open", 3):
+            let result = try await bridge.open(args[1])
+            if !result.log.isEmpty { print(result.log, terminator: result.log.hasSuffix("\n") ? "" : "\n") }
+            for (k, opened) in result.images.enumerated() {
+                print("\(opened.title) (read by \(result.value ?? "ImageJ"))")
+                print(describe(opened.image))
+                if args.count == 3 {
+                    let path = result.images.count == 1 ? args[2] : args[2].replacingOccurrences(of: ".tif", with: "-\(k + 1).tif")
+                    try TIFFExporter.write(opened.image, to: path)
+                    print("saved to \(path)")
+                }
+            }
         case ("macro", 2...):
             let code = try String(contentsOfFile: args[1], encoding: .utf8)
-            let images = try args.dropFirst(2).map { path throws(MancoraIOError) in try TIFFImporter.read(path: path) }
+            let images = try args.dropFirst(2).map { path throws(MancoraIOError) in try ImageOpener.read(path: path) }
             let result = try await bridge.runMacro(code, images: images)
             printBridgeResult(result)
             for (k, image) in result.images.enumerated() {

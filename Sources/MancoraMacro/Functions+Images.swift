@@ -221,46 +221,40 @@ extension Functions {
     /// Opens `path`: an image (at plane `n` when given), a selection or a ROI set.
     private func open(_ path: String, _ n: Double) throws(MacroSignal) {
         let lower = path.lowercased()
-        if lower.hasSuffix(".csv") || lower.hasSuffix(".xls") || lower.hasSuffix(".tsv") {
-            // Opener.openTable: shown under the file's name ("Results" for "Results.*").
-            var name = Self.javaFileName(path)
-            if javaStartsWith(name, "Results.") { name = "Results" }
-            try openTable(path, as: name)
-            return
-        }
-        if lower.hasSuffix(".ijm") || lower.hasSuffix(".txt") || lower.hasSuffix(".csv") || lower.hasSuffix(".roi")
-            || lower.hasSuffix(".zip")
-        {
-            if lower.hasSuffix(".roi") {
-                do { try modifyImage { $0.roi = nil } } catch {}
-                let roi: Roi
-                do { roi = try RoiCodec.read(path: path) } catch { try interp.fail("\(error)") }
-                try modifyImage { $0.roi = roi }
-                return
-            }
-            if lower.hasSuffix(".zip") {
-                try roiManagerOpen(path)
-                return
-            }
-            try unsupported("open(\"\(Self.javaFileName(path))\")")
-        }
-        var image: Hyperstack
+        // Opener.open sends text files and macros to the editor.
+        if lower.hasSuffix(".ijm") || lower.hasSuffix(".txt") { try unsupported("open(\"\(Self.javaFileName(path))\")") }
+        // Opener.open, routed as Opener.getFileType tells formats apart.
+        let contents: ImageOpener.Contents
         do {
-            image = try TIFFImporter.read(path: path)
+            contents = try ImageOpener.open(path: path)
+        } catch .unsupported {
+            try unsupported("open(\"\(Self.javaFileName(path))\")")
+        } catch .unreadable(_, let reason) where reason == "file not found" {
+            try interp.fail("File not found:\n" + path)
         } catch {
-            if !lower.hasSuffix(".tif") && !lower.hasSuffix(".tiff") {
-                try unsupported("open(\"\(Self.javaFileName(path))\")")
-            }
-            try interp.fail("File is not in a supported format, a reader\nplugin is not available, or it was not found.\n" + path)
+            try interp.fail(
+                "File is not in a supported format, a reader\nplugin is not available, or it was not found.\n" + path
+                    + "\n(\(error))")
         }
-        image.properties["Mancora.path"] = path
-        session.add(image)
-        if !n.isNaN {
-            try modifyImage { open in
-                let index = max(0, min(open.image.stack.count - 1, jIntI(n) - 1))
-                let p = open.image.dimensions.position(ofPlane: index)
-                (open.channel, open.slice, open.frame) = (p.channel, p.slice, p.frame)
+        switch contents {
+        case .image(var image):
+            image.properties["Mancora.path"] = path
+            session.add(image)
+            if !n.isNaN {
+                try modifyImage { open in
+                    let index = max(0, min(open.image.stack.count - 1, jIntI(n) - 1))
+                    let p = open.image.dimensions.position(ofPlane: index)
+                    (open.channel, open.slice, open.frame) = (p.channel, p.slice, p.frame)
+                }
             }
+        case .rois:
+            try roiManagerOpen(path)
+        case .roi(let roi):
+            do { try modifyImage { $0.roi = nil } } catch {}
+            try modifyImage { $0.roi = roi }
+        case .table(let table, let title):
+            // Opener.openTable: shown under the file's name ("Results" for "Results.*").
+            showOpenedTable(table, as: title)
         }
         session.lastDirectory = (Self.javaParent(path) ?? "") + Self.separator
         session.lastName = Self.javaFileName(path)
@@ -363,18 +357,19 @@ extension Functions {
         }
     }
 
-    /// `IJ.save(path)`: in the format the extension names (TIFF without
-    /// one), keeping the image's title.
+    /// `IJ.save(path)`: the format the extension names (TIFF without one),
+    /// keeping the image's title.
     func save(_ pathIn: String) throws(MacroSignal) {
         var path = pathIn
-        let current = session.context.current
-        if javaLastIndexOf(path, ".") < 0 && current != nil { path += ".tif" }
+        let title = session.context.current?.title
+        if javaLastIndexOf(path, ".") < 0, title != nil { path += ".tif" }
         let dot = javaLastIndexOf(path, ".")
-        if dot < 0 {
-            try interp.fail("The file path passed to IJ.save() method or save()\nmacro function is missing the required extension.\n \n\"" + path + "\"")
+        guard dot >= 0 else {
+            try interp.fail(
+                "The file path passed to IJ.save() method or save()\nmacro function is missing the required extension.\n \n\"\(path)\"")
         }
-        try saveImage(path, format: javaSubstring(path, dot + 1))
-        if let title = current?.title { try? modifyImage { $0.image.title = title } }
+        try saveImage(path, format: javaSubstring(path, dot + 1).lowercased())
+        if let title { try modifyImage { $0.image.title = title } }
     }
 
     func saveAs() throws(MacroSignal) {
@@ -413,7 +408,7 @@ extension Functions {
         }
 
         /// Whether Mancora saves this format (an unknown one is ImageJ's error either way).
-        var isNative: Bool { [.tiff, .results, .selection, .unsupported].contains(self) }
+        var isNative: Bool { [.tiff, .gif, .zip, .png, .results, .selection, .unsupported].contains(self) }
     }
 
     /// The format `save(path)` uses: the extension's, TIFF without one.
@@ -422,32 +417,64 @@ extension Functions {
         return dot < 0 ? .tiff : SaveFormat(javaSubstring(path, dot + 1))
     }
 
-    /// `IJ.updateExtension`: replaces a short extension, or adds one.
+    /// `IJ.updateExtension`: replaces a short extension (unless it starts
+    /// with a digit) or adds one.
     static func updateExtension(_ path: String, _ ext: String) -> String {
-        let dotIndex = javaLastIndexOf(path, ".")
+        let dot = javaLastIndexOf(path, "."), sep = javaLastIndexOf(path, separator)
         let length = path.utf16.count
-        guard dotIndex >= 0 && dotIndex > javaLastIndexOf(path, separator) && length - dotIndex <= 5 else {
-            return path + ext
+        if dot >= 0 && dot > sep && length - dot <= 5 {
+            if dot + 1 < length, let c = javaSubstring(path, dot + 1, dot + 2).first, c.isASCII, c.isNumber { return path + ext }
+            return javaSubstring(path, 0, dot) + ext
         }
-        let next = javaSubstring(path, dotIndex + 1, min(dotIndex + 2, length))
-        if let c = next.unicodeScalars.first, ("0"..."9").contains(c) { return path + ext }
-        return javaSubstring(path, 0, dotIndex) + ext
+        return path + ext
     }
 
+    /// `IJ.saveAs(format, path)`: formats are told apart by the words in
+    /// their name, in ImageJ's order.
     private func saveImage(_ pathIn: String, format: String) throws(MacroSignal) {
         if pathIn.isEmpty { try unsupported("saveAs with a save dialog") }
         var path = pathIn
+        func write(_ format: ImageSaver.Format) throws(MacroSignal) -> String {
+            let open = try image()
+            let position = ImageSaver.Position(channel: open.channel, slice: open.slice, frame: open.frame)
+            do {
+                return try ImageSaver.write(open.image, to: path, format: format, position: position)
+            } catch .unsupported(let what) {
+                try unsupported("saveAs(\"\(format.rawValue)\") of \(what)")
+            } catch {
+                try interp.fail("\(error)")
+            }
+        }
         switch SaveFormat(format) {
         case .tiff:
-            let open = try image()
-            if !javaEndsWith(path, ".tiff") { path = Self.updateExtension(path, ".tif") }
-            do { try TIFFExporter.write(open.image, to: path) } catch { try interp.fail("\(error)") }
-            let title = Self.javaFileName(path)
+            if !path.hasSuffix(".tiff") { path = Self.updateExtension(path, ".tif") }
+            let title = try write(.tiff)
             try modifyImage { $0.image.title = title }
+        case .jpeg:
+            try unsupported("saveAs(\"Jpeg\")")
+        case .gif:
+            // GifWriter.save leaves the title as it was.
+            path = Self.updateExtension(path, ".gif")
+            _ = try write(.gif)
+        case .textImage:
+            try unsupported("saveAs(\"Text Image\")")
+        case .text:
+            try unsupported("saveAs(\"Text\")")
+        case .zip:
+            path = Self.updateExtension(path, ".zip")
+            let title = try write(.zip)
+            try modifyImage { $0.image.title = title }
+        case .png:
+            path = Self.updateExtension(path, ".png")
+            let title = try write(.png)
+            try modifyImage { $0.image.title = title }
+        case .raw, .avi, .bmp, .fits, .pgm, .lut:
+            try unsupported("saveAs(\"\(javaToLowerCase(format))\")")
         case .results:
-            if !path.contains(".") { path += ".csv" }
-            let text = ResultsFormatter.csv(session.context.results, decimalPlaces: session.context.settings.decimalPlaces)
-            do { try Data(text.utf8).write(to: URL(fileURLWithPath: path)) } catch { try interp.fail("\(error)") }
+            // MeasurementsWriter: the Results table, as ResultsTable.saveAs writes it; nothing when it's empty.
+            let rt = session.context.results
+            if rt.isEmpty && rt.columns.isEmpty { return }
+            try saveTable(rt, to: path, rowNumbers: rt.showsRowNumbers ?? true)
         case .selection:
             let open = try image()
             guard let roi = open.roi else { try interp.fail("Selection required") }
@@ -457,15 +484,36 @@ extension Functions {
             } catch {
                 try interp.fail("\(error)")
             }
+        case .xyCoordinates:
+            try unsupported("saveAs(\"XY Coordinates\")")
         case .unsupported:
-            try interp.fail("Unsupported save() or saveAs() file format: \"" + javaToLowerCase(format) + "\"\n \n\"" + path + "\"")
-        default:
-            try unsupported("saveAs(\"\(format)\")")
+            try interp.fail("Unsupported save() or saveAs() file format: \"\(javaToLowerCase(format))\"\n \n\"\(path)\"")
+        }
+    }
+
+    /// `ResultsTable.saveAs`, numbers as the table shows them: `places`
+    /// decimals (Set Measurements' by default) for fractions and in the
+    /// `fixed` columns (by default, ``ResultsTableIO/fixedColumns(_:)``).
+    func saveTable(
+        _ rt: ResultsTable, to path: String, rowNumbers: Bool, firstRowNumber: Int = 1, columnHeadings: Bool = true,
+        fixed: Set<String>? = nil, places: Int? = nil
+    ) throws(MacroSignal) {
+        let places = places ?? session.context.settings.decimalPlaces
+        do {
+            try ResultsTableIO.save(
+                rt, to: path, rowNumbers: rowNumbers, firstRowNumber: firstRowNumber, columnHeadings: columnHeadings, fixed: fixed
+            ) { value, fixed in
+                if value.isNaN { return "NaN" }
+                if !fixed && Double(jInt(value)) == value { return ImageJFormat.d2s(value, 0) }
+                return ImageJFormat.resultsTableD2S(value, places)
+            }
+        } catch {
+            try interp.fail("\(error)")
         }
     }
 
     /// The extensions `open(path)` reads natively.
-    static let nativeOpenExtensions: Set<String> = ["tif", "tiff", "roi", "zip", "csv", "xls", "tsv"]
+    static let nativeOpenExtensions: Set<String> = ["tif", "tiff", "zip", "png", "gif", "roi", "csv", "xls", "tsv"]
 
     /// A path's extension, lowercased, as ImageJ's `Opener` compares them.
     static func fileExtension(_ path: String) -> String? {
@@ -1363,6 +1411,7 @@ extension Functions {
             guard let path = try image().image.properties["Mancora.path"] else { return "" }
             return (Self.javaParent(path) ?? "") + Self.separator
         case "image.subtitle":
+            _ = try image()  // there's no window to give a subtitle in batch mode
             return ""
         default:
             break
@@ -1481,11 +1530,13 @@ extension Functions {
         case "changes", "disablepopupmenu":
             // The image's unsaved-changes flag and its canvas menu: neither is kept.
             _ = try image()
+        case "interpolatelines": session.context.settings.interpolateLineProfiles = state
+        case _ where option.hasPrefix("bicubic"): session.bicubic = state
         case "debugmode", "openusingplugins", "queuemacros", "disableundo", "showrowindexes", "antialiasedtext",
-            "savebatchoutput", "waitforcompletion", "interpolatelines", "flipfitsimages":
+            "savebatchoutput", "waitforcompletion", "flipfitsimages":
             break
         case _
-        where option.hasPrefix("show") || option.hasPrefix("openashyper") || option.hasPrefix("bicubic")
+        where option.hasPrefix("show") || option.hasPrefix("openashyper")
             || option.hasPrefix("wand") || option.contains("points") || option.hasPrefix("loop")
             || option.hasPrefix("jfilechooser") || option.hasPrefix("auto") || option.hasPrefix("converttomicrons")
             || option.hasPrefix("supportmacroundo") || option.hasPrefix("copyhead") || option.hasPrefix("monospaced")
@@ -1580,112 +1631,33 @@ extension Functions {
         maximum?.setValue(stats.max)
         std?.setValue(stats.standardDeviation)
         if let hist {
-            let histogram = Self.histogram(open.currentPlane, width: open.image.width, region: region) ?? []
+            var histogram = Self.histogram(open.currentPlane, width: open.image.width, region: region) ?? []
+            if !calibrated, case .gray16(let p) = open.currentPlane, stats.max >= 0, stats.max.isFinite {
+                // getRawStatistics of a 16-bit image: ShortStatistics.histogram16, from 0 to the maximum.
+                histogram = [Int](repeating: 0, count: Int(stats.max) + 1)
+                Self.forEachPixel(width: open.image.width, height: p.count / max(open.image.width, 1), region: region) {
+                    let v = Int(p[$0])
+                    if v < histogram.count { histogram[v] += 1 }
+                }
+            }
             hist.setArray(VariableArray(histogram.map { Variable(Double($0)) }))
         }
     }
 
+    /// Calls `body` with the index of each pixel in `region` (or the whole plane).
+    static func forEachPixel(width: Int, height: Int, region: MeasurementRegion?, _ body: (Int) -> Void) {
+        let r = region ?? MeasurementRegion(x: 0, y: 0, width: width, height: height)
+        for y in max(r.y, 0)..<max(max(r.y, 0), min(r.y + r.height, height)) {
+            for x in max(r.x, 0)..<max(max(r.x, 0), min(r.x + r.width, width)) where r.contains(x, y) { body(y * width + x) }
+        }
+    }
+
     /// The 256-bin histogram `ImageStatistics` gives for `region`: by value
-    /// for 8-bit and RGB (the mean of R, G and B); from the minimum to the
+    /// for 8-bit and RGB (the rounded luminance); from the minimum to the
     /// maximum in the region for 16-bit (`ShortStatistics`) and 32-bit
     /// (`FloatStatistics`) planes.
     static func histogram(_ plane: Plane, width: Int, region: MeasurementRegion?) -> [Int]? {
-        let height = plane.count / max(width, 1)
-        let r = region ?? MeasurementRegion(x: 0, y: 0, width: width, height: height)
-        var histogram = [Int](repeating: 0, count: 256)
-        func forEach(_ body: (Int) -> Void) {
-            for y in max(r.y, 0)..<max(max(r.y, 0), min(r.y + r.height, height)) {
-                for x in max(r.x, 0)..<max(max(r.x, 0), min(r.x + r.width, width)) where r.contains(x, y) { body(y * width + x) }
-            }
-        }
-        switch plane {
-        case .gray8(let p): forEach { histogram[Int(p[$0])] += 1 }
-        case .rgb8(let p):
-            forEach {
-                let c = p[$0]
-                histogram[(Int((c >> 16) & 0xFF) + Int((c >> 8) & 0xFF) + Int(c & 0xFF)) / 3] += 1
-            }
-        case .gray16(let p):
-            var counts = [Int](repeating: 0, count: 65536)
-            forEach { counts[Int(p[$0])] += 1 }
-            guard let lo = counts.firstIndex(where: { $0 > 0 }), let hi = counts.lastIndex(where: { $0 > 0 }) else { return histogram }
-            let binSize = Double(hi - lo + 1) / 256
-            let scale = 1 / binSize
-            for i in lo...hi where counts[i] > 0 {
-                histogram[min(255, jIntI(scale * Double(i - lo)))] += counts[i]
-            }
-        case .gray32Float(let p):
-            var lo = Double.greatestFiniteMagnitude, hi = -Double.greatestFiniteMagnitude
-            forEach {
-                let v = Double(p[$0])
-                if v < lo { lo = v }
-                if v > hi { hi = v }
-            }
-            let scale = 256 / (hi - lo)
-            forEach {
-                let v = Double(p[$0])
-                guard v >= lo && v <= hi else { return }
-                histogram[min(255, jIntI(scale * (v - lo)))] += 1
-            }
-        }
-        return histogram
-    }
-
-    func getHistogram() throws(MacroSignal) {
-        try interp.getLeftParen()
-        var values: Variable?
-        if interp.nextToken() == NUMBER { _ = try interp.getExpression() } else { values = try getArrayVariable() }
-        try interp.getComma()
-        let counts = try getArrayVariable()
-        try interp.getComma()
-        let nBins = jIntI(try interp.getExpression())
-        let open = try image()
-        let bitDepth = open.image.pixelType.bitDepth
-        if interp.nextToken() == ch(",") {
-            _ = try getNextArg()
-            _ = try getLastArg()
-            if bitDepth == 8 || bitDepth == 24 { try interp.error("16 or 32-bit image required to set histMin and histMax") }
-            try unsupported("getHistogram with histMin and histMax")
-        }
-        try interp.getRightParen()
-        var region: MeasurementRegion?
-        if let roi = open.roi {
-            guard roi.isArea else { try unsupported("getHistogram with a line selection") }
-            do { region = try roi.measurementRegion(width: open.image.width, height: open.image.height) } catch {
-                try interp.fail("\(error)")
-            }
-        }
-        var histogram: [Int]
-        if nBins == 65536 && bitDepth == 16, case .gray16(let p) = open.currentPlane {
-            histogram = [Int](repeating: 0, count: 65536)
-            let width = open.image.width, height = open.image.height
-            let r = region ?? MeasurementRegion(x: 0, y: 0, width: width, height: height)
-            for y in max(r.y, 0)..<min(r.y + r.height, height) {
-                for x in max(r.x, 0)..<min(r.x + r.width, width) where r.contains(x, y) { histogram[Int(p[y * width + x])] += 1 }
-            }
-        } else if nBins == 256, (bitDepth == 8 || bitDepth == 24),
-            let h = Self.histogram(open.currentPlane, width: open.image.width, region: region)
-        {
-            histogram = h
-            if let values {
-                let cal = open.image.calibration
-                var array: [Double] = []
-                var value = cal.calibratedValue(0)
-                let increment = cal.valueFunction != nil ? (cal.calibratedValue(256) - cal.calibratedValue(0)) / 256 : 1
-                for _ in 0..<256 {
-                    array.append(value)
-                    value += increment
-                }
-                values.setArray(VariableArray(array.map { Variable($0) }))
-            }
-        } else {
-            try unsupported("getHistogram with \(nBins) bins on \(bitDepth)-bit images")
-        }
-        if let array = counts.getArray(), array.count == histogram.count {
-            for (i, v) in histogram.enumerated() { array[i].setValue(Double(v)) }
-        } else {
-            counts.setArray(VariableArray(histogram.map { Variable(Double($0)) }))
-        }
+        HistogramData(plane: plane, width: width, region: region).counts
     }
 
     func getLut() throws(MacroSignal) {
@@ -1809,10 +1781,6 @@ extension Functions {
         default:
             try interp.fail("Unvalid key")
         }
-    }
-
-    func getProfile() throws(MacroSignal) -> VariableArray? {
-        try unsupported("getProfile")
     }
 }
 

@@ -42,9 +42,54 @@ struct FilterTimings {
         ("16-bit convolve 5×5", { gray16.convolved(with: kernel5x5, width: size) }),
     ]
 
+    static func geometry(_ plane: Plane, _ method: InterpolationMethod) -> GeometryProcessor {
+        var ip = GeometryProcessor(plane, width: size)
+        ip.interpolation = method
+        return ip
+    }
+
+    /// Interpolation and geometry, with the pixel count each result has.
+    static let geometryOperations: [(String, Int, @Sendable () -> Plane)] = [
+        ("16-bit resize bilinear 0.6×", 1229 * 1229, { geometry(gray16, .bilinear).resized(width: 1229, height: 1229).plane }),
+        ("16-bit resize bicubic averaged 0.37×", 758 * 758, {
+            geometry(gray16, .bicubic).resized(width: 758, height: 758, averaging: true).plane
+        }),
+        ("float resize bicubic 1.5×", 3072 * 3072, { geometry(float, .bicubic).resized(width: 3072, height: 3072).plane }),
+        ("float rotate bicubic 15°", size * size, {
+            var ip = geometry(float, .bicubic)
+            ip.rotate(degrees: 15)
+            return ip.plane
+        }),
+        ("RGB rotate bilinear 15°", size * size, {
+            var ip = geometry(rgb, .bilinear)
+            ip.rotate(degrees: 15)
+            return ip.plane
+        }),
+        ("16-bit scale bilinear 0.7×", size * size, {
+            var ip = geometry(gray16, .bilinear)
+            ip.scale(x: 0.7, y: 0.7)
+            return ip.plane
+        }),
+        ("16-bit translate bicubic", size * size, {
+            var ip = geometry(gray16, .bicubic)
+            ip.translate(x: 2.5, y: -1.25)
+            return ip.plane
+        }),
+    ]
+
     @Test(arguments: operations.indices)
     func timing(_ index: Int) {
         let (name, operation) = Self.operations[index]
+        measure(name, count: Self.size * Self.size, operation)
+    }
+
+    @Test(arguments: geometryOperations.indices)
+    func geometryTiming(_ index: Int) {
+        let (name, count, operation) = Self.geometryOperations[index]
+        measure(name, count: count, operation)
+    }
+
+    func measure(_ name: String, count: Int, _ operation: () -> Plane) {
         _ = operation()  // warm up, and build the inputs
         let clock = ContinuousClock()
         var best = Duration.seconds(1000)
@@ -52,7 +97,7 @@ struct FilterTimings {
             let start = clock.now
             let result = operation()
             best = min(best, clock.now - start)
-            #expect(result.count == Self.size * Self.size)
+            #expect(result.count == count)
         }
         print("TIMING \(name): \(best)")
     }

@@ -63,8 +63,11 @@ enum ThresholdCommands {
         }
         if create {
             context.add(target.image)
-            let threshold = target.threshold
-            try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in open.threshold = threshold }
+            let mask = target
+            try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in
+                open.threshold = mask.threshold
+                if mask.thresholdIsBinary, let level = mask.threshold?.lower { open.setBinaryThreshold(level) }
+            }
         } else {
             try context.withCurrent(name) { (open: inout OpenImage) throws(CommandError) in open = target }
         }
@@ -74,6 +77,8 @@ enum ThresholdCommands {
     /// legacy IsoData one) becomes a 0/255 mask with a gray LUT, inverted
     /// unless Black background is on.
     static func apply(_ open: inout OpenImage, name: String, onePlane: Bool, blackBackground: Bool) throws(CommandError) {
+        // applyThreshold: an invisible threshold left by Make Binary or Convert to Mask doesn't count.
+        open.resetBinaryThreshold()
         let image = open.image
         if image.pixelType == .gray16 || image.pixelType == .gray32Float {
             try shortOrFloat(&open, name: name, blackBackground: blackBackground)
@@ -102,7 +107,7 @@ enum ThresholdCommands {
             result.setDisplay(display, forChannel: channel)
         }
         open.image = result
-        open.threshold = ThresholdLevels(lower: 255, upper: 255)
+        open.setBinaryThreshold(255)
     }
 
     /// `Thresholder.applyShortOrFloatThreshold`: thresholds 16- and 32-bit
@@ -136,19 +141,24 @@ enum ThresholdCommands {
         _ open: inout OpenImage, method: AutoThresholder.Method, background: String, blackBackground: Bool
     ) throws(CommandError) {
         let name = "Convert to Mask"
+        // The stack's processors (and their 8-bit conversions) have its LUT,
+        // whose inversion swaps the side thresholded.
+        let image = open.image
+        let invertedLUT = image.channels.count == 1 && image.pixelType.usesLUT && image.channels[0].lut.isInverted
         var planes: [Plane] = []
-        for plane in open.image.stack.planes {
+        for plane in image.stack.planes {
             // Other types go to 8-bit through each plane's own range.
             let byte = plane.pixelType == .gray8
                 ? plane : TypeConverter.toGray8(plane, displayRange: plane.valueRange() ?? 0...0)
             let levels: ThresholdLevels
             do {
                 if method == .default && background == "Default" {
-                    levels = try Threshold.legacyIsoData(byte).levels
+                    levels = try Threshold.legacyIsoData(byte, invertedLUT: invertedLUT).levels
                 } else {
                     // A stack's processors never had setAutoThreshold("…"), so addOne is off.
                     levels = try Threshold.auto(
-                        byte, method: method, options: AutoThresholdOptions(darkBackground: background != "Light"),
+                        byte, method: method,
+                        options: AutoThresholdOptions(darkBackground: background != "Light", invertedLUT: invertedLUT),
                         addOne: false
                     ).levels
                 }
@@ -183,6 +193,6 @@ enum ThresholdCommands {
         } catch {
             throw .failed(command: name, detail: "\(error)")
         }
-        open.threshold = ThresholdLevels(lower: 255, upper: 255)
+        open.setBinaryThreshold(255)
     }
 }

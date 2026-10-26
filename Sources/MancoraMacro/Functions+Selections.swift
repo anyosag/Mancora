@@ -42,6 +42,23 @@ extension Functions {
         try setSelection(Roi(.rectangle(Self.rect(x, y, w, h), cornerDiameter: max(arcSize, 0))))
     }
 
+    /// `doWand(x, y)` or `doWand(x, y, tolerance, mode)`: the selection
+    /// stays as it was when the wand finds nothing.
+    func doWand() throws(MacroSignal) {
+        let x = jIntI(try getFirstArg())
+        let y = jIntI(try getNextArg())
+        var tolerance = 0.0
+        var mode: String?
+        if interp.nextToken() == ch(",") {
+            tolerance = try getNextArg()
+            mode = try getNextString()
+        }
+        try interp.getRightParen()
+        let open = try image()
+        if mode?.contains("smooth") == true, open.threshold != nil { try unsupported("doWand(\"smooth\")") }
+        if let roi = open.wandSelection(x: x, y: y, tolerance: tolerance, mode: mode) { try setSelection(roi) }
+    }
+
     func makeOval() throws(MacroSignal) {
         let x = try getFirstArg()
         let y = try getNextArg()
@@ -71,11 +88,12 @@ extension Functions {
         while interp.token == ch(",") {
             let x = Int32(truncatingIfNeeded: javaMathRound(try interp.getExpression()))
             if points.count == 2 && interp.nextToken() == ch(")") {
-                // makeLine(x1, y1, x2, y2, lineWidth): a wide straight line
-                // (updateWideLine), drawn in the ROI color made translucent.
+                // makeLine(x1, y1, x2, y2, lineWidth), Line.updateWideLine: the
+                // width, and the ROI color at 30% opacity.
                 try interp.getRightParen()
                 let line = Roi.Line(x1: x1, y1: y1, x2: x2, y2: y2)
-                try setSelection(Roi(.line(line), strokeColor: Self.defaultRoiColor & 0x00FF_FFFF | 0x4D00_0000, strokeWidth: Float(x)))
+                try setSelection(
+                    Roi(.line(line), strokeColor: Self.defaultRoiColor & 0x00FF_FFFF | 0x4D00_0000, strokeWidth: max(Float(x), 0)))
                 return
             }
             try interp.getComma()
@@ -526,43 +544,17 @@ enum MaximumFinder1D {
 
 /// How the results table shows and saves numbers.
 enum ResultsFormatter {
-    /// A cell as `ResultsTable.getStringValue` gives it: integers without
-    /// decimals when the column is all integers is ImageJ's rule; here a
-    /// value is shown with `decimalPlaces` unless it is an integer.
-    static func cell(_ value: Double, decimalPlaces: Int) -> String {
+    /// A number in `column` as `ResultsTable.getStringValue` gives it: with
+    /// `decimalPlaces` once the column has held a non-integer, otherwise
+    /// integers without decimals (`n(value)`).
+    static func cell(_ value: Double, column: String, of rt: ResultsTable, decimalPlaces: Int) -> String {
         if value.isNaN { return "NaN" }
-        if Double(jInt(value)) == value && abs(value) < 1e9 { return ImageJFormat.d2s(value, 0) }
+        if !rt.decimalColumns.contains(column) && Double(jInt(value)) == value { return ImageJFormat.d2s(value, 0) }
         return ImageJFormat.resultsTableD2S(value, decimalPlaces)
     }
 
-    /// A number cell: a column that ever held a fraction shows every number
-    /// with the decimal places (ResultsTable's per-column `decimalPlaces`).
-    static func cell(_ rt: ResultsTable, _ column: String, _ row: Int, decimalPlaces: Int) -> String {
-        let value = rt.number(column, row: row)
-        if rt.fractionColumns.contains(column) { return ImageJFormat.resultsTableD2S(value, decimalPlaces) }
-        return cell(value, decimalPlaces: decimalPlaces)
-    }
-
-    /// `ResultsTable.saveAs(path.csv)`: a heading row (" " for the row
-    /// numbers, then Label and the columns) and one line per row.
-    static func csv(_ rt: ResultsTable, decimalPlaces: Int) -> String {
-        let hasLabels = rt.labels.contains { $0 != nil }
-        var lines: [String] = []
-        var heading = [" "]
-        if hasLabels { heading.append("Label") }
-        heading.append(contentsOf: rt.columns)
-        lines.append(heading.joined(separator: ","))
-        for row in 0..<rt.count {
-            var cells = [String(row + 1)]
-            if hasLabels { cells.append(rt.labels[row] ?? "") }
-            for column in rt.columns {
-                switch rt.value(column, row: row) {
-                case .text(let s)?: cells.append(s)
-                default: cells.append(cell(rt, column, row, decimalPlaces: decimalPlaces))
-                }
-            }
-            lines.append(cells.joined(separator: ","))
-        }
-        return lines.map { $0 + "\n" }.joined()
+    /// `getColumnHeadings()`: the row numbers' column, Label, then the columns, tab-separated.
+    static func headings(_ rt: ResultsTable) -> String {
+        ResultsTableIO.headingLine(rt, csv: false, rowNumbers: true)
     }
 }

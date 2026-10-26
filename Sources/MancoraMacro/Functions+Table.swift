@@ -11,11 +11,12 @@
 import Foundation
 import MancoraCommands
 import MancoraCore
+import MancoraIO
 
-/// How a table shows and saves its rows (ResultsTable's `showRowNumbers`,
-/// `baseRowNumber` and `saveColumnHeaders`).
+/// How a table numbers and saves its rows (ResultsTable's `baseRowNumber`
+/// and `saveColumnHeaders`); whether it shows row numbers is the table's
+/// ``ResultsTable/showsRowNumbers``.
 struct TableDisplay {
-    var rowNumbers = false
     var baseRowNumber = 1
     var saveHeaders = true
 }
@@ -39,14 +40,9 @@ extension MacroSession {
         frontTable = title
     }
 
-    /// How `title` is shown: Results always has row numbers.
+    /// How `title` numbers and saves its rows.
     func display(_ title: String) -> TableDisplay {
-        if title == "Results" {
-            var display = tableDisplay[title] ?? TableDisplay()
-            if display.baseRowNumber == 1 { display.rowNumbers = true }
-            return display
-        }
-        return tableDisplay[title] ?? TableDisplay()
+        tableDisplay[title] ?? TableDisplay()
     }
 }
 
@@ -60,6 +56,11 @@ extension Functions {
 
     func store(_ title: String, _ rt: ResultsTable) {
         if title == "Results" { session.context.results = rt } else { session.context.tables[title] = rt }
+    }
+
+    /// Whether `title` shows row numbers: Results always does.
+    func rowNumbers(_ title: String) -> Bool {
+        title == "Results" || table(title).showsRowNumbers == true
     }
 
     /// The decimal places a table shows fractions with: Set Measurements'
@@ -184,7 +185,7 @@ extension Functions {
     static func cellText(_ rt: ResultsTable, _ column: String, _ row: Int, precision: Int) -> String {
         switch rt.value(column, row: row) {
         case .text(let s)?: return s.replacingAll("\n", with: "\\n")
-        default: return ResultsFormatter.cell(rt, column, row, decimalPlaces: precision)
+        default: return ResultsFormatter.cell(rt.number(column, row: row), column: column, of: rt, decimalPlaces: precision)
         }
     }
 
@@ -320,26 +321,29 @@ extension Functions {
             return Variable(try resultsTable(try titleOnlyArgument()))
         case "headings":
             let title = try resultsTable(try titleOnlyArgument())
-            return Variable(Self.headings(table(title), session.display(title)))
+            return Variable(ResultsTableIO.headingLine(table(title), csv: false, rowNumbers: rowNumbers(title)))
         case "allHeadings":
             try interp.getParens()
             return Variable(ResultsTable.standardHeadings.joined(separator: "\t"))
         case "showRowNumbers", "showRowIndexes":
             let show = jInt(try getFirstArg()) != 0
             let title = try resultsTable(try titleArgument())
-            var display = session.display(title)
-            if name == "showRowIndexes" {
-                display.rowNumbers = show
-                display.baseRowNumber = show ? 0 : 1
-            } else if show || title != "Results" {
-                // The Results table always has row numbers.
-                display.rowNumbers = show
-                display.baseRowNumber = 1
+            let indexes = name == "showRowIndexes"
+            // The Results table always has row numbers.
+            if indexes || show || title != "Results" {
+                var rt = table(title)
+                rt.showsRowNumbers = show || title == "Results"
+                store(title, rt)
+                session.tableDisplay[title, default: TableDisplay()].baseRowNumber = indexes && show ? 0 : 1
             }
-            session.tableDisplay[title] = display
         case "hideRowNumbers":
             let title = try resultsTable(try titleOnlyArgument())
-            if title != "Results" { session.tableDisplay[title, default: TableDisplay()].rowNumbers = false }
+            if title != "Results" {
+                var rt = table(title)
+                rt.showsRowNumbers = false
+                store(title, rt)
+                session.tableDisplay[title, default: TableDisplay()].baseRowNumber = 1
+            }
         case _ where name.hasPrefix("saveColumnHeader"):
             let save = jInt(try getFirstArg()) != 0
             let title = try resultsTable(try titleArgument())
@@ -466,152 +470,37 @@ extension Functions {
         }
     }
 
-    /// `ResultsTable.getColumnHeadings()`: the row-number column, Label, then the columns.
-    static func headings(_ rt: ResultsTable, _ display: TableDisplay, delimiter: String = "\t") -> String {
-        var parts: [String] = []
-        if display.rowNumbers { parts.append(" ") }
-        if rt.labels.contains(where: { $0 != nil }) { parts.append("Label") }
-        parts.append(contentsOf: rt.columns)
-        return parts.joined(separator: delimiter)
-    }
-
-    /// `ResultsTable.saveAs(path)`: comma-separated for ".csv", else tab-separated.
+    /// `ResultsTable.saveAs(path)` of the table `title`, its numbers as
+    /// `getResultString` shows them: comma-separated for ".csv", else tab-separated.
     func saveTable(_ title: String, to path: String) throws(MacroSignal) {
         if path.isEmpty { try unsupported("Table.save with a save dialog") }
         let rt = table(title)
         let display = session.display(title)
-        let csv = javaEndsWith(path, ".csv") || javaEndsWith(path, ".CSV")
-        let delimiter = csv ? "," : "\t"
-        var lines: [String] = []
-        if display.saveHeaders && !(rt.count == 0 && rt.columns.isEmpty) {
-            lines.append(Self.headings(rt, display, delimiter: delimiter))
-        }
-        let hasLabels = rt.labels.contains { $0 != nil }
-        for row in 0..<rt.count {
-            var cells: [String] = []
-            if display.rowNumbers { cells.append(String(row + display.baseRowNumber)) }
-            if hasLabels {
-                let label = rt.labels[row] ?? ""
-                cells.append(csv ? label.replacingAll(",", with: ";") : label)
-            }
-            for column in rt.columns {
-                var value = Self.cellText(rt, column, row, precision: precision(title))
-                if csv && (value.contains(",") || value.isEmpty) { value = "\"" + value + "\"" }
-                cells.append(value)
-            }
-            lines.append(cells.joined(separator: delimiter))
-        }
+        try saveTable(
+            rt, to: path, rowNumbers: rowNumbers(title), firstRowNumber: display.baseRowNumber,
+            columnHeadings: display.saveHeaders, fixed: rt.decimalColumns, places: precision(title))
+    }
+
+    /// `Table.open`: `ResultsTable.open(path)` shown as `title`.
+    func openTable(_ path: String, as title: String) throws(MacroSignal) {
+        if path.isEmpty { try unsupported("Table.open with a file dialog") }
+        guard FileManager.default.fileExists(atPath: path) else { try interp.fail("Error opening " + path) }
+        let rt: ResultsTable
         do {
-            try Data(lines.map { $0 + "\n" }.joined().utf8).write(to: URL(fileURLWithPath: path))
+            rt = try ResultsTableIO.read(path: path, parse: { javaParseDouble($0) })
+        } catch .invalidFormat(let message) {
+            try interp.fail(message)
         } catch {
             try interp.fail("\(error)")
         }
+        showOpenedTable(rt, as: title)
     }
 
-    /// `Table.open` and `open()` of a table file: `ResultsTable.open(path)` shown as `title`.
-    func openTable(_ path: String, as title: String) throws(MacroSignal) {
-        if path.isEmpty { try unsupported("Table.open with a file dialog") }
-        guard let data = FileManager.default.contents(atPath: path) else { try interp.fail("Error opening " + path) }
-        let rt: ResultsTable
-        do {
-            rt = try Self.readTable(String(decoding: data, as: UTF8.self), path: path)
-        } catch {
-            try interp.fail(error.message)
-        }
+    /// `ResultsTable.show(title)` of a table read from a file: it comes to the front.
+    func showOpenedTable(_ rt: ResultsTable, as title: String) {
         store(title, rt)
-        session.tableDisplay[title] = TableDisplay(rowNumbers: javaContains(path, "Results"))
+        session.tableDisplay[title] = nil
         session.showTable(title)
-    }
-
-    struct TableError: Error {
-        var message: String
-    }
-
-    /// `ResultsTable.open`: a tab- or comma-delimited table, with ImageJ's
-    /// rules for row numbers, labels, quoted commas and numeric headings.
-    static func readTable(_ textIn: String, path: String) throws(TableError) -> ResultsTable {
-        var text = textIn
-        var rt = ResultsTable.custom()
-        if text.isEmpty { return rt }
-        let csv = javaEndsWith(path, ".csv") || javaEndsWith(path, ".CSV")
-        let separator = csv ? "," : "\t"
-        let commaSubstitute = "\u{0F80}"
-        var commasReplaced = false
-        if csv && text.contains("\"") {
-            var inQuotes = false
-            text = String(text.map { c -> Character in
-                if c == "\"" { inQuotes.toggle() }
-                return inQuotes && c == "," ? Character(commaSubstitute) : c
-            })
-            commasReplaced = true
-        }
-        let lines = javaSplit(text, "\n")
-        if lines.isEmpty || (lines.count == 1 && lines[0].isEmpty) { throw TableError(message: "Table is empty or invalid") }
-        var headings = javaSplit(lines[0], separator)
-        if headings.isEmpty { throw TableError(message: "This is not a tab or comma delimited text file.") }
-        if headings[0].hasPrefix("\u{FEFF}") { headings[0] = String(headings[0].dropFirst()) }
-        let numeric = headings.filter { $0 == "NaN" || !toolsParseDouble($0).isNaN }.count
-        let allNumericHeadings = numeric == headings.count
-        if allNumericHeadings { headings = headings.indices.map { "C\($0 + 1)" } }
-        var firstColumn = headings.first == " " ? 1 : 0
-        for i in headings.indices {
-            headings[i] = javaTrim(headings[i])
-            if commasReplaced && headings[i].hasPrefix("\"") && headings[i].hasSuffix("\"") && headings[i].count > 1 {
-                headings[i] = String(headings[i].dropFirst().dropLast())
-            }
-        }
-        let firstRow = allNumericHeadings ? 0 : 1
-        let labels = firstColumn == 1 && headings.count > 1 && headings[1] == "Label"
-        let labelsIndex = tableType(lines, firstRow: firstRow, separator: separator) == 2 ? 0 : 1
-        if lines[0].hasPrefix("\t") {
-            headings = [" "] + headings
-            firstColumn = 1
-        }
-        if firstRow >= lines.count {
-            for heading in headings[firstColumn...] where !rt.columns.contains(heading) {
-                rt.set(heading, row: rt.addRow(), .text(""))
-                rt.removeRows(0, 0)
-            }
-            return rt
-        }
-        for line in lines[firstRow...] {
-            let row = rt.addRow()
-            let items = javaSplit(line, separator)
-            for j in firstColumn..<headings.count {
-                if j == labelsIndex && labels {
-                    rt.setLabel(j < items.count ? items[j] : nil, row: row)
-                    continue
-                }
-                if j < items.count, let value = javaParseDouble(items[j]) {
-                    rt.set(headings[j], row: row, value)
-                } else if j >= items.count {
-                    rt.set(headings[j], row: row, .nan)
-                } else {
-                    var item = items[j]
-                    if commasReplaced {
-                        item = item.replacingAll(commaSubstitute, with: ",")
-                        if item.hasPrefix("\"") && item.hasSuffix("\"") && item.count > 1 { item = String(item.dropFirst().dropLast()) }
-                    }
-                    rt.set(headings[j], row: row, .text(item))
-                }
-            }
-        }
-        return rt
-    }
-
-    /// `getTableType`: 2 when the second line's only text is its first cell (labels without row numbers).
-    private static func tableType(_ lines: [String], firstRow: Int, separator: String) -> Int {
-        if lines.count < 2 { return 0 }
-        let items = javaSplit(lines[1], separator)
-        var count = 0, index = 0
-        for (i, item) in items.enumerated() where item != "NaN" && toolsParseDouble(item).isNaN {
-            count += 1
-            index = i
-        }
-        if count == 0 { return 0 }
-        if count == 1 && index == 1 { return 1 }
-        if count == 1 && index == 0 { return 2 }
-        return 3
     }
 
     // MARK: - Array.show
@@ -666,9 +555,10 @@ extension Functions {
                 }
             }
         }
+        if rowNumbers { rt.showsRowNumbers = true }
         if title == "Results" { rt.hasDefaultHeadings = true }
         store(title, rt)
-        session.tableDisplay[title] = TableDisplay(rowNumbers: rowNumbers)
+        session.tableDisplay[title] = nil
         session.showTable(title)
     }
 
@@ -788,12 +678,4 @@ extension Interpreter {
     func setFirstVariable(_ name: String, _ value: Double) {
         firstVariable(name)?.setValue(value)
     }
-}
-
-/// Java's `String.split` with a literal separator: trailing empty strings are dropped.
-func javaSplit(_ s: String, _ separator: String) -> [String] {
-    if s.isEmpty { return [""] }
-    var parts = s.components(separatedBy: separator)
-    while let last = parts.last, last.isEmpty { parts.removeLast() }
-    return parts
 }
