@@ -39,6 +39,9 @@ SolidCompression=yes
 WizardStyle=modern
 ChangesEnvironment=yes
 ChangesAssociations=yes
+; An update closes the running viewer instead of asking for a reboot.
+CloseApplications=force
+RestartApplications=no
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; Flags: unchecked
@@ -65,8 +68,15 @@ Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; Value
 
 [Run]
 Filename: "{app}\MancoraViewer.exe"; Description: "Launch Mancora"; Flags: nowait postinstall skipifsilent
+; Updates started from the viewer run silently with /relaunch=1 and reopen it.
+Filename: "{app}\MancoraViewer.exe"; Flags: nowait; Check: ShouldRelaunch
 
 [Code]
+function ShouldRelaunch: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:relaunch|0}') = '1');
+end;
+
 function PathContains(Paths, Dir: string): Integer;
 begin
   Result := Pos(';' + Uppercase(Dir) + ';', ';' + Uppercase(Paths) + ';');

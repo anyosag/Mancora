@@ -3,14 +3,27 @@ import SwiftUI
 
 @main
 struct MancoraApp: App {
-    @State private var model = ViewerModel()
+    @State private var updater = AppUpdater()
 
     init() {
-        // `Mancora --smoke-test image.tif` checks that the packaged app
-        // launches and can decode and render an image, then exits.
         let args = CommandLine.arguments
+        // `Mancora --smoke-test image.tif` checks that the packaged app
+        // launches and can decode, render and save an image, then exits.
         if let i = args.firstIndex(of: "--smoke-test"), i + 1 < args.count {
             exit(ViewerModel.smokeTest(path: args[i + 1]) ? 0 : 1)
+        }
+        // `Mancora --install-test update.dmg target/Mancora.app` installs the
+        // app in the disk image over `target` the way an update does.
+        if let i = args.firstIndex(of: "--install-test"), i + 2 < args.count {
+            do {
+                let version = try AppUpdater.install(
+                    dmg: URL(fileURLWithPath: args[i + 1]), over: URL(fileURLWithPath: args[i + 2]))
+                print("installed Mancora \(version)")
+                exit(0)
+            } catch {
+                FileHandle.standardError.write(Data("install failed: \(error)\n".utf8))
+                exit(1)
+            }
         }
         // Run from `swift run` there is no app bundle; make it a regular app
         // so it gets a Dock icon, a menu bar and keyboard focus.
@@ -18,16 +31,96 @@ struct MancoraApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Mancora") {
-            ViewerView(model: model)
-                .frame(minWidth: 640, minHeight: 480)
-                .onOpenURL { model.open($0) }
+        WindowGroup("Mancora", id: "viewer", for: OpenRequest.self) { $request in
+            ViewerWindow(request: $request)
+                .task { updater.checkAtLaunch() }
         }
         .commands {
-            CommandGroup(replacing: .newItem) {
-                Button("Open…") { model.presentOpenPanel() }
-                    .keyboardShortcut("o")
+            ViewerCommands()
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    Task { await updater.check(userInitiated: true) }
+                }
+                .disabled(updater.isBusy)
             }
         }
+        Settings {
+            SettingsView(updater: updater)
+        }
+    }
+}
+
+/// File and View menu items for the key window's viewer.
+struct ViewerCommands: Commands {
+    @FocusedValue(\.viewer) private var viewer
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(after: .newItem) {
+            Button("Open…") { open(virtual: false) }
+                .keyboardShortcut("o")
+            Button("Open as Virtual Stack…") { open(virtual: true) }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+        }
+        CommandGroup(replacing: .saveItem) {
+            Button("Save As TIFF…") { viewer?.presentSavePanel() }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+                .disabled(!(viewer?.hasImage ?? false))
+        }
+        CommandGroup(after: .toolbar) {
+            Button("Zoom In") { zoom(by: 2) }
+                .keyboardShortcut("+")
+                .disabled(!(viewer?.hasImage ?? false))
+            Button("Zoom Out") { zoom(by: 0.5) }
+                .keyboardShortcut("-")
+                .disabled(!(viewer?.hasImage ?? false))
+            Button("Actual Size") { viewer?.zoom = .scale(1) }
+                .keyboardShortcut("0")
+                .disabled(!(viewer?.hasImage ?? false))
+            Button("Zoom to Fit") { viewer?.zoom = .fit }
+                .keyboardShortcut("9")
+                .disabled(!(viewer?.hasImage ?? false))
+            Divider()
+        }
+    }
+
+    /// Opens into the key window if it's empty, otherwise into a new one.
+    private func open(virtual: Bool) {
+        let panelOwner = viewer ?? ViewerModel()
+        guard let url = panelOwner.presentOpenPanel(virtual: virtual) else { return }
+        let request = OpenRequest(url: url, virtual: virtual)
+        if let viewer, !viewer.hasImage {
+            viewer.open(request)
+        } else {
+            openWindow(id: "viewer", value: request)
+        }
+    }
+
+    private func zoom(by factor: Double) {
+        guard let viewer else { return }
+        let current: Double
+        switch viewer.zoom {
+        case .scale(let s): current = s
+        case .fit: current = 1
+        }
+        viewer.zoom = .scale(min(max(current * factor, 1.0 / 32), 64))
+    }
+}
+
+struct SettingsView: View {
+    @Bindable var updater: AppUpdater
+
+    var body: some View {
+        Form {
+            Toggle(
+                "Check for updates automatically",
+                isOn: Binding(get: { updater.automaticallyChecks }, set: { updater.setAutomaticallyChecks($0) })
+            )
+            Text("Mancora looks for a newer release on GitHub at most once a day.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(20)
+        .frame(width: 380)
     }
 }

@@ -22,6 +22,8 @@ let package = Package(
             dependencies: [
                 .product(name: "MancoraCore", package: "Mancora"),
                 .product(name: "MancoraIO", package: "Mancora"),
+                .product(name: "MancoraSupport", package: "Mancora"),
+                .product(name: "MancoraUpdate", package: "Mancora"),
             ],
             swiftSettings: [
                 .defaultIsolation(MainActor.self),

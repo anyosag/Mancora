@@ -70,6 +70,8 @@ enum MenuID {
     static let openLUT = 101
     static let exit = 102
     static let about = 103
+    static let checkForUpdates = 104
+    static let automaticUpdates = 105
     static let builtInLUT = 1000
 }
 
@@ -89,6 +91,7 @@ func runViewer(arguments: [String]) {
     }
     _ = ShowWindow(window, SW_SHOWDEFAULT)
     _ = UpdateWindow(window)
+    checkForUpdatesInBackground(window: window)
 
     var message = MSG()
     while GetMessageW(&message, nil, 0, 0) {
@@ -158,6 +161,10 @@ func makeMenuBar() -> HMENU? {
     }
 
     let help = CreatePopupMenu()
+    _ = AppendMenuW(help, UINT(MF_STRING), UINT_PTR(MenuID.checkForUpdates), "Check for &Updates…".wide)
+    let automatic = UINT(MF_STRING) | (UpdateSettings.checksAutomatically ? UINT(MF_CHECKED) : 0)
+    _ = AppendMenuW(help, automatic, UINT_PTR(MenuID.automaticUpdates), "Check &Automatically".wide)
+    _ = AppendMenuW(help, UINT(MF_SEPARATOR), 0, nil)
     _ = AppendMenuW(help, UINT(MF_STRING), UINT_PTR(MenuID.about), "&About Mancora".wide)
 
     _ = AppendMenuW(bar, UINT(MF_POPUP), UINT_PTR(UInt(bitPattern: file)), "&File".wide)
@@ -184,6 +191,12 @@ func windowProcedure(_ window: HWND?, _ message: UINT, _ wParam: WPARAM, _ lPara
         return 0
     case WM_SIZE:
         _ = InvalidateRect(window, nil, false)
+        return 0
+    case Int32(updateAvailableMessage):
+        if let update = pendingUpdate {
+            pendingUpdate = nil
+            offer(update)
+        }
         return 0
     case WM_ERASEBKGND:
         return 1  // WM_PAINT fills the whole client area
@@ -229,6 +242,14 @@ func handleCommand(_ id: Int) {
                 + "Free software under the GNU GPL, version 3 or later.\n\n"
                 + "Keys: ←/→ slice, ↑/↓ channel, Page Up/Down frame.",
             title: "About Mancora", owner: viewer.window, isError: false)
+    case MenuID.checkForUpdates:
+        checkForUpdatesNow()
+    case MenuID.automaticUpdates:
+        let on = !UpdateSettings.checksAutomatically
+        UpdateSettings.setChecksAutomatically(on)
+        _ = CheckMenuItem(
+            GetMenu(viewer.window), UINT(MenuID.automaticUpdates),
+            UINT(MF_BYCOMMAND) | (on ? UINT(MF_CHECKED) : UINT(MF_UNCHECKED)))
     case MenuID.builtInLUT..<(MenuID.builtInLUT + LUT.builtIn.count):
         viewer.apply(LUT.builtIn[id - MenuID.builtInLUT])
         refresh()
