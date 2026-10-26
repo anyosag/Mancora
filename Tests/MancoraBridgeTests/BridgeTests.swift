@@ -223,6 +223,21 @@ struct BridgeIntegrationTests {
         await bridge.stop()
     }
 
+    /// Requests sent at once reach the helper whole, however long they are.
+    @Test func concurrentLargeRequestsStayWhole() async throws {
+        let bridge = try BridgeFixtures.bridge()
+        try await bridge.start()
+        let comment = "// " + String(repeating: "x", count: 200_000) + "\n"
+        async let busy = bridge.runMacro("wait(1500); return \"busy\";")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        async let b = bridge.runMacro(comment + "return \"b\";")
+        async let c = bridge.runMacro(comment + "return \"c\";")
+        async let d = bridge.runMacro(comment + "return \"d\";")
+        let values = try await [busy, b, c, d].map(\.value)
+        #expect(values == ["busy", "b", "c", "d"])
+        await bridge.stop()
+    }
+
     /// Dialogs nobody can answer don't hang the helper: ImageJ's errors come
     /// back as errors, and "Process all slices?" is answered No.
     @Test(.enabled(if: hasDisplay)) func dialogsAreAnswered() async throws {
