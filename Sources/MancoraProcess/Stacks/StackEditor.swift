@@ -279,6 +279,18 @@ public enum StackEditor {
         return out
     }
 
+    /// `ImagePlus.getShortTitle`: the trimmed title up to its first space,
+    /// without its extension.
+    public static func shortTitle(_ title: String) -> String {
+        // String.trim(): characters up to U+0020 go from both ends.
+        let isSpace = { (c: Character) in c.unicodeScalars.allSatisfy { $0.value <= 0x20 } }
+        var short = Substring(title).drop(while: isSpace)
+        while let last = short.last, isSpace(last) { short = short.dropLast() }
+        if let space = short.firstIndex(of: " ") { short = short[..<space] }
+        if let dot = short.lastIndex(of: "."), dot != short.startIndex { short = short[..<dot] }
+        return String(short)
+    }
+
     /// `StackEditor.getTitle`: the title up to its first space, without its
     /// extension, then `-` and the 1-based plane number in four digits.
     static func numberedTitle(_ title: String, _ n: Int) -> String {

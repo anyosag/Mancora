@@ -6,8 +6,48 @@ import MancoraProcess
 /// ImageJ runs them for images without a window (a macro in batch mode).
 enum StackCommands {
     static var all: [CommandDefinition] {
-        [addSlice, deleteSlice, nextSlice, previousSlice, setSlice, stackToImages, setLabel, removeLabels, reduce, makeMontage]
+        [addSlice, deleteSlice, nextSlice, previousSlice, setSlice, stackToImages, setLabel, removeLabels, reduce, makeMontage,
+         reslice]
             + StackCombineCommands.all
+    }
+
+    // MARK: Reslice
+
+    /// `Slicer` for the whole image or a rectangle: `output=` spacing
+    /// (calibrated; the voxel depth by default), `start=` Top, Left, Bottom
+    /// or Right, `flip`, `rotate` and `avoid` (interpolation). Line
+    /// selections and hyperstacks are left to ImageJ.
+    static let reslice = CommandDefinition("Reslice [/]...", menu: "Image>Stacks") { context, options in
+        let name = "Reslice [/]..."
+        guard let open = context.current else { throw CommandError.noImage(name) }
+        let image = open.image
+        let roi = try CropCommands.selection(name, open)
+        if let roi, roi.kind != .rectangle {
+            if image.stack.count < 2 { throw CommandError.failed(command: name, detail: "Stack required") }
+            guard [.line, .polyline, .freeline].contains(roi.kind) else {
+                throw CommandError.failed(command: name, detail: "Line or rectangular selection required")
+            }
+            throw CommandError.notNative(name)  // lines: ImageJ samples along them
+        }
+        if StackEditor.isHyperStack(image.dimensions) || StackEditor.isComposite(image) { throw CommandError.notNative(name) }
+        // Older macros name the spacing "slice" (and the line count "input").
+        var text = options.text
+        if text.contains("input=") { text = text.replacing("slice=", with: "slice_count=") }
+        text = text.replacing("slice=", with: "output=")
+        let macro = MacroOptions(text)
+        let starts = Slicer.Start.allCases.map(\.rawValue)
+        let start = Slicer.Start(rawValue: try choice(macro, "Start at:", starts, default: starts[0], command: name)) ?? .top
+        let result: Hyperstack
+        do throws(StackEditError) {
+            result = try Slicer.reslice(
+                image, rect: roi?.bounds, start: start,
+                outputSpacing: macro.number(forLabel: "Output spacing", default: abs(image.calibration.pixelDepth)),
+                flip: macro.flag(forLabel: "Flip vertically"), rotate: macro.flag(forLabel: "Rotate 90 degrees"),
+                avoidInterpolation: macro.flag(forLabel: "Avoid interpolation"), display: image.channels[0])
+        } catch {
+            throw failure(name, error)
+        }
+        context.add(result)
     }
 
     // MARK: Make Montage

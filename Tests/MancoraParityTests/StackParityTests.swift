@@ -249,6 +249,26 @@ struct StackJoiningParityTests {
         ])
     }
 
+    @Test func reslice() async throws {
+        try await MacroParity.check([
+            M.make("from the top", #"run("Reslice [/]...", "output=1.000 start=Top"); state(); titles();"#, on: .stack8),
+            M.make("from the left", #"run("Reslice [/]...", "output=1.000 start=Left"); state();"#, on: .stack16),
+            M.make("from the bottom, flipped", #"run("Reslice [/]...", "output=1.000 start=Bottom flip"); state();"#, on: .stack32),
+            M.make("from the right, rotated", #"run("Reslice [/]...", "output=1.000 start=Right rotate"); state();"#, on: .stackRGB),
+            M.make("every third line", #"run("Reslice [/]...", "output=3 start=Top"); state();"#, on: .stack16),
+            M.make("every 2.5 columns", #"run("Reslice [/]...", "output=2.5 start=Left"); state();"#, on: .stack8),
+            M.make("every 1.5 rows from the bottom", #"run("Reslice [/]...", "output=1.5 start=Bottom"); state();"#, on: .stack32),
+            M.make("RGB every 2.5 columns", #"run("Reslice [/]...", "output=2.5 start=Right"); state();"#, on: .stackRGB),
+            M.make("calibrated", #"run("Reslice [/]...", "output=1.500 start=Top"); state();"#, on: .calibrated),
+            M.make("calibrated, from the left, rotated", #"run("Reslice [/]...", "output=0.5 start=Left rotate"); state();"#, on: .calibrated),
+            M.make("calibrated, avoiding interpolation", #"run("Reslice [/]...", "output=1.500 start=Top avoid"); state();"#, on: .calibrated),
+            M.make("a rectangle", #"makeRectangle(10, 5, 30, 20); run("Reslice [/]...", "output=1.000 start=Left"); state();"#, on: .stack16),
+            M.make("a single image", #"run("Reslice [/]...", "output=2 start=Top"); state();"#, on: .gray8),
+            M.make("old keys", #"run("Reslice [/]...", "slice=2 start=Top"); state();"#, on: .stack8),
+            M.make("a time series", #"run("Properties...", "channels=1 slices=1 frames=5"); run("Reslice [/]...", "output=1 start=Top"); state();"#, on: .stack16),
+        ])
+    }
+
     @Test func groupedZProject() async throws {
         try await MacroParity.check([
             M.make("whole stack", #"run("Grouped Z Project...", "projection=[Max Intensity] group=5"); state(); titles();"#, on: .stack16),
