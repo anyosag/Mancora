@@ -77,12 +77,19 @@ enum Parity {
         var context = CommandContext()
         for input in inputs { context.add(input) }
         let before = context.images.map(\.id)
-        try CommandRegistry.standard.run(parityCase.command, options: MacroOptions(parityCase.options), in: &context)
+        for step in parityCase.steps {
+            try CommandRegistry.standard.run(step.command, options: MacroOptions(step.options), in: &context)
+        }
         guard let current = context.current else { return ["Mancora left no image open"] }
         let native = try roundTrip(current.image)
         let nativeIsNew = !before.contains(current.id)
 
-        let result = try await bridge.run(parityCase.command, options: parityCase.options, images: inputs)
+        let result: BridgeRunResult
+        if parityCase.steps.count == 1, let step = parityCase.steps.first {
+            result = try await bridge.run(step.command, options: step.options, images: inputs)
+        } else {
+            result = try await bridge.runMacro(parityCase.macro, images: inputs)
+        }
         let imageJ: Hyperstack
         let imageJIsNew: Bool
         if let created = result.images.last(where: { $0.replacesInput == nil }) {
@@ -112,10 +119,15 @@ enum Parity {
     }
 }
 
-/// One command, its macro options and the images it runs on (the last is current).
+/// One command (or several, as a macro runs them), with macro options, and
+/// the images it runs on (the last is current).
 struct ParityCase: Sendable, CustomStringConvertible {
-    var command: String
-    var options = ""
+    struct Step: Sendable {
+        var command: String
+        var options: String
+    }
+
+    var steps: [Step]
     var inputs: [ParityInput]
     /// For float pixels and results: the largest difference allowed,
     /// relative to the value (absolute below 1).
@@ -123,16 +135,34 @@ struct ParityCase: Sendable, CustomStringConvertible {
     var comparesResults = false
 
     init(_ command: String, _ options: String = "", on inputs: ParityInput..., tolerance: Double = 1e-5, results: Bool = false) {
-        self.command = command
-        self.options = options
+        self.init(steps: [Step(command: command, options: options)], inputs: inputs, tolerance: tolerance, results: results)
+    }
+
+    init(steps: [Step], inputs: [ParityInput], tolerance: Double = 1e-5, results: Bool = false) {
+        self.steps = steps
         self.inputs = inputs
         self.tolerance = tolerance
         self.comparesResults = results
     }
 
+    /// `Set Measurements...` with `measurements`, then `Measure`.
+    static func measure(_ measurements: String, on input: ParityInput, then more: [Step] = [], tolerance: Double = 1e-9) -> ParityCase {
+        ParityCase(
+            steps: [Step(command: "Set Measurements...", options: measurements), Step(command: "Measure", options: "")] + more,
+            inputs: [input], tolerance: tolerance, results: true)
+    }
+
+    /// The steps as ImageJ macro code.
+    var macro: String {
+        var recorder = MacroRecorder()
+        for step in steps { recorder.record(step.command, options: MacroOptions(step.options)) }
+        return recorder.macro
+    }
+
     var description: String {
         let on = inputs.map(\.rawValue).joined(separator: ", ")
-        return options.isEmpty ? "\"\(command)\" on \(on)" : "\"\(command)\" \"\(options)\" on \(on)"
+        let what = steps.map { $0.options.isEmpty ? "\"\($0.command)\"" : "\"\($0.command)\" \"\($0.options)\"" }
+        return what.joined(separator: ", then ") + " on \(on)"
     }
 }
 

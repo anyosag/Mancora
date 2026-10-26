@@ -70,3 +70,35 @@ struct ParityTests {
         ])
     }
 }
+
+/// Analyze ▸ Measure, with every measurement ImageJ makes without a selection.
+@Suite("ImageJ parity: measurements", .enabled(if: Parity.available, "needs MANCORA_TEST_IJ_JAR, a JDK and a display or Xvfb"))
+struct MeasurementParityTests {
+    static let everything =
+        "area mean standard modal min centroid center perimeter bounding fit shape feret's integrated median "
+        + "skewness kurtosis area_fraction stack display redirect=None decimal=3"
+
+    @Test func defaultsOnEveryType() async throws {
+        try await Parity.check(
+            [ParityInput.gray8, .gray16, .gray32, .rgb, .stack8, .calibrated, .fixtureFire, .fixtureHyperstack].map {
+                ParityCase.measure("area mean min redirect=None decimal=3", on: $0)
+            })
+    }
+
+    @Test func everythingOnEveryType() async throws {
+        try await Parity.check(
+            [ParityInput.gray8, .gray16, .gray32, .rgb, .stack16, .stack32, .hyperstack, .calibrated, .fixtureHyperstack]
+                .map { ParityCase.measure(Self.everything, on: $0, tolerance: 1e-9) })
+    }
+
+    @Test func optionsThatChangeTheNumbers() async throws {
+        try await Parity.check([
+            .measure("centroid center bounding invert redirect=None decimal=3", on: .calibrated),
+            .measure("area mean limit redirect=None decimal=3", on: .gray8),
+            .measure("area mean limit redirect=None decimal=3", on: .gray32),
+            .measure("circularity slice display redirect=None decimal=3", on: .stack8),
+            .measure("area display redirect=None decimal=3", on: .gray16, then: [.init(command: "Measure", options: "")]),
+            .measure("area mean redirect=None decimal=3", on: .gray8, then: [.init(command: "Clear Results", options: "")]),
+        ])
+    }
+}

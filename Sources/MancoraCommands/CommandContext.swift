@@ -1,4 +1,5 @@
 public import MancoraCore
+public import MancoraProcess
 
 /// An image open in a session, with what ImageJ keeps alongside it.
 public struct OpenImage: Sendable {
@@ -24,6 +25,8 @@ public struct CommandSettings: Sendable, Hashable {
     public var scaleConversions = true
     /// Analyze ▸ Set Measurements ▸ Decimal places.
     public var decimalPlaces = 3
+    /// Analyze ▸ Set Measurements: what Measure records.
+    public var measurements = Measurements.defaults
 
     public init() {}
 }

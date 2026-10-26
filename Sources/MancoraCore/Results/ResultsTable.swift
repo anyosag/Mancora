@@ -11,11 +11,28 @@ public struct ResultsTable: Sendable, Hashable {
         }
     }
 
-    /// Column headings in the order columns were first used.
-    public private(set) var columns: [String] = []
+    /// ImageJ's standard measurement headings, in its fixed column order.
+    public static let standardHeadings = [
+        "Area", "Mean", "StdDev", "Mode", "Min", "Max", "X", "Y", "XM", "YM", "Perim.", "BX", "BY", "Width",
+        "Height", "Major", "Minor", "Angle", "Circ.", "Feret", "IntDen", "Median", "Skew", "Kurt", "%Area",
+        "RawIntDen", "Ch", "Slice", "Frame", "FeretX", "FeretY", "FeretAngle", "MinFeret", "AR", "Round",
+        "Solidity", "MinThr", "MaxThr",
+    ]
+    private static let standardIndex = Dictionary(
+        uniqueKeysWithValues: standardHeadings.enumerated().map { ($1, $0) })
+
+    /// Column headings as ImageJ orders them: the standard ones in their
+    /// fixed order, then the others in the order they were first used.
+    public var columns: [String] {
+        used.filter { Self.standardIndex[$0] != nil }.sorted { Self.standardIndex[$0]! < Self.standardIndex[$1]! }
+            + used.filter { Self.standardIndex[$0] == nil }
+    }
+    private var used: [String] = []
     private var cells: [[String: Value]] = []
     /// ImageJ's "Label" column.
     public private(set) var labels: [String?] = []
+    /// Whether cells never set read as NaN rather than 0 (Set Measurements ▸ NaN empty cells).
+    public var emptyCellsAreNaN = false
 
     public init() {}
 
@@ -31,7 +48,7 @@ public struct ResultsTable: Sendable, Hashable {
     }
 
     public mutating func set(_ column: String, row: Int, _ value: Value) {
-        if !columns.contains(column) { columns.append(column) }
+        if !used.contains(column) { used.append(column) }
         cells[row][column] = value
     }
 
@@ -48,13 +65,23 @@ public struct ResultsTable: Sendable, Hashable {
         return cells[row][column]
     }
 
-    /// ImageJ's `getValue(column, row)`: NaN for missing cells or text.
+    /// ImageJ's `getValue(column, row)`: NaN for text, and 0 (or NaN, with
+    /// ``emptyCellsAreNaN``) for a cell never set.
     public func number(_ column: String, row: Int) -> Double {
-        value(column, row: row)?.number ?? .nan
+        switch value(column, row: row) {
+        case .number(let n)?: n
+        case .text?: .nan
+        case nil: emptyCellsAreNaN ? .nan : 0
+        }
+    }
+
+    /// Clears the Label column (`disableRowLabels`).
+    public mutating func removeLabels() {
+        labels = Array(repeating: nil, count: labels.count)
     }
 
     public mutating func reset() {
-        columns = []
+        used = []
         cells = []
         labels = []
     }

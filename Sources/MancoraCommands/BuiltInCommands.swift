@@ -1,9 +1,11 @@
 import MancoraCore
+import MancoraProcess
 
 /// Commands Mancora implements natively, named as in ImageJ's menus.
 enum BuiltInCommands {
     static var all: [CommandDefinition] {
         lutCommands + [invertLUT, enhanceContrast, rename, close, closeAll, duplicate, properties, setScale]
+            + [setMeasurements, measure, clearResults]
     }
 
     // MARK: Image ▸ Lookup Tables
@@ -294,6 +296,45 @@ enum BuiltInCommands {
             }
             open.image.calibration = cal
         }
+    }
+
+    // MARK: Analyze ▸ Measure
+
+    /// `Analyzer("set")`: each checkbox is on only when the macro names it,
+    /// as with any ImageJ dialog a macro fills in.
+    static let setMeasurements = CommandDefinition("Set Measurements...", menu: "Analyze") { context, options in
+        let name = "Set Measurements..."
+        // Older macros use the labels ImageJ had before. ImageJ rewrites the
+        // original options each time, so with both, only "slice" is rewritten.
+        let padded = options.text.hasSuffix(" ") ? options.text : options.text + " "
+        var text = padded
+        if padded.contains("circularity ") { text = padded.replacing("circularity ", with: "shape ") }
+        if padded.contains("slice ") { text = padded.replacing("slice ", with: "stack ") }
+        let macro = MacroOptions(text)
+        var measurements = Measurements()
+        for (label, option) in Measurements.dialogLabels where macro.flag(forLabel: label) {
+            measurements.insert(option)
+        }
+        if let redirect = macro.value(forLabel: "Redirect to:"), redirect != "None" {
+            throw CommandError.notNative(name)  // measuring another image's pixels: ImageJ can
+        }
+        let precision = Int(macro.number(forLabel: "Decimal places (0-9):", default: Double(context.settings.decimalPlaces)))
+        context.settings.decimalPlaces = min(max(precision, 0), 9)
+        context.settings.measurements = measurements
+        context.results.emptyCellsAreNaN = measurements.contains(.nanEmptyCells)
+        if !measurements.contains(.labels) { context.results.removeLabels() }
+    }
+
+    /// `Analyzer.measure` without a selection: the current plane, whole.
+    static let measure = CommandDefinition("Measure", menu: "Analyze") { context, _ in
+        guard let open = context.current else { throw CommandError.noImage("Measure") }
+        Analyzer.measure(
+            open.image, channel: open.channel, slice: open.slice, frame: open.frame,
+            options: context.settings.measurements, into: &context.results)
+    }
+
+    static let clearResults = CommandDefinition("Clear Results", menu: "Analyze") { context, _ in
+        context.results.reset()
     }
 
     /// `Calibration.sanitizeUnit` for a non-empty unit.

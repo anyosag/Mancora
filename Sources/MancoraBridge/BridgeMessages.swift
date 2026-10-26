@@ -63,7 +63,14 @@ public enum ResultValue: Sendable, Hashable, Decodable {
         } else if let number = try? container.decode(Double.self) {
             self = .number(number)
         } else {
-            self = .text(try container.decode(String.self))
+            // JSON has no NaN or infinities; the helper sends them as Java writes them.
+            let text = try container.decode(String.self)
+            switch text {
+            case "NaN": self = .number(.nan)
+            case "Infinity": self = .number(.infinity)
+            case "-Infinity": self = .number(-.infinity)
+            default: self = .text(text)
+            }
         }
     }
 }

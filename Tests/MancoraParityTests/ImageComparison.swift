@@ -99,12 +99,10 @@ enum ImageComparison {
                 let ours: ResultValue
                 if hasLabels && index == 0 {
                     ours = mancora.labels[row].map(ResultValue.text) ?? .empty
+                } else if case .text(let t)? = mancora.value(column, row: row) {
+                    ours = .text(t)
                 } else {
-                    switch mancora.value(column, row: row) {
-                    case .number(let n)?: ours = .number(n)
-                    case .text(let t)?: ours = .text(t)
-                    case nil: ours = .empty
-                    }
+                    ours = .number(mancora.number(column, row: row))
                 }
                 let same: Bool
                 switch (ours, theirs) {

@@ -185,7 +185,8 @@ public class MancoraBridgeHelper {
     static Map<String, Object> runWithImages(String method, Map<String, Object> params) throws Exception {
         closeAll();
         takeLog();
-        ResultsTable.getResultsTable().reset();
+        ensureResultsPanel();
+        ij.plugin.filter.Analyzer.resetCounter();
         List<String> inputs = new ArrayList<>();
         if (params.get("inputs") != null) for (Object o : Json.array(params.get("inputs"))) inputs.add((String) o);
         File outputDir = new File((String) params.get("outputDir"));
@@ -243,6 +244,21 @@ public class MancoraBridgeHelper {
         return result;
     }
 
+    /**
+     * Gives ImageJ a Results panel that is never shown. Without one (there's
+     * no ImageJ window here) Analyzer keeps only the last row of each
+     * Measure, as headless ImageJ does; with it, rows accumulate as on the
+     * desktop. Headless Java can't make one, and keeps ImageJ's behavior.
+     */
+    static void ensureResultsPanel() {
+        if (IJ.isResultsWindow() || java.awt.GraphicsEnvironment.isHeadless()) return;
+        try {
+            IJ.setTextPanel(new ij.text.TextPanel("Results"));
+        } catch (Throwable t) {
+            // no display after all
+        }
+    }
+
     /** A cheap change detector: a hash of every plane, the image's shape and type, and its metadata. */
     static long fingerprint(ImagePlus imp) {
         long h = 1125899906842597L;
@@ -290,16 +306,27 @@ public class MancoraBridgeHelper {
         List<Object> columns = new ArrayList<>();
         List<Object> rows = new ArrayList<>();
         if (rt != null && rt.size() > 0) {
+            // By column index: looking a column up by name stops at the first
+            // unused heading, which Set Measurements can leave in the middle.
             String[] headings = rt.getHeadings();
-            for (String h : headings) columns.add(h);
+            boolean labels = headings.length > 0 && headings[0].equals("Label") && rt.getColumnIndex("Label") < 0;
+            List<Integer> indices = new ArrayList<>();
+            if (labels) columns.add("Label");
+            for (int i = 0; i <= rt.getLastColumn(); i++) {
+                if (!rt.columnExists(i)) continue;
+                String heading = rt.getColumnHeading(i);
+                columns.add(heading == null ? "C" + (i + 1) : heading);
+                indices.add(i);
+            }
             for (int r = 0; r < rt.size(); r++) {
                 List<Object> row = new ArrayList<>();
-                for (String h : headings) {
-                    if (h.equals("Label")) row.add(rt.getLabel(r));
-                    else {
-                        double v = rt.getValue(h, r);
-                        row.add(Double.isNaN(v) ? rt.getStringValue(h, r) : (Object) v);
-                    }
+                if (labels) row.add(rt.getLabel(r));
+                for (int i : indices) {
+                    double v = rt.getValueAsDouble(i, r);
+                    // JSON has no NaN or Infinity: those go as Java writes them.
+                    if (Double.isNaN(v)) row.add(rt.getStringValue(i, r));
+                    else if (Double.isInfinite(v)) row.add(Double.toString(v));
+                    else row.add(v);
                 }
                 rows.add(row);
             }
