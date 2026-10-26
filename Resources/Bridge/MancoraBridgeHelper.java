@@ -173,6 +173,8 @@ public class MancoraBridgeHelper {
             case "run":
             case "macro":
                 return runWithImages(method, params);
+            case "open":
+                return openFile(params);
             case "crash":
                 // For tests of the supervisor: die without answering.
                 Runtime.getRuntime().halt(3);
@@ -272,6 +274,66 @@ public class MancoraBridgeHelper {
         result.put("log", takeLog());
         closeAll();
         return result;
+    }
+
+    /**
+     * Opens a file in any format ImageJ reads (with Fiji's extra file types,
+     * if installed), or with Bio-Formats when it's installed, and saves each
+     * image it opens as a TIFF for Mancora.
+     */
+    static Map<String, Object> openFile(Map<String, Object> params) throws Exception {
+        closeAll();
+        resetSettings();
+        takeLog();
+        String path = (String) params.get("path");
+        File outputDir = new File((String) params.get("outputDir"));
+        List<ImagePlus> opened = new ArrayList<>();
+        String reader = "ImageJ";
+        DialogWatchdog.reset();
+        ImagePlus imp = IJ.openImage(path);
+        if (imp != null) {
+            opened.add(imp);
+            DialogWatchdog.check("Opening " + new File(path).getName());
+        }
+        Class<?> bf = findClass("loci.plugins.BF");
+        if (imp == null && bf != null) {
+            // ImageJ's "unsupported format" message doesn't count if Bio-Formats can.
+            DialogWatchdog.reset();
+            ImagePlus[] all = (ImagePlus[]) bf.getMethod("openImagePlus", String.class).invoke(null, path);
+            if (all != null) for (ImagePlus i : all) if (i != null) opened.add(i);
+            reader = "Bio-Formats";
+            DialogWatchdog.check("Bio-Formats");
+        }
+        if (opened.isEmpty())
+            throw new IOException("ImageJ could not open " + path + (bf == null ? " (Bio-Formats isn't installed)" : ", nor could Bio-Formats"));
+        List<Object> outputs = new ArrayList<>();
+        int n = 0;
+        for (ImagePlus i : opened) {
+            File out = new File(outputDir, String.format("output-%03d.tif", n++));
+            if (!new FileSaver(i).saveAsTiff(out.getPath())) throw new IOException("ImageJ could not save " + i.getTitle());
+            Map<String, Object> o = new LinkedHashMap<>();
+            o.put("path", out.getPath());
+            o.put("title", i.getTitle());
+            o.put("replaces", null);
+            outputs.add(o);
+            i.close();
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("outputs", outputs);
+        result.put("results", resultsTable());
+        result.put("log", takeLog());
+        result.put("value", reader);
+        closeAll();
+        return result;
+    }
+
+    /** A class from ImageJ's class path or its plugins folder, or null. */
+    static Class<?> findClass(String name) {
+        try {
+            return Class.forName(name, true, IJ.getClassLoader());
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     /**

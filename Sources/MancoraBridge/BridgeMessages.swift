@@ -107,6 +107,11 @@ struct MacroParams: Encodable {
     let outputDir: String
 }
 
+struct OpenParams: Encodable {
+    let path: String
+    let outputDir: String
+}
+
 struct CommandsResult: Decodable {
     let commands: [BridgeCommand]
 }

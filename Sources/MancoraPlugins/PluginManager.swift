@@ -40,11 +40,13 @@ public final class PluginManager {
         case exists(String)
         case unknown(String)
         case needsURL(String)
+        case noSuchFile(String)
         public var description: String {
             switch self {
             case .exists(let name): "An update site named \"\(name)\" exists already."
             case .unknown(let name): "There is no update site named \"\(name)\"."
             case .needsURL(let name): "\"\(name)\" isn't a known update site; give its URL."
+            case .noSuchFile(let name): "No enabled update site provides \(name)."
             }
         }
     }
@@ -117,13 +119,24 @@ public final class PluginManager {
                 site.setLastModified(nil, timeZone: files.timeZone)
                 warnings.append("Could not update from site '\(site.name)': \(url.absoluteString) does not exist")
             } catch {
-                warnings.append("Could not update from site '\(site.name)': \(error)")
+                warnings.append("Could not update from site '\(site.name)': \(Self.describe(error))")
             }
         }
         var checksummer = Checksummer(files: files, root: root)
         checksummer.updateFromLocal()
         files.heedUpstreamDependencies()
         files.markForUpdate()
+    }
+
+    /// `ImageJ-updater update <files>`: after `refresh`, plans only these
+    /// files (and what they need) instead of everything the sites offer.
+    public func select(_ names: [String]) throws(SiteError) {
+        let wanted = Set(names.map(FilenameVersion.strip))
+        for file in files.files where !wanted.contains(file.unversionedFilename) { file.setNoAction() }
+        for name in names {
+            guard let file = files[name] else { throw .noSuchFile(name) }
+            if !file.stageForUpdate(files, evenForced: false) && file.isObsolete { file.setFirstValidAction(.uninstall) }
+        }
     }
 
     /// One planned change.
@@ -165,8 +178,8 @@ public final class PluginManager {
             case .noURL(let name): "\(name) has no active update site to download it from."
             case .wrongSize(let name, let actual, let expected): "Incorrect file size for \(name): \(actual) (expected \(expected))"
             case .wrongChecksum(let name, let actual, let expected): "Incorrect checksum for \(name):\n\(actual)\n(expected \(expected))"
-            case .download(let name, let error): "Could not download \(name): \(error)"
-            case .move(let name, let error): "Could not move \(name) into place: \(error)"
+            case .download(let name, let error): "Could not download \(name): \(PluginManager.describe(error))"
+            case .move(let name, let error): "Could not move \(name) into place: \(PluginManager.describe(error))"
             }
         }
     }
@@ -240,6 +253,12 @@ public final class PluginManager {
         }
         staleNames = []
         try save()
+    }
+
+    /// An error as one readable line (Foundation's URL errors print their whole user info).
+    static func describe(_ error: any Error) -> String {
+        let ns = error as NSError
+        return ns.domain == NSURLErrorDomain ? ns.localizedDescription : "\(error)"
     }
 
     /// `Installer.verify`: the size and the updater's checksum (or one an

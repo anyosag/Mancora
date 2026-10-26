@@ -1,13 +1,16 @@
 public import Foundation
 public import MancoraUpdate
+import MancoraPlugins
 import MancoraSupport
 
 /// The folder the bridge helper runs in, laid out like a Fiji installation
 /// so ImageJ finds its plugins and update sites can manage it:
 ///
-///     <home>/jars/ij.jar           ImageJ itself
-///     <home>/jars/*.jar            libraries (on the helper's class path)
+///     <home>/jars/ij.jar           ImageJ itself (or jars/ij-<version>.jar from an update site)
+///     <home>/jars/**/*.jar         libraries (on the helper's class path; platform folders only for this one)
+///     <home>/lib/<platform>/       native libraries
 ///     <home>/plugins/              ImageJ 1.x plugins and Bio-Formats
+///     <home>/db.xml.gz             the update sites and what they installed (as Fiji keeps it)
 ///     <home>/helper/<hash>/        the compiled helper
 public struct BridgeHome: Sendable {
     public let root: URL
@@ -35,20 +38,49 @@ public struct BridgeHome: Sendable {
 
     public var jars: URL { root.appendingPathComponent("jars") }
     public var plugins: URL { root.appendingPathComponent("plugins") }
-    public var imageJJar: URL { jars.appendingPathComponent("ij.jar") }
-    /// Whether `installImageJ` has run (`mancora bridge setup`).
+    /// Native libraries for this platform, as Fiji keeps them.
+    public var nativeLibraries: URL { root.appendingPathComponent("lib").appendingPathComponent(Platforms.current) }
+
+    /// ImageJ's jar: `jars/ij.jar` as `mancora bridge setup` installs it, or
+    /// the `jars/ij-<version>.jar` the ImageJ update site installs instead.
+    public var imageJJar: URL {
+        let plain = jars.appendingPathComponent("ij.jar")
+        if FileManager.default.fileExists(atPath: plain.path) { return plain }
+        let versioned = ((try? FileManager.default.contentsOfDirectory(atPath: jars.path)) ?? [])
+            .filter { $0 != "ij.jar" && FilenameVersion.strip("jars/" + $0) == "jars/ij.jar" }
+            .sorted()
+        return versioned.last.map { jars.appendingPathComponent($0) } ?? plain
+    }
+
+    /// Whether ImageJ is installed (`mancora bridge setup`, or an update site).
     public var hasImageJ: Bool { FileManager.default.fileExists(atPath: imageJJar.path) }
 
     /// The ImageJ release the bridge installs, and the SHA-1 Maven Central publishes for it.
     public static let imageJVersion = "1.54p"
 
-    /// Jars on the helper's class path: ij.jar first, then the other jars.
+    /// Jars on the helper's class path: ImageJ first, then every jar under
+    /// `jars/` (other ImageJ jars and other platforms' folders left out), as
+    /// Fiji's launcher builds it.
     public func classPath() -> [URL] {
-        let others = ((try? FileManager.default.contentsOfDirectory(atPath: jars.path)) ?? [])
-            .filter { $0.hasSuffix(".jar") && $0 != "ij.jar" }
-            .sorted()
-            .map { jars.appendingPathComponent($0) }
-        return [imageJJar] + others
+        let imageJ = imageJJar
+        let otherPlatforms = Set(Platforms.known.filter { !Platforms.matches(Platforms.current, $0) })
+        var found: [String] = []
+        func scan(_ relative: String) {
+            let folder = root.appendingPathComponent(relative)
+            for name in ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).sorted() where !name.hasPrefix(".") {
+                let path = relative + "/" + name
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: root.appendingPathComponent(path).path, isDirectory: &isDirectory) else { continue }
+                if isDirectory.boolValue {
+                    if relative == "jars" && otherPlatforms.contains(name) { continue }
+                    scan(path)
+                } else if name.hasSuffix(".jar"), FilenameVersion.strip(path) != "jars/ij.jar" {
+                    found.append(path)
+                }
+            }
+        }
+        scan("jars")
+        return [imageJ] + found.map { root.appendingPathComponent($0) }
     }
 
     public func createFolders() throws {
@@ -60,7 +92,7 @@ public struct BridgeHome: Sendable {
     /// Downloads ImageJ from Maven Central unless it's already installed,
     /// checking it against the SHA-1 Maven Central publishes alongside it.
     public func installImageJ(client: any HTTPClient) async throws {
-        if FileManager.default.fileExists(atPath: imageJJar.path) { return }
+        if hasImageJ { return }
         try createFolders()
         let base = "https://repo1.maven.org/maven2/net/imagej/ij/\(Self.imageJVersion)/ij-\(Self.imageJVersion).jar"
         guard let jarURL = URL(string: base), let sumURL = URL(string: base + ".sha1") else { return }
@@ -71,6 +103,6 @@ public struct BridgeHome: Sendable {
         guard actual == expected else {
             throw BridgeError.verificationFailed(file: "ij-\(Self.imageJVersion).jar", expected: expected, actual: actual)
         }
-        try jar.write(to: imageJJar, options: .atomic)
+        try jar.write(to: jars.appendingPathComponent("ij.jar"), options: .atomic)
     }
 }

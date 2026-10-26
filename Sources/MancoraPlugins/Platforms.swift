@@ -104,7 +104,7 @@ public enum Platforms {
 
 /// `org.scijava.util.FileUtils.stripFilenameVersion`: `jars/foo-1.2.3.jar`
 /// is the same file as `jars/foo.jar` to the updater.
-enum FilenameVersion {
+public enum FilenameVersion {
     // Java's \d and \w are ASCII-only; spelled out so ICU reads them the same way.
     static let pattern: NSRegularExpression = {
         let version = "[0-9]+(\\.[0-9]+|[0-9]{7})+[a-z]?[0-9]?(-[A-Za-z0-9.]+?|\\.GA)*?"
@@ -118,7 +118,7 @@ enum FilenameVersion {
         return try! NSRegularExpression(pattern: "^(.+?)(-\(version))?((-(\(classifiers)))?(\(suffix)))$")
     }()
 
-    static func strip(_ filename: String) -> String {
+    public static func strip(_ filename: String) -> String {
         let ns = filename as NSString
         guard let match = pattern.firstMatch(in: filename, range: NSRange(location: 0, length: ns.length)) else {
             return filename

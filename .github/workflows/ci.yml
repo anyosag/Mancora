@@ -41,6 +41,11 @@ jobs:
           test "$("$mancora" --headless -eval 'print("2 + 2 = " + 2 + 2); print(d2s(PI, 3));')" = "$(printf '2 + 2 = 4\n3.142')"
           test "$("$mancora" -eval 'return getArgument() + getVersion();')" = "1.54p"
           "$mancora" --headless -macro Resources/Scripts/File/Open_Samples/Straight_Lines.ijm
+          # A new bridge folder starts with the ImageJ update site disabled.
+          export MANCORA_BRIDGE_HOME="$RUNNER_TEMP/bridge-home"
+          "$mancora" update-sites known | grep -q '^IJPB-plugins'
+          "$mancora" update-sites add MyLab https://example.org/my-lab
+          test "$("$mancora" update-sites list)" = "$(printf 'disabled  ImageJ  https://update.imagej.net/\nenabled   MyLab  https://example.org/my-lab/')"
 
   imagej-parity:
     name: ImageJ parity · Java bridge
@@ -60,6 +65,10 @@ jobs:
         run: MANCORA_TEST_IJ_JAR="$GITHUB_WORKSPACE/Tools/fixtures/.cache/ij-1.54p.jar" swift test --skip-build --filter MancoraBridgeTests
       - name: Native commands and macros against ImageJ 1.54p
         run: MANCORA_TEST_IJ_JAR="$GITHUB_WORKSPACE/Tools/fixtures/.cache/ij-1.54p.jar" swift test --skip-build --filter MancoraParityTests
+      - name: Fiji update sites, MorphoLibJ and Bio-Formats from them in the bridge
+        run: >-
+          MANCORA_NETWORK_TESTS=1 MANCORA_TEST_IJ_JAR="$GITHUB_WORKSPACE/Tools/fixtures/.cache/ij-1.54p.jar"
+          swift test --skip-build --filter UpdateSiteNetworkTests
 
   windows:
     name: Windows · Swift 6.2

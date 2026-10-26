@@ -128,6 +128,14 @@ public actor Bridge {
         }
     }
 
+    /// Opens a file in a format Mancora doesn't read, as ImageJ (with Fiji's
+    /// extra file types) or Bio-Formats does when installed. The result's
+    /// value names the reader: "ImageJ" or "Bio-Formats".
+    public func open(_ path: String) async throws -> BridgeRunResult {
+        let absolute = URL(fileURLWithPath: path).standardizedFileURL.path
+        return try await withImages([], method: "open") { _, outputDir in OpenParams(path: absolute, outputDir: outputDir) }
+    }
+
     /// Asks the helper to exit, and stops it if it doesn't.
     public func stop() async {
         if let connection, connection.isRunning {
@@ -263,7 +271,10 @@ public actor Bridge {
         let classPath = (home.classPath().map(\.path) + [classes.path]).joined(separator: separator)
         var arguments: [String] = []
         if let heap = config.maximumHeapMegabytes { arguments.append("-Xmx\(heap)m") }
-        arguments += ["-Dplugins.dir=\(home.root.path)", "-Dfile.encoding=UTF-8"]
+        arguments += ["-Dplugins.dir=\(home.root.path)", "-Dij.dir=\(home.root.path)", "-Dfile.encoding=UTF-8"]
+        if FileManager.default.fileExists(atPath: home.nativeLibraries.path) {
+            arguments.append("-Djava.library.path=\(home.nativeLibraries.path)")
+        }
         if let table = config.commandTable { arguments.append("-Dmancora.commands=\(table.path)") }
         #if os(macOS)
         arguments.append("-Dapple.awt.UIElement=true")  // no Dock icon or menu bar for the helper

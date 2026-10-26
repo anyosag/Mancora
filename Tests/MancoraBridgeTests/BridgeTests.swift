@@ -5,6 +5,7 @@ import MancoraUpdate
 import Testing
 
 @testable import MancoraBridge
+import MancoraPlugins
 
 enum BridgeFixtures {
     static let repoRoot: String = {
@@ -75,6 +76,27 @@ struct BridgeSetupTests {
         try Data("jar".utf8).write(to: home.imageJJar)
         await #expect(throws: BridgeError.noCompiler) { try await bridge.start() }
         #expect(home.classPath().first?.lastPathComponent == "ij.jar")
+    }
+
+    @Test func classPathFollowsFijisLayout() throws {
+        let home = BridgeHome(root: FileManager.default.temporaryDirectory.appendingPathComponent("mancora-home-\(UUID().uuidString)"))
+        defer { try? FileManager.default.removeItem(at: home.root) }
+        let fm = FileManager.default
+        let other = Platforms.current.hasPrefix("win") ? "linux64" : "win64"
+        for path in ["jars/ij-1.54f.jar", "jars/a.jar", "jars/sub/b.jar", "jars/\(Platforms.current)/native.jar", "jars/\(other)/skip.jar", "jars/notes.txt"] {
+            let url = home.root.appendingPathComponent(path)
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("x".utf8).write(to: url)
+        }
+        // The ImageJ update site installs ImageJ under its version.
+        #expect(home.imageJJar.lastPathComponent == "ij-1.54f.jar")
+        #expect(home.hasImageJ)
+        let paths = home.classPath().map { String($0.path.dropFirst(home.root.path.count + 1)) }
+        #expect(paths == ["jars/ij-1.54f.jar"] + ["jars/a.jar", "jars/sub/b.jar", "jars/\(Platforms.current)/native.jar"].sorted())
+        // jars/ij.jar, as `mancora bridge setup` installs it, comes first.
+        try Data("x".utf8).write(to: home.jars.appendingPathComponent("ij.jar"))
+        #expect(home.imageJJar.lastPathComponent == "ij.jar")
+        #expect(!home.classPath().contains { $0.lastPathComponent == "ij-1.54f.jar" })
     }
 }
 
@@ -191,6 +213,32 @@ struct BridgeIntegrationTests {
         #expect(output.image.stack[0] == .gray8([255, 0]))  // the current slice
         #expect(output.image.stack[2] == .gray8([255, 0]))  // the others untouched
         #expect(result.log.contains("answered No"))
+        await bridge.stop()
+    }
+
+    @Test func opensOtherFormatsWithImageJ() async throws {
+        let bridge = try BridgeFixtures.bridge()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("mancora-open-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        // A binary PGM: ImageJ reads it, Mancora doesn't.
+        let pgm = folder.appendingPathComponent("ramp.pgm")
+        try Data(Array("P5\n4 3\n255\n".utf8) + (0..<12).map { UInt8($0 * 20) }).write(to: pgm)
+        let result = try await bridge.open(pgm.path)
+        let opened = try #require(result.images.first)
+        #expect(result.value == "ImageJ")
+        #expect(opened.title == "ramp.pgm")
+        #expect(opened.image.width == 4 && opened.image.height == 3)
+        #expect(opened.image.stack[0] == .gray8((0..<12).map { UInt8($0 * 20) }))
+        // A format nothing installed reads.
+        let unknown = folder.appendingPathComponent("data.xyz")
+        try Data("?".utf8).write(to: unknown)
+        do {
+            _ = try await bridge.open(unknown.path)
+            Issue.record("expected an error")
+        } catch let error as BridgeError {
+            #expect(error.description.contains("Bio-Formats isn't installed"), "\(error)")
+        }
         await bridge.stop()
     }
 
