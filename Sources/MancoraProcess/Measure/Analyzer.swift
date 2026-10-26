@@ -4,25 +4,30 @@ public import MancoraCore
 /// Analyze ▸ Measure (`ij.plugin.filter.Analyzer`): measures a plane of an
 /// image and adds a row to a results table, with ImageJ's columns.
 public enum Analyzer {
-    /// Measures the whole plane at (`channel`, `slice`, `frame`).
+    /// Measures the plane at (`channel`, `slice`, `frame`): the pixels of
+    /// the area selection `roi`, or the whole plane.
     public static func measure(
-        _ image: Hyperstack, channel: Int = 0, slice: Int = 0, frame: Int = 0, options: Measurements,
-        threshold: ClosedRange<Double>? = nil, into table: inout ResultsTable
-    ) {
+        _ image: Hyperstack, channel: Int = 0, slice: Int = 0, frame: Int = 0, roi: Roi? = nil,
+        options: Measurements, threshold: ClosedRange<Double>? = nil, into table: inout ResultsTable
+    ) throws(RoiMaskError) {
         let plane = image.plane(channel: channel, slice: slice, frame: frame)
+        let region = try roi.map { roi throws(RoiMaskError) in try roi.measurementRegion(width: image.width, height: image.height) }
         let stats = MeasurementStatistics(
-            plane: plane, width: image.width, options: options, calibration: image.calibration, threshold: threshold)
-        saveResults(stats, image: image, channel: channel, slice: slice, frame: frame, options: options, into: &table)
+            plane: plane, width: image.width, region: region, options: options, calibration: image.calibration,
+            threshold: threshold)
+        saveResults(stats, image: image, channel: channel, slice: slice, frame: frame, roi: roi, options: options, into: &table)
     }
 
-    /// `Analyzer.saveResults` for a measurement without a selection.
+    /// `Analyzer.saveResults` for the whole image or an area selection.
     public static func saveResults(
-        _ stats: MeasurementStatistics, image: Hyperstack, channel: Int, slice: Int, frame: Int,
+        _ stats: MeasurementStatistics, image: Hyperstack, channel: Int, slice: Int, frame: Int, roi: Roi? = nil,
         options: Measurements, into table: inout ResultsTable
     ) {
         let dims = image.dimensions
         let stackIndex = dims.planeIndex(channel: channel, slice: slice, frame: frame)
-        let row = table.addRow(label: options.contains(.labels) ? label(image, stackIndex: stackIndex) : nil)
+        let pw = image.calibration.pixelWidth, ph = image.calibration.pixelHeight
+        let row = table.addRow(
+            label: options.contains(.labels) ? label(image, stackIndex: stackIndex, roiName: roi?.name) : nil)
         func add(_ column: String, _ value: Double) { table.set(column, row: row, value) }
 
         if options.contains(.area) { add("Area", stats.area) }
@@ -43,16 +48,17 @@ public enum Analyzer {
         }
         if !options.isDisjoint(with: [.perimeter, .shapeDescriptors]) {
             // Without a selection ImageJ uses the image's outline, in pixels.
-            let perimeter = Double(image.width * 2 + image.height * 2)
+            let perimeter = roi?.length(pixelWidth: pw, pixelHeight: ph) ?? Double(image.width * 2 + image.height * 2)
             if options.contains(.perimeter) { add("Perim.", perimeter) }
             if options.contains(.shapeDescriptors) {
                 var circularity = perimeter == 0 ? 0 : 4.0 * Double.pi * (stats.area / (perimeter * perimeter))
                 if circularity > 1 { circularity = 1 }
                 add("Circ.", circularity)
-                let convexArea = Double(stats.pixelCount)
-                add("AR", stats.major / stats.minor)
-                add("Round", 4.0 * stats.area / (Double.pi * stats.major * stats.major))
-                add("Solidity", Double(stats.pixelCount) / convexArea)
+                let isArea = roi?.isArea ?? true
+                let convexArea = roi.map { $0.outline()?.convexHull().roundedArea ?? .nan } ?? Double(stats.pixelCount)
+                add("AR", isArea ? stats.major / stats.minor : 0)
+                add("Round", isArea ? 4.0 * stats.area / (Double.pi * stats.major * stats.major) : 0)
+                add("Solidity", isArea ? Double(stats.pixelCount) / convexArea : .nan)
             }
         }
         if options.contains(.boundingRectangle) {
@@ -68,7 +74,8 @@ public enum Analyzer {
         }
         if options.contains(.feret) {
             // A whole-image Roi isn't attached to the image, so it's uncalibrated.
-            let feret = FeretValues(polygon: FloatPolygon(rectangleX: 0, y: 0, width: image.width, height: image.height))
+            let feret = roi.map { $0.feretValues(pixelWidth: pw, pixelHeight: ph) }
+                ?? FeretValues(polygon: FloatPolygon(rectangleX: 0, y: 0, width: image.width, height: image.height))
             add("Feret", feret?.diameter ?? .nan)
             add("FeretX", feret?.startX ?? .nan)
             add("FeretY", feret?.startY ?? .nan)
@@ -98,9 +105,14 @@ public enum Analyzer {
         }
     }
 
-    /// `Analyzer.getFileName`: the title, then the slice's label or number for stacks.
-    static func label(_ image: Hyperstack, stackIndex: Int) -> String {
+    /// `Analyzer.getFileName`: the title, the selection's name (unless it
+    /// has a dot; at most 30 characters), then the slice's label or number.
+    static func label(_ image: Hyperstack, stackIndex: Int, roiName: String? = nil) -> String {
         var label = image.title
+        if let name = roiName, !name.contains(".") {
+            let utf16 = Array(name.utf16)
+            label += ":" + (utf16.count > 30 ? String(decoding: utf16[..<27], as: UTF16.self) + "..." : name)
+        }
         guard image.stack.count > 1 else { return label }
         let colon = label.isEmpty ? "" : ":"
         if let short = shortSliceLabel(image.stack.labels[stackIndex]), !short.isEmpty {

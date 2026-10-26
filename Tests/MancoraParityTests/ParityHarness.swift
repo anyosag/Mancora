@@ -4,6 +4,10 @@ import MancoraCore
 import MancoraIO
 import Testing
 
+#if canImport(Glibc)
+import Glibc
+#endif
+
 @testable import MancoraBridge
 
 /// Runs commands natively and in ImageJ 1.54p (through the bridge helper)
@@ -171,6 +175,8 @@ struct ParityCase: Sendable, CustomStringConvertible {
 /// is the same, plus the ImageJ-written fixtures.
 enum ParityInput: String, Sendable {
     case gray8, gray16, gray32, rgb, stack8, stack16, stack32, hyperstack, calibrated, binary, binaryStack
+    // Images with a selection, which ImageJ reads from the TIFF.
+    case rectangleROI, roundedROI, ovalROI, polygonROI, subpixelPolygonROI, freehandROI, tracedROI, edgeROI, namedROI
     case fixtureHyperstack = "ij-hyperstack-16bit.tif"
     case fixtureFire = "ij-8bit-fire.tif"
 
@@ -201,6 +207,16 @@ enum ParityInput: String, Sendable {
                 try image.setPlane(.gray8(p.map { $0 > 120 ? 255 : 0 }), at: index)
             }
             made = image
+        case .rectangleROI, .roundedROI, .ovalROI, .polygonROI, .subpixelPolygonROI, .freehandROI, .tracedROI, .edgeROI,
+            .namedROI:
+            var image = try Self.make(rawValue + ".tif", self == .ovalROI ? .gray8 : self == .polygonROI ? .gray32Float : .gray16)
+            if self == .freehandROI || self == .namedROI {
+                image.calibration.pixelWidth = 0.4
+                image.calibration.pixelHeight = 0.4
+                image.calibration.unit = "µm"
+            }
+            image.encodedROI = RoiCodec.encode(Self.roi(for: self))
+            made = image
         case .fixtureHyperstack, .fixtureFire:
             return try TIFFImporter.read(path: Parity.url("Tests/Fixtures/tiff/" + rawValue).path)
         }
@@ -208,6 +224,33 @@ enum ParityInput: String, Sendable {
     }
 
     static let width = 61, height = 47
+
+    static func roi(for input: ParityInput) -> Roi {
+        func ints(_ points: [(Int32, Int32)]) -> Roi.Vertices { .integer(points.map { Roi.IntPoint(x: $0.0, y: $0.1) }) }
+        switch input {
+        case .roundedROI: return Roi(.rectangle(.integer(x: 8, y: 6, width: 30, height: 22), cornerDiameter: 9))
+        case .ovalROI: return Roi(.oval(.integer(x: 12, y: 9, width: 33, height: 21)))
+        case .polygonROI:
+            return Roi(.polygon(.init(.polygon, ints([(5, 5), (40, 8), (52, 30), (20, 41), (9, 25)]))))
+        case .subpixelPolygonROI:
+            let points = [(4.5, 6.25), (44.75, 3.5), (55.1, 38.2), (12.3, 40.9)].map { Roi.FloatPoint(x: Float($0.0), y: Float($0.1)) }
+            return Roi(.polygon(.init(.polygon, .subpixel(points))))
+        case .freehandROI:
+            let points = (0..<40).map { k -> (Int32, Int32) in
+                let a = Double(k) / 40 * 2 * Double.pi
+                return (Int32(30 + 18 * cos(a) + 3 * cos(5 * a)), Int32(23 + 14 * sin(a)))
+            }
+            return Roi(.polygon(.init(.freehand, ints(points))))
+        case .tracedROI:
+            return Roi(.polygon(.init(.traced, ints([(10, 10), (30, 10), (30, 20), (40, 20), (40, 35), (10, 35)]))))
+        case .edgeROI: return Roi(.rectangle(.integer(x: 40, y: 30, width: 40, height: 30)))
+        case .namedROI:
+            var roi = Roi(.oval(.integer(x: 5, y: 5, width: 25, height: 36)))
+            roi.name = "cell 1"
+            return roi
+        default: return Roi(.rectangle(.integer(x: 10, y: 7, width: 25, height: 19)))
+        }
+    }
 
     static func make(
         _ title: String, _ type: PixelType, channels: Int = 1, slices: Int = 1, frames: Int = 1, composite: Bool = false

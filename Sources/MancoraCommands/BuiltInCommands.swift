@@ -325,13 +325,20 @@ enum BuiltInCommands {
         if !measurements.contains(.labels) { context.results.removeLabels() }
     }
 
-    /// `Analyzer.measure` without a selection: the current plane, whole.
+    /// `Analyzer.measure`: the current plane, within an area selection.
+    /// Lines and points (profiles, coordinates) are measured by ImageJ.
     static let measure = CommandDefinition("Measure", menu: "Analyze") { context, _ in
         guard let open = context.current else { throw CommandError.noImage("Measure") }
+        let roi = open.roi
+        if let roi, !roi.isArea || roi.kind == .composite { throw CommandError.notNative("Measure") }
         let threshold = open.threshold.flatMap { $0.lower <= $0.upper ? $0.lower...$0.upper : nil }
-        Analyzer.measure(
-            open.image, channel: open.channel, slice: open.slice, frame: open.frame,
-            options: context.settings.measurements, threshold: threshold, into: &context.results)
+        do {
+            try Analyzer.measure(
+                open.image, channel: open.channel, slice: open.slice, frame: open.frame, roi: roi,
+                options: context.settings.measurements, threshold: threshold, into: &context.results)
+        } catch {
+            throw CommandError.notNative("Measure")
+        }
     }
 
     static let clearResults = CommandDefinition("Clear Results", menu: "Analyze") { context, _ in

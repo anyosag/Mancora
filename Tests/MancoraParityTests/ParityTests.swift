@@ -91,6 +91,13 @@ struct MeasurementParityTests {
                 .map { ParityCase.measure(Self.everything, on: $0, tolerance: 1e-9) })
     }
 
+    @Test func selections() async throws {
+        try await Parity.check(
+            [ParityInput.rectangleROI, .roundedROI, .ovalROI, .polygonROI, .subpixelPolygonROI, .freehandROI, .tracedROI,
+             .edgeROI, .namedROI]
+                .map { ParityCase.measure(Self.everything, on: $0, tolerance: 1e-9) })
+    }
+
     @Test func optionsThatChangeTheNumbers() async throws {
         try await Parity.check([
             .measure("centroid center bounding invert redirect=None decimal=3", on: .calibrated),

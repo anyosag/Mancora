@@ -83,6 +83,14 @@ public struct FeretValues: Sendable, Hashable {
     public var startX: Double
     public var startY: Double
 
+    public init(diameter: Double, angle: Double, minimum: Double, startX: Double, startY: Double) {
+        self.diameter = diameter
+        self.angle = angle
+        self.minimum = minimum
+        self.startX = startX
+        self.startY = startY
+    }
+
     /// Computed on the convex hull of `polygon`, with pixel sizes `pw` × `ph`.
     public init?(polygon: FloatPolygon, pixelWidth pw: Double = 1, pixelHeight ph: Double = 1) {
         let hull = polygon.convexHull()
@@ -93,8 +101,9 @@ public struct FeretValues: Sendable, Hashable {
         var diameterSqr = 0.0
         for i in 0..<n {
             for j in (i + 1)..<n {
-                let dx = (xs[i] - xs[j]) * pw
-                let dy = (ys[i] - ys[j]) * ph
+                // FloatPolygon coordinates: subtracted in float, then scaled.
+                let dx = Double(hull.xs[i] - hull.xs[j]) * pw
+                let dy = Double(hull.ys[i] - hull.ys[j]) * ph
                 let dsqr = dx * dx + dy * dy
                 if dsqr > diameterSqr {
                     (diameterSqr, p1, p2) = (dsqr, i, j)

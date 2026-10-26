@@ -1,4 +1,5 @@
 public import MancoraCore
+import MancoraIO
 public import MancoraProcess
 
 /// An image open in a session, with what ImageJ keeps alongside it.
@@ -15,6 +16,13 @@ public struct OpenImage: Sendable {
     public var threshold: ThresholdLevels?
 
     public var title: String { image.title }
+
+    /// The selection, kept in the image as ImageJ `.roi` bytes (which is
+    /// how TIFFs carry it); `nil` when there's none or it can't be read.
+    public var roi: Roi? {
+        get { image.encodedROI.flatMap { try? RoiCodec.decode($0) } }
+        set { image.encodedROI = newValue.map(RoiCodec.encode) }
+    }
 
     /// The plane at the current position.
     public var currentPlane: Plane { image.plane(channel: channel, slice: slice, frame: frame) }

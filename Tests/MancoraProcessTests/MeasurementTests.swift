@@ -48,8 +48,8 @@ struct MeasurementTests {
     @Test func resultsRowsAndColumns() throws {
         let image = try Hyperstack(title: "ramp.tif", stack: ImageStack(width: 4, height: 2, planes: [Self.ramp]))
         var table = ResultsTable()
-        Analyzer.measure(image, options: [.labels, .minMax, .area, .perimeter, .feret], into: &table)
-        Analyzer.measure(image, options: [.mean], into: &table)
+        try Analyzer.measure(image, options: [.labels, .minMax, .area, .perimeter, .feret], into: &table)
+        try Analyzer.measure(image, options: [.mean], into: &table)
         // ImageJ's column order, whatever order they were filled in.
         #expect(table.columns == ["Area", "Mean", "Min", "Max", "Perim.", "Feret", "FeretX", "FeretY", "FeretAngle", "MinFeret"])
         #expect(table.labels == ["ramp.tif", nil])

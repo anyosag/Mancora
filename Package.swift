@@ -31,7 +31,7 @@ let package = Package(
             dependencies: ["MancoraCore", "MancoraIO", "MancoraSupport", "MancoraUpdate"],
             swiftSettings: strictness
         ),
-        .target(name: "MancoraCommands", dependencies: ["MancoraCore", "MancoraProcess"], swiftSettings: strictness),
+        .target(name: "MancoraCommands", dependencies: ["MancoraCore", "MancoraIO", "MancoraProcess"], swiftSettings: strictness),
         .target(name: "MancoraCore", swiftSettings: strictness),
         .target(name: "MancoraIO", dependencies: ["MancoraCore", "MancoraSupport"], swiftSettings: strictness),
         .target(name: "MancoraMacro", swiftSettings: strictness),

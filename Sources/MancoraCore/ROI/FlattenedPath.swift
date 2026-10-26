@@ -3,8 +3,8 @@
 /// same polygon: `RoundRectIterator`, `FlatteningPathIterator`, and the
 /// subdivision and flatness test of `CubicCurve2D` (OpenJDK 21). Quadratic
 /// segments, which only composite ROIs use, are not needed yet.
-enum FlattenedPath {
-    enum Segment {
+package enum FlattenedPath {
+    package enum Segment {
         case move(Double, Double)
         case line(Double, Double)
         case cubic(Double, Double, Double, Double, Double, Double)
@@ -15,7 +15,12 @@ enum FlattenedPath {
     /// `new ShapeRoi(new RoundRectangle2D.Float(x, y, w, h, d, d))`, whose
     /// shape is translated to the ROI origin and stored as a `GeneralPath`
     /// (32-bit floats).
-    static func roundedRectangle(x: Int32, y: Int32, width: Int32, height: Int32, corner: Int32) -> [Segment] {
+    /// - Parameter floatStorage: round the points to floats, as the
+    ///   `Path2D.Float` of `ShapeRoi(Shape)` stores them; `RoundRectangle2D`
+    ///   iterated directly (`ShapeRoi(Roi)`'s outline) keeps doubles.
+    package static func roundedRectangle(
+        x: Int32, y: Int32, width: Int32, height: Int32, corner: Int32, floatStorage: Bool = true
+    ) -> [Segment] {
         // RoundRectangle2D.Float holds floats; RoundRectIterator works in double.
         let rx = Double(Float(x)), ry = Double(Float(y))
         let w = Double(Float(width)), h = Double(Float(height))
@@ -48,8 +53,8 @@ enum FlattenedPath {
                 // then Path2D.Float's float storage.
                 let px = (rx + v[i] * w + v[i + 1] * aw) + tx
                 let py = (ry + v[i + 2] * h + v[i + 3] * ah) + ty
-                out.append(Double(Float(px)))
-                out.append(Double(Float(py)))
+                out.append(floatStorage ? Double(Float(px)) : px)
+                out.append(floatStorage ? Double(Float(py)) : py)
                 i += 4
             }
             return out
@@ -70,7 +75,7 @@ enum FlattenedPath {
     /// `ShapeRoi.getFloatPolygon(shape, flatness, separateSubpaths: true,
     /// addPointForClose: false, absoluteCoord: false)`: the flattened
     /// vertices as floats, subpaths separated by NaN.
-    static func polygon(_ path: [Segment], flatness: Double) -> (xs: [Float], ys: [Float]) {
+    package static func polygon(_ path: [Segment], flatness: Double) -> (xs: [Float], ys: [Float]) {
         var xs: [Float] = [], ys: [Float] = []
         var subPathStart = 0
         var iterator = FlatteningIterator(path, flatness: flatness)
@@ -110,7 +115,7 @@ enum FlattenedPath {
 
     /// `java.awt.geom.FlatteningPathIterator` with the default recursion
     /// limit of 10.
-    struct FlatteningIterator {
+    package struct FlatteningIterator {
         private enum HoldType { case move, line, cubic, close }
 
         private let source: [Segment]
@@ -128,13 +133,13 @@ enum FlattenedPath {
         private var done = false
         private var primed = false
 
-        init(_ source: [Segment], flatness: Double) {
+        package init(_ source: [Segment], flatness: Double) {
             self.source = source
             squareflat = flatness * flatness
         }
 
         /// The next flattened segment: `.move`, `.line` or `.close`.
-        mutating func next() -> Segment? {
+        package mutating func next() -> Segment? {
             advance(doNext: primed)  // the constructor primes the first segment
             primed = true
             if done { return nil }
