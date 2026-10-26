@@ -55,6 +55,37 @@ struct CropParityTests {
                 inputs: [.gray8]),
             ParityCase("Canvas Size...", "width=70 height=56 position=Center", on: .rgb),
             Self.measured([Step(command: "Canvas Size...", options: "width=61 height=47 position=Center")], on: .gray8Oval),
+            // The fill follows the LUT and display range: the inverted LUT's
+            // entry for black is the top of the range.
+            ParityCase(
+                steps: [Step(command: "Invert LUT", options: ""),
+                        Step(command: "Canvas Size...", options: "width=70 height=56 position=Center")],
+                inputs: [.gray16]),
+            ParityCase(
+                steps: [Step(command: "Invert LUT", options: ""),
+                        Step(command: "Canvas Size...", options: "width=70 height=56 position=Top-Center")],
+                inputs: [.stack32]),
+            ParityCase(
+                steps: [Step(command: "Enhance Contrast...", options: "saturated=5"),
+                        Step(command: "Canvas Size...", options: "width=70 height=56 position=Center")],
+                inputs: [.gray8]),
+        ])
+    }
+
+    /// Display ranges set before cropping, rotating or reversing stay.
+    /// (Enhance Contrast stretches to the selection in ImageJ, which
+    /// Mancora's doesn't yet, so it runs on images without one here; Max
+    /// resets a single image's range to its new pixel range.)
+    @Test func changedDisplayRanges() async throws {
+        let stretch = Step(command: "Enhance Contrast...", options: "saturated=5")
+        try await Parity.check([
+            ParityCase(steps: [Step(command: "Max...", options: "value=3000"), Step(command: "Crop", options: "")], inputs: [.gray16Oval]),
+            ParityCase(steps: [Step(command: "Max...", options: "value=1.5"), Step(command: "Duplicate...", options: "title=c")], inputs: [.gray32Rect]),
+            ParityCase(steps: [stretch, Step(command: "Duplicate...", options: "duplicate range=2-3")], inputs: [.stack16]),
+            ParityCase(steps: [stretch, Step(command: "Rotate 90 Degrees Right", options: "")], inputs: [.gray8]),
+            ParityCase(steps: [stretch, Step(command: "Rotate 90 Degrees Left", options: "")], inputs: [.stack32]),
+            ParityCase(steps: [stretch, Step(command: "Flip Z", options: "")], inputs: [.stack16]),
+            ParityCase(steps: [stretch, Step(command: "Flip Horizontally", options: "stack")], inputs: [.stack8]),
         ])
     }
 
