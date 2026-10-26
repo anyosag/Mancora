@@ -56,7 +56,7 @@ jobs:
       - name: Install a JDK and Xvfb
         # The full JDK brings AWT's native libraries; ImageJ needs them (and a
         # display, which Xvfb provides) to build its dialogs.
-        run: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends openjdk-21-jdk xvfb xauth curl > /dev/null
+        run: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends openjdk-21-jdk xvfb xauth curl unzip > /dev/null
       - name: Build
         run: swift build --build-tests
       - name: Save with Mancora, reopen with ImageJ 1.54p
@@ -69,6 +69,10 @@ jobs:
         run: >-
           MANCORA_NETWORK_TESTS=1 MANCORA_TEST_IJ_JAR="$GITHUB_WORKSPACE/Tools/fixtures/.cache/ij-1.54p.jar"
           swift test --skip-build --filter UpdateSiteNetworkTests
+      - name: The latest Fiji, downloaded and run behind the bridge, and its update sites checked
+        # fiji-latest-linux64-jdk.zip (about 700 MB) from downloads.imagej.net, verified,
+        # unpacked, then ImageJ 1.x, SciJava commands, scripts and menus through the bridge.
+        run: MANCORA_NETWORK_TESTS=1 swift test --skip-build --no-parallel --filter FijiNetworkTests
 
   windows:
     name: Windows · Swift 6.2

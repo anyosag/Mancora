@@ -18,6 +18,28 @@ The macros in `Resources/Macros/`, the sample scripts in
 Fiji project. `legacy/fiji/LICENSES` lists the licenses of the individual
 Fiji components.
 
+## Downloaded at run time, not distributed
+
+Mancora downloads these on the user's computer when asked to (`mancora
+fiji install`, `mancora bridge setup`, or the app's first use of the
+bridge); none of them ships with Mancora.
+
+- **Fiji** (`fiji-latest-<platform>-jdk.zip` from
+  https://downloads.imagej.net/fiji/latest/), with ImageJ2, SciJava,
+  ImageJ 1.x and Fiji's plugins: GPL-3.0-or-later as a whole, its
+  components under their own licenses (GPL-2.0/3.0, BSD-2-Clause, public
+  domain and others), which the installed `Fiji/licenses/` folder lists.
+  Its updates come from the update sites Fiji's own `db.xml.gz` names.
+- **Azul Zulu JDK**, bundled inside Fiji's download (`Fiji/java/`):
+  GPL-2.0 with the Classpath Exception; its notices are in the JDK's
+  `legal/` folder.
+- **ImageJ 1.54p** (`net.imagej:ij` from Maven Central), for the plain
+  bridge: public domain.
+
+The bridge's Java helpers (`Resources/Bridge/*.java`) are Mancora's own;
+they are compiled on the user's computer against those jars and call
+their public APIs.
+
 ## Lookup tables (`Resources/LUTs/`)
 
 `Resources/LUTs/README.txt` is kept as distributed with Fiji.
