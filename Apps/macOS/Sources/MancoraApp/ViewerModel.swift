@@ -54,7 +54,7 @@ final class ViewerModel {
         Task {
             // Large files take a while to decode; keep the window responsive.
             let result = await Task.detached(priority: .userInitiated) { () -> Result<Hyperstack, MancoraIOError> in
-                do {
+                do throws(MancoraIOError) {
                     return .success(try TIFFImporter.read(path: path, options: .init(virtual: virtual)))
                 } catch {
                     return .failure(error)
@@ -98,7 +98,7 @@ final class ViewerModel {
         let path = url.path
         Task {
             let error = await Task.detached(priority: .userInitiated) { () -> MancoraIOError? in
-                do {
+                do throws(MancoraIOError) {
                     try TIFFExporter.write(image, to: path)
                     return nil
                 } catch {

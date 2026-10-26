@@ -302,7 +302,7 @@ struct RangeSlider: View {
     let value: Double
     let bounds: ClosedRange<Double>
     let step: Double
-    let onChange: (Double) -> Void
+    let onChange: @MainActor (Double) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
